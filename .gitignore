@@ -1,0 +1,13 @@
+*cellranger*
+*swp
+old_scripts/
+prod_scripts/
+ToDo
+*.swp
+*.swo
+*.swn
+*.egg-info
+build
+dist
+splitFastq
+

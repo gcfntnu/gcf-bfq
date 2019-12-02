@@ -1,0 +1,25 @@
+extra_fn_clean_exts:
+        - '.gz'
+        - '.fastq'
+        - '_screen.txt'
+
+custom_logo:    '/opt/images/logo_ntnu.png'
+custom_logo_url: 'https://www.ntnu.edu/mh/gcf'
+custom_logo_title:      'Genomics Core Facility'
+
+intro_text: "This report is generated for projects run at Genomics Core Facility, NTNU, Trondheim. The results are reported per sample."
+
+fastqscreen_simpleplot: true
+
+read_count_multiplier: 1
+read_count_prefix: ''
+read_count_desc: ''
+
+thousandsSep_format: ' '
+
+base_count_multiplier: 1
+base_count_prefix: ''
+base_count_desc: ''
+
+megaqc_url: gcf-megaqc.medisin.ntnu.no:443/api/upload_data
+megaqc_access_token: umTAzd08fEzLtCdxZDvk6nvIO1WoMqQoNDikUGf21Z3ex6ir5zHgVuD2uRT2zdel5492IHVqjEifAxBK
