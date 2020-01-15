@@ -1,0 +1,45 @@
+#-*-mode:snakemake-*-
+import glob
+import os
+
+configfile:
+    'config.yaml'
+
+include:
+    'src/single-cell/single-cell.sm'
+
+rule sample_info:
+    output:
+        'data/processed/sample_info.txt'
+    run:
+        import yaml
+        import pandas as pd
+        with open('config.yaml') as fh:
+            c = yaml.load(fh)['samples']
+        df = pd.DataFrame.from_dict(c, orient='index')
+        if 'Sample_ID' not in df.columns:
+            df.index.name = 'Sample_ID'
+            df = df.reset_index()
+        cols = list(df.columns.copy())
+        cols.pop(cols.index('Sample_ID'))
+        cols.insert(0, 'Sample_ID')
+        df = df[cols]
+        df.to_csv(output[0], sep='\t', index=False)
+
+
+rule all:
+    input:
+        expand(join('data', 'tmp', 'GCF-2018-556-tmp', 'singlecell', 'quant', '{quant}','{sample}', 'Solo.out', 'barcodes.tsv'), sample=SAMPLES, quant=['star'])
+
+rule star_aggr_all:
+    input:
+        join(QUANT_INTERIM, 'aggregate', 'star', 'scanpy', 'scanpy_aggr.h5ad')
+
+
+rule star_all:
+	input:
+		expand(join(STAR_INTERIM, '{sample}', 'scanpy','adata.h5ad'), sample=SAMPLES, quant=['star'])
+
+rule cellranger_all:
+    input:
+        join(QUANT_INTERIM, 'aggregate', 'cellranger', 'scanpy', 'cellranger_aggr.h5ad')

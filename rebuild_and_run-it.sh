@@ -12,4 +12,4 @@ mkdir -p $BFQ_VERSION_DIR
 echo "gcfntnu/bfq:dev-test" > $BFQ_VERSION_DIR/bfq.version
 sudo docker kill bfq
 sudo docker build -t bfq-pipe .
-sudo docker run --rm -it --name=bfq-it  -v $CONFIG_DIR:/config -v $MASKED_INDEX_DIR:/masked-genomes/ -v $OUTPUT_DIR:/bfq -v $INSTRUMENTS_DIR:/instruments -v $INDEX_DIR:/data -v $FLOWCELLMANAGER_DIR:/flowcellmanager -v $BFQ_VERSION_DIR:/bfq_version -v $INSTR_ARCHIVE:/instrument-archive --expose 5000 --net="host" bfq-pipe /bin/bash
+sudo docker run --privileged --rm -it --name=bfq-it  -v $CONFIG_DIR:/config -v $MASKED_INDEX_DIR:/masked-genomes/ -v $OUTPUT_DIR:/bfq -v $INSTRUMENTS_DIR:/instruments -v $INDEX_DIR:/data -v $FLOWCELLMANAGER_DIR:/flowcellmanager -v $BFQ_VERSION_DIR:/bfq_version -v $INSTR_ARCHIVE:/instrument-archive --expose 5000 --net="host" bfq-pipe /bin/bash

@@ -19,6 +19,12 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
+MKFASTQ_10X = {
+    '10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit': 'cellranger_spatial_mkfastq',
+    '10X Genommics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1': 'cellranger_atac_mkfastq',
+    '10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3': 'cellranger_mkfastq'
+}
+
 def determineMask(config):
     '''
     If there's already a mask set in the config file then return it.
@@ -68,7 +74,7 @@ def fixNames(config) :
     if lanes != "":
         lanes = "_lanes{}".format(lanes)
 
-    if config.get("Options","singleCell") == "1":
+    if "10X Genomics" in config.get("Options","Libprep"):
         return
 
     names = glob.glob("%s/%s%s/*/*.fastq.gz" % (config.get("Paths","outputDir"), config.get("Options","runID"), lanes))
@@ -102,10 +108,10 @@ def bcl2fq(config) :
     old_wd = os.getcwd()
     os.chdir(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')))
 
-    if config.get("Options","singleCell") == "1":
+    if "10X Genomics" in config.get("Options","Libprep"):
         #TODO: --interop-dir not supported for cellranger
         cmd = "{cellranger_cmd} --output-dir={output_dir} --sample-sheet={sample_sheet} --run={run_dir} {cellranger_options}".format(
-                cellranger_cmd = config.get("cellranger","cellranger_mkfastq"),
+                cellranger_cmd = config.get("cellranger",MKFASTQ_10X[config.get("Options","Libprep")]),
                 output_dir = "{}/{}".format(
                     config.get("Paths","outputDir"),
                     config.get("Options","runID")

@@ -1,0 +1,8 @@
+from snakemake.utils import validate, min_version
+
+configfile:
+    'config.yaml'
+
+include:
+    'src/rna-seq/rna-seq.sm'
+    

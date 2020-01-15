@@ -36,32 +36,64 @@ COPY files/cellranger-3.1.0.tar /tmp/cellranger-3.1.0.tar
 RUN tar -C /opt/ -xvf /tmp/cellranger-3.1.0.tar
 ENV PATH=$PATH:/opt/cellranger-3.1.0
 
+COPY files/cellranger-atac-1.2.0.tar.gz /tmp/cellranger-atac-1.2.0.tar.gz
+RUN tar -C /opt/ -xvf /tmp/cellranger-atac-1.2.0.tar.gz
+ENV PATH=$PATH:/opt/cellranger-atac-1.2.0
+
+COPY files/spaceranger-1.0.0.tar.gz /tmp/spaceranger-1.0.0.tar.gz
+RUN tar -C /opt/ -xvf /tmp/spaceranger-1.0.0.tar.gz
+ENV PATH=$PATH:/opt/spaceranger-1.0.0
+
 RUN conda install -y configparser matplotlib
 RUN conda install -y requests illumina-interop
 RUN pip install cycler
 
 RUN apt-get -qq update && apt-get install -y -q xkcdpass vim p7zip-full parallel
+RUN conda install -y snakemake
+
+WORKDIR /tmp
+
+ENV DEBIAN_FRONTEND="noninteractive"
+RUN wget -O- http://neuro.debian.net/lists/stretch.de-md.full | tee /etc/apt/sources.list.d/neurodebian.sources.list
+RUN ["/bin/bash", "-c", "set -o pipefail && apt-key adv --recv-keys --keyserver hkp://pool.sks-keyservers.net:80 0xA5D32F012649A5A9"]
+RUN apt-get update --yes && apt install -y singularity-container 
+
+RUN ["/bin/bash", "-c", "set -o pipefail && curl -fsSL get.nextflow.io | /bin/bash"]
+RUN mv nextflow /usr/local/bin
 
 COPY files/logo_ntnu.png /opt/images/
 
-ADD https://api.github.com/repos/gcfntnu/configmaker/git/refs/heads/master version.json
+ADD https://api.github.com/repos/gcfntnu/configmaker/git/refs/heads/master conf_version.json
 RUN pip install --upgrade 'git+https://github.com/gcfntnu/configmaker#egg=configmaker'
-ADD https://api.github.com/repos/flatberg/MultiQC/git/refs/heads/master version.json
+ADD https://api.github.com/repos/flatberg/MultiQC/git/refs/heads/master mqc_version.json
 RUN pip install --upgrade 'git+https://github.com/flatberg/MultiQC#egg=multiqc'
 
-#RUN conda install -y xlrd>=1.0.0
-#ADD https://api.github.com/repos/gsmashd/bcl2fastq_pipeline/git/refs/heads/master version.json
-#ARG CACHE_BREAK=random_num
-#RUN git clone https://github.com/gsmashd/bcl2fastq_pipeline.git
+ADD https://api.github.com/repos/gcfntnu/gcfdb/git/refs/heads/dev conf_version.json
+RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout dev 
+ENV GCF_DB=/opt/gcfdb
+
+ADD https://api.github.com/repos/gcfntnu/rna-seq/git/refs/heads/dev conf_version.json
+RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout dev
+
 COPY ./bcl2fastq_pipeline /opt/bcl2fastq_pipeline
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline/flowcell_manager
 
 WORKDIR /opt/bcl2fastq_pipeline
-RUN pwd && ls -la
 RUN gcc splitFastq.c -o splitFastq
 RUN ./setup.py build
 RUN ./setup.py install
 
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline
 
+ADD ./files/snakefiles /opt/snakefiles
+
+ENV TMPDIR=/instrument-archive/tmp
+ENV EXT_DIR=/instrument-archive/ext
+ENV SINGULARITY_BINDPATH=/bfq,/instrument-archive
+ENV SINGULARITY_CACHEDIR=$TMPDIR/singularity/
+ENV SINGULARITY_TMPDIR=$SINGULARITY_CACHEDIR/tmp
+ENV SINGULARITY_LOCALCACHEDIR=$SINGULARITY_CACHEDIR/tmp/
+ENV SINGULARITY_PULLFOLDER=$SINGULARITY_CACHEDIR
+
+ENV PATH=$PATH:/opt/bcl2fastq_pipeline
 CMD bin/bfq.py

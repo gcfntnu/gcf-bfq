@@ -372,6 +372,21 @@ def md5sum_archive_worker(config):
         subprocess.check_call(cmd, shell=True)
     os.chdir(old_wd)
 
+def md5sum_instrument_worker(config):
+    global localConfig
+    config = localConfig
+    old_wd = os.getcwd()
+    os.chdir(os.path.join(config.get('Paths','archiveInstr'), config.get('Options','runID')))
+
+    if os.path.exists('md5sum_{}.txt'.format(config.get('Options','runID'))):
+        os.chdir(old_wd)
+        return
+    cmd = "md5sum {r}.7za > md5sum_{r}.txt".format(r=config.get('Options','runID'))
+    syslog.syslog("[md5sum_worker] Processing %s\n" % os.path.join(config.get('Paths','archiveInstr'), config.get('Options','runID')))
+    subprocess.check_call(cmd, shell=True)
+
+    os.chdir(old_wd)
+
 def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
     odir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))
     read_geometry = get_read_geometry(odir)
@@ -405,8 +420,8 @@ def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
         s_df = pd.read_csv(os.path.join(odir,'{}_samplesheet.tsv'.format(mqc_conf['title'])),sep='\t')
         s_df.index = s_df['Sample_ID']
 
-        max_260_230 = s_df['260/230'].max() if '260/230' in s_df.columns else 3
-        max_260_280 = s_df['260/280'].max() if '260/280' in s_df.columns else 3
+        max_260_230 = float(s_df['260/230'].max()) if '260/230' in s_df.columns else 3
+        max_260_280 = float(s_df['260/280'].max()) if '260/280' in s_df.columns else 3
 
         MAX = {
             'RIN': 10,
@@ -422,6 +437,7 @@ def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
 
         s_df.drop(['Sample_ID'], axis=1,inplace=True)
         s_df.dropna(how='all', axis=1, inplace=True)
+        s_df = s_df.round(2)
         s_dict = s_df.to_dict(orient='index')
 
         pconfig = {}
@@ -482,6 +498,19 @@ def multiqc_worker(d) :
             )
     syslog.syslog("[multiqc_worker] Processing %s\n" % d)
     subprocess.check_call(cmd, shell=True)
+
+    align_dir = os.path.join(os.environ["TMPDIR"],"analysis_{}".format(pname))
+    cmd = "{multiqc_cmd} {multiqc_opts} --config {conf} {flow_dir}/QC_{pname} {flow_dir}/{pname} {align_dir} --filename {flow_dir}/QC_{pname}/multiqc_{pname}_full.html".format(
+            multiqc_cmd = config.get("MultiQC", "multiqc_command"),
+            multiqc_opts = config.get("MultiQC", "multiqc_options"),
+            conf = conf_name,
+            align_dir = align_dir,
+            flow_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
+            pname=pname,
+            )
+    syslog.syslog("[multiqc_worker] Processing %s\n" % d)
+    subprocess.check_call(cmd, shell=True)
+
     os.chdir(oldWd)
 
 def multiqc_stats(project_dirs) :
@@ -494,10 +523,17 @@ def multiqc_stats(project_dirs) :
         os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),'data',config.get('Options','runID'),'RunInfo.xml'),
         os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'RunInfo.xml'),
         )
-    shutil.copyfile(
-        os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),'data',config.get('Options','runID'),'RunParameters.xml'),
-        os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'RunParameters.xml'),
-        )
+    #Illumina sequencer update - RunParameters.xml -> runParameters.xml
+    if os.path.isfile(os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),'data',config.get('Options','runID'),'RunParameters.xml')):
+        shutil.copyfile(
+            os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),'data',config.get('Options','runID'),'RunParameters.xml'),
+            os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'RunParameters.xml'),
+            )
+    else:
+        shutil.copyfile(
+            os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),'data',config.get('Options','runID'),'runParameters.xml'),
+            os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'RunParameters.xml'),
+            )
 
     #Illumina interop
     cmd = "interop_summary {} --csv=1 > {}".format(
@@ -567,7 +603,7 @@ def instrument_archive_worker(config):
     if not os.path.exists(os.path.join(config.get('Paths','archiveInstr'), config.get('Options','runID'))):
         os.makedirs(os.path.join(config.get('Paths','archiveInstr'), config.get('Options','runID')),exist_ok=True)
     if os.path.exists(os.path.join(config.get('Paths','archiveInstr'), config.get('Options','runID'), '{}.7za'.format(config.get('Options','runID')))):
-        os.remove(os.path.join(config.get('Paths','archiveInstr'), config.get('Options','runID'), '{}.7za'.format(config.get('Options','runID'))))
+        return
     pw = None
     if config.get("Options","SensitiveData") == "1":
         pw = subprocess.check_output("xkcdpass -n 5 -d '-' -v '[a-z]'",shell=True).decode().strip('\n')
@@ -667,6 +703,70 @@ def get_software_versions(config):
         sf.write(software)
     return software
 
+def full_align(config):
+    old_wd = os.getcwd()
+    os.chdir(os.environ["TMPDIR"])
+    project_names = get_project_names(get_project_dirs(config))
+    for p in project_names:
+        os.makedirs(os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p)), exist_ok=True)
+        os.makedirs(os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"src"), exist_ok=True)
+        os.makedirs(os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"data"), exist_ok=True)
+
+        os.chdir(os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p)))
+        base_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))
+
+        #create config.yaml
+        cmd = "/opt/conda/bin/python /opt/conda/bin/configmaker.py {runfolder} -p {project} -s {samplesheet} --libkit '{lib}' --create-fastq-dir".format(
+            runfolder = base_dir,
+            project = p,
+            lib = config.get("Options","Libprep"),
+            samplesheet = os.path.join(base_dir,"SampleSheet.csv"),
+        )
+        subprocess.check_call(cmd,shell=True)
+
+        #copy snakemake pipeline
+        shutil.copytree(
+            "/opt/rna-seq",
+            os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"src","rna-seq"),
+            dirs_exits_ok=True
+        )
+
+        #copy template Snakefile for pipeline
+        shutil.copyfile(
+            os.path.join("/opt","snakefiles","Snakefile-{}".format("rna-seq")),
+            os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"Snakefile"),
+            )
+
+        #run snakemake pipeline
+        cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR -j32 -p qc_all")
+        subprocess.check_call(cmd,shell=True)
+
+        #move fastp
+        if not os.path.exists(os.path.join(base_dir, "QC_{}".format(p), "fastp")):
+            os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "fastp"))
+        shutil.copytree(
+            os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"data/tmp/rnaseq/filter/merged_fastq/trimmed/fastp/qc"),
+            os.path.join(base_dir,"QC_{}".format(p),"fastp","qc"),
+            dirs_exist_ok=True
+        )
+
+        #move star
+        star_path = os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"data/tmp/rnaseq/align/star")
+        star_keep = [os.path.join(star_path,x) for x in os.listdir(star_path) if ((not x.endswith(".wig")) or (not x == "QC"))]
+        if not os.path.exists(os.path.join(base_dir, "QC_{}".format(p), "star")):
+            os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "star"))
+        for x in star_keep:
+            shutil.copy2(x,os.path.join(base_dir, "QC_{}".format(p), "star"))
+
+        #move picard
+        shutil.copytree(
+            os.path.join(star_path,"QC","picard"),
+            os.path.join(base_dir,"QC_{}".format(p),"picard"),
+            dirs_exist_ok=True
+        )
+
+    os.chdir(old_wd)
+    return True
 
 #All steps that should be run after `make` go here
 def postMakeSteps(config) :
@@ -730,6 +830,8 @@ def postMakeSteps(config) :
     p.close()
     p.join()
 
+    full_align(config)
+
     #customer_samplesheet
     samplesheet_worker(config,projectDirs)
 
@@ -781,5 +883,7 @@ def finalize(config):
     md5sum_archive_worker(config)
     #archive instruments
     instrument_archive_worker(config)
+    #md5sum instrument
+    md5sum_instrument_worker(config)
 
     return None

@@ -28,8 +28,12 @@ def flowCellProcessed(config) :
         lanes = "_lanes{}".format(lanes)
 
     flowcells = fm.list_flowcell_all(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID")))
-    if not flowcells.empty:
-        return False if rerunFlowcell(config) else True
+    path = "%s/%s%s/fastq.made" % (config.get("Paths","outputDir"), config.get("Options","runID"), lanes)
+    if os.access(path, os.F_OK) or (not flowcells.empty):
+        if rerunFlowcell(config):
+            return False
+        else:
+            return True
     return False
 
 #Determine if the flowcell should be rerun
