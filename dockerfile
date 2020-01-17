@@ -65,8 +65,9 @@ COPY files/logo_ntnu.png /opt/images/
 
 ADD https://api.github.com/repos/gcfntnu/configmaker/git/refs/heads/master conf_version.json
 RUN pip install --upgrade 'git+https://github.com/gcfntnu/configmaker#egg=configmaker'
-ADD https://api.github.com/repos/flatberg/MultiQC/git/refs/heads/master mqc_version.json
-RUN pip install --upgrade 'git+https://github.com/flatberg/MultiQC#egg=multiqc'
+ADD https://api.github.com/repos/flatberg/MultiQC/git/refs/heads/bfq mqc_version.json
+#RUN pip install --upgrade 'git+https://github.com/flatberg/MultiQC/tree/bfq#egg=multiqc'
+RUN pip install https://github.com/flatberg/MultiQC/archive/bfq.zip
 
 ADD https://api.github.com/repos/gcfntnu/gcfdb/git/refs/heads/dev conf_version.json
 RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout dev 
@@ -89,7 +90,8 @@ ADD ./files/snakefiles /opt/snakefiles
 
 ENV TMPDIR=/instrument-archive/tmp
 ENV EXT_DIR=/instrument-archive/ext
-ENV SINGULARITY_BINDPATH=/bfq,/instrument-archive
+ENV GCF_EXT=$EXT_DIR
+ENV SINGULARITY_BINDPATH=/bfq,/instrument-archive,/opt/gcfdb
 ENV SINGULARITY_CACHEDIR=$TMPDIR/singularity/
 ENV SINGULARITY_TMPDIR=$SINGULARITY_CACHEDIR/tmp
 ENV SINGULARITY_LOCALCACHEDIR=$SINGULARITY_CACHEDIR/tmp/

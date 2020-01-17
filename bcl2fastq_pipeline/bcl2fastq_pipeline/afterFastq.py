@@ -55,6 +55,15 @@ QC_PLACEMENT = {
     'RIN': 60
 }
 
+PIPELINE_MAP = {
+    'Lexogen SENSE Total RNA-Seq Library Prep Kit (w/RiboCop rRNA Depletion Kit V1.2)': 'rna-seq',
+    'Lexogen SENSE mRNA-Seq Library Prep Kit V2': 'rna-seq',
+    'Illumina TruSeq Stranded Total RNA Library Prep (Human/Mouse/Rat)': 'rna-seq',
+    'Illumina TruSeq Stranded Total RNA Library Prep (Globin)': 'rna-seq',
+    'Illumina TruSeq Stranded mRNA Library Prep': 'rna-seq'
+}
+
+
 def bgzip_worker(fname) :
     global localConfig
     config = localConfig
@@ -68,7 +77,7 @@ def clumpify_worker(fname):
     global localConfig
     config = localConfig
 
-    if config.get("Options","SingleCell") == "1":
+    if "10X Genomics" in config.get("Options","Libprep"):
         return
 
     #We use R1 files to construct R2 filenames for paired end
@@ -188,7 +197,7 @@ def fastq_screen_worker(fname) :
     project_nr = get_gcf_name(fname)
 
     #Skip read 1 when single cell
-    if config.get("Options","SingleCell") == '1' and ("R1.fastq" in fname or "R1_001.fastq" in fname):
+    if "10X Genomics" in config.get("Options","Libprep") and ("R1.fastq" in fname or "R1_001.fastq" in fname):
         return
 
     ofile="{}/{}/QC_{}/fastq_screen/{}".format(
@@ -221,7 +230,7 @@ def suprDUPr_worker(fname) :
     global localConfig
     config = localConfig
 
-    if config.get("Options","SingleCell") == "1":
+    if "10X Genomics" in config.get("Options","Libprep"):
         return
 
     ofname = "{}/filtered/{}".format(os.path.dirname(fname),os.path.basename(fname).replace(".fastq.gz","_filtered.fastq.gz"))
@@ -416,7 +425,7 @@ def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
     if read_geometry.startswith('Single end'):
         mqc_conf['extra_fn_clean_exts'].append('_R1')
 
-    if os.path.exists(os.path.join(odir,'{}_samplesheet.tsv'.format(mqc_conf['title']))) and config.get("Options","SingleCell") == '0':
+    if os.path.exists(os.path.join(odir,'{}_samplesheet.tsv'.format(mqc_conf['title']))) and "10X Genomics" not in config.get("Options","Libprep"):
         s_df = pd.read_csv(os.path.join(odir,'{}_samplesheet.tsv'.format(mqc_conf['title'])),sep='\t')
         s_df.index = s_df['Sample_ID']
 
@@ -489,16 +498,19 @@ def multiqc_worker(d) :
     in_conf.close()
     out_conf.close()
 
-    cmd = "{multiqc_cmd} {multiqc_opts} --config {conf} {flow_dir}/QC_{pname} {flow_dir}/{pname} --filename {flow_dir}/QC_{pname}/multiqc_{pname}.html".format(
+    modules = ["fastq_screen","star","picard","fastp","fastqc","custom_content"]
+
+    cmd = "{multiqc_cmd} {multiqc_opts} --config {conf} {flow_dir}/QC_{pname} {flow_dir}/{pname} -m {modules} --filename {flow_dir}/QC_{pname}/multiqc_{pname}.html".format(
             multiqc_cmd = config.get("MultiQC", "multiqc_command"),
             multiqc_opts = config.get("MultiQC", "multiqc_options"),
             conf = conf_name,
             flow_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
             pname=pname,
+            modules = " -m ".join(modules)
             )
     syslog.syslog("[multiqc_worker] Processing %s\n" % d)
     subprocess.check_call(cmd, shell=True)
-
+    """
     align_dir = os.path.join(os.environ["TMPDIR"],"analysis_{}".format(pname))
     cmd = "{multiqc_cmd} {multiqc_opts} --config {conf} {flow_dir}/QC_{pname} {flow_dir}/{pname} {align_dir} --filename {flow_dir}/QC_{pname}/multiqc_{pname}_full.html".format(
             multiqc_cmd = config.get("MultiQC", "multiqc_command"),
@@ -510,7 +522,7 @@ def multiqc_worker(d) :
             )
     syslog.syslog("[multiqc_worker] Processing %s\n" % d)
     subprocess.check_call(cmd, shell=True)
-
+    """
     os.chdir(oldWd)
 
 def multiqc_stats(project_dirs) :
@@ -594,7 +606,7 @@ def archive_worker(config):
                 flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
                 pnr = p
             )
-        if config.get("Options","singleCell") == "1":
+        if "10X Genomics" in config.get("Options","Libprep"):
             cmd += " {}".format(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),config.get("Options","runID").split("_")[-1][1:]))
         syslog.syslog("[archive_worker] Zipping %s\n" % os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'{}.7za'.format(p)))
         subprocess.check_call(cmd, shell=True)
@@ -690,7 +702,7 @@ def get_project_dirs(config):
 def get_software_versions(config):
     versions = {}
     versions['GCF-NTNU bcl2fastq pipeline'] = subprocess.check_output("cat /bfq_version/bfq.version",shell=True).rstrip()
-    if config.get("Options","SingleCell") == "1":
+    if "10X Genomics" in config.get("Options","Libprep"):
         subprocess.check_output("cellranger mkfastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[-1].rstrip().strip(b'(').strip(b')')
     else:
         versions['bcl2fastq'] = subprocess.check_output("bcl2fastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[1].rstrip()
@@ -703,8 +715,60 @@ def get_software_versions(config):
         sf.write(software)
     return software
 
+def post_rna_seq(var_d):
+    """
+    #move fastp
+    if not os.path.exists(os.path.join(base_dir, "QC_{}".format(p), "fastp")):
+        os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "fastp"))
+    cmd = "cp -r {} {}".format(
+        os.path.join(os.environ["TMPDIR"], "analysis_{}".format(p),"data/tmp/rnaseq/filter/merged_fastq/trimmed/fastp/qc"),
+        os.path.join(base_dir, "QC_{}".format(p), "fastp", "qc"),
+    )
+    subprocess.check_call(cmd, shell=True)
+
+    #move star
+    star_path = os.path.join(os.environ["TMPDIR"], "analysis_{}".format(p), "data/tmp/rnaseq/align/star")
+    star_keep = [os.path.join(star_path, x) for x in os.listdir(star_path) if ((not x.endswith(".wig")) and (not x == "QC"))]
+    if not os.path.exists(os.path.join(base_dir, "QC_{}".format(p), "star")):
+        os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "star"))
+    for x in star_keep:
+        shutil.copy2(x, os.path.join(base_dir, "QC_{}".format(p), "star"))
+
+    #move picard
+    cmd = "cp -r {} {}".format(
+        os.path.join(star_path, "QC", "picard"),
+        os.path.join(base_dir, "QC_{}".format(p), "picard"),
+    )
+    subprocess.check_call(cmd, shell=True)
+    """
+    p = var_d['p']
+    base_dir = var_d['base_dir']
+    #move expressions and bam
+    cmd = "cp -rL {} {}".format(
+        os.path.join(os.environ["TMPDIR"], "analysis_{}".format(p),"data","tmp","rnaseq","bfq"),
+        os.path.join(base_dir, "QC_{}".format(p), "rnaseq"),
+    )
+    subprocess.check_call(cmd, shell=True)
+
+    #move logs
+    cmd = "cp -r {} {}".format(
+        os.path.join(os.environ["TMPDIR"], "analysis_{}".format(p),"logs"),
+        os.path.join(base_dir, "QC_{}".format(p)),
+    )
+    subprocess.check_call(cmd, shell=True)
+    return None
+
+POST_PIPELINE_MAP = {
+    'rna-seq': post_rna_seq,
+}
+
 def full_align(config):
     old_wd = os.getcwd()
+    libprep = config.get("Options","Libprep")
+    pipeline = PIPELINE_MAP.get(libprep,None)
+    if not pipeline:
+        return False
+    base_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))
     os.chdir(os.environ["TMPDIR"])
     project_names = get_project_names(get_project_dirs(config))
     for p in project_names:
@@ -713,60 +777,41 @@ def full_align(config):
         os.makedirs(os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"data"), exist_ok=True)
 
         os.chdir(os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p)))
-        base_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))
 
         #create config.yaml
-        cmd = "/opt/conda/bin/python /opt/conda/bin/configmaker.py {runfolder} -p {project} -s {samplesheet} --libkit '{lib}' --create-fastq-dir".format(
+        if os.path.exists("config.yaml"):
+            shutil.rmtree("data/raw/",ignore_errors=True)
+        cmd = "/opt/conda/bin/python /opt/conda/bin/configmaker.py {runfolder} -p {project} -s {samplesheet} -S {sample_sub} --libkit '{lib}' --create-fastq-dir".format(
             runfolder = base_dir,
             project = p,
-            lib = config.get("Options","Libprep"),
+            lib = libprep,
             samplesheet = os.path.join(base_dir,"SampleSheet.csv"),
+            sample_sub = os.path.join(base_dir,"Sample-Submission-Form.xlsx"),
         )
         subprocess.check_call(cmd,shell=True)
 
         #copy snakemake pipeline
-        shutil.copytree(
-            "/opt/rna-seq",
-            os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"src","rna-seq"),
-            dirs_exits_ok=True
+        cmd = "cp -r {} {}".format(
+            os.path.join("/opt",pipeline),
+            os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"src",pipeline)
         )
+        subprocess.check_call(cmd,shell=True)
 
         #copy template Snakefile for pipeline
         shutil.copyfile(
-            os.path.join("/opt","snakefiles","Snakefile-{}".format("rna-seq")),
+            os.path.join("/opt","snakefiles","Snakefile-{}".format(pipeline)),
             os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"Snakefile"),
             )
 
         #run snakemake pipeline
-        cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR -j32 -p qc_all")
+        cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR -j32 -p bfq_all"
         subprocess.check_call(cmd,shell=True)
 
-        #move fastp
-        if not os.path.exists(os.path.join(base_dir, "QC_{}".format(p), "fastp")):
-            os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "fastp"))
-        shutil.copytree(
-            os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"data/tmp/rnaseq/filter/merged_fastq/trimmed/fastp/qc"),
-            os.path.join(base_dir,"QC_{}".format(p),"fastp","qc"),
-            dirs_exist_ok=True
-        )
-
-        #move star
-        star_path = os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"data/tmp/rnaseq/align/star")
-        star_keep = [os.path.join(star_path,x) for x in os.listdir(star_path) if ((not x.endswith(".wig")) or (not x == "QC"))]
-        if not os.path.exists(os.path.join(base_dir, "QC_{}".format(p), "star")):
-            os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "star"))
-        for x in star_keep:
-            shutil.copy2(x,os.path.join(base_dir, "QC_{}".format(p), "star"))
-
-        #move picard
-        shutil.copytree(
-            os.path.join(star_path,"QC","picard"),
-            os.path.join(base_dir,"QC_{}".format(p),"picard"),
-            dirs_exist_ok=True
-        )
+        POST_PIPELINE_MAP[pipeline]({'p': p, 'base_dir': base_dir})
 
     os.chdir(old_wd)
     return True
+
 
 #All steps that should be run after `make` go here
 def postMakeSteps(config) :

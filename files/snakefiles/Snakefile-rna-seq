@@ -5,4 +5,6 @@ configfile:
 
 include:
     'src/rna-seq/rna-seq.sm'
+include:
+    'src/rna-seq/rules/analysis/bfq.rules'
     
