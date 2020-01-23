@@ -69,12 +69,16 @@ ADD https://api.github.com/repos/flatberg/MultiQC/git/refs/heads/bfq mqc_version
 #RUN pip install --upgrade 'git+https://github.com/flatberg/MultiQC/tree/bfq#egg=multiqc'
 RUN pip install https://github.com/flatberg/MultiQC/archive/bfq.zip
 
-ADD https://api.github.com/repos/gcfntnu/gcfdb/git/refs/heads/dev conf_version.json
-RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout dev 
+#FOR DEV
+#ADD https://api.github.com/repos/gcfntnu/gcfdb/git/refs/heads/dev conf_version.json
+#RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout dev 
+RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout tags/0.1
 ENV GCF_DB=/opt/gcfdb
 
-ADD https://api.github.com/repos/gcfntnu/rna-seq/git/refs/heads/dev conf_version.json
-RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout dev
+#FOR DEV
+#ADD https://api.github.com/repos/gcfntnu/rna-seq/git/refs/heads/dev conf_version.json
+#RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout dev
+RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout tags/0.1
 
 COPY ./bcl2fastq_pipeline /opt/bcl2fastq_pipeline
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline/flowcell_manager
@@ -91,7 +95,7 @@ ADD ./files/snakefiles /opt/snakefiles
 ENV TMPDIR=/instrument-archive/tmp
 ENV EXT_DIR=/instrument-archive/ext
 ENV GCF_EXT=$EXT_DIR
-ENV SINGULARITY_BINDPATH=/bfq,/instrument-archive,/opt/gcfdb
+ENV SINGULARITY_BINDPATH=/mnt,/instrument-archive,/opt/gcfdb
 ENV SINGULARITY_CACHEDIR=$TMPDIR/singularity/
 ENV SINGULARITY_TMPDIR=$SINGULARITY_CACHEDIR/tmp
 ENV SINGULARITY_LOCALCACHEDIR=$SINGULARITY_CACHEDIR/tmp/

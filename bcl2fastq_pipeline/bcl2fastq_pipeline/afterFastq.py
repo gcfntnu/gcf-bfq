@@ -63,6 +63,14 @@ PIPELINE_MAP = {
     'Illumina TruSeq Stranded mRNA Library Prep': 'rna-seq'
 }
 
+PIPELINE_MULTIQC_MODULES = {
+    'rna-seq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"]
+}
+
+PIPELINE_ORGANISMS = {
+    'rna-seq': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus']
+}
+
 
 def bgzip_worker(fname) :
     global localConfig
@@ -343,10 +351,10 @@ def get_read_geometry(run_dir):
         return 'Read geometry could not be automatically determined.'
 
 def get_sequencer(run_id):
-	return SEQUENCERS.get(run_id.split('_')[1],'Sequencer could not be automatically determined.')
+    return SEQUENCERS.get(run_id.split('_')[1],'Sequencer could not be automatically determined.')
 
 def get_sequencer_outputfolder(run_id):
-	return SEQUENCER_OUTPUTFOLDER.get(run_id.split('_')[1],'Sequencer could not be automatically determined.')
+    return SEQUENCER_OUTPUTFOLDER.get(run_id.split('_')[1],'Sequencer could not be automatically determined.')
 
 def md5sum_worker(config):
     global localConfig
@@ -455,7 +463,7 @@ def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
             pconfig[col]['max'] = MAX.get(col,None)
             pconfig[col]['scale'] = COL_SCALE.get(col,False)
 
-
+        """
         data = {}
         if read_geometry.startswith('Paired end') and not seq_stats:
             for k,v in s_dict.items():
@@ -463,7 +471,8 @@ def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
                 data['{}_R2'.format(k)] = v
         else:
             data = s_dict
-
+        """
+        data = s_dict
         general_statistics = {
             'plot_type': 'generalstats',
             'pconfig': [pconfig],
@@ -477,6 +486,10 @@ def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
 
     return mqc_conf
 
+def get_pipeline_multiqc_modules(config):
+    modules = PIPELINE_MULTIQC_MODULES.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),None)
+    return ('-m ' + ' -m '.join(modules)) if modules else '-e fastqc_rnaseq'
+
 def multiqc_worker(d) :
     global localConfig
     config = localConfig
@@ -487,7 +500,8 @@ def multiqc_worker(d) :
     pname = dname[-1]
 
     conf_name = "{}/{}/QC_{}/.multiqc_config.yaml".format(config.get('Paths','outputDir'), config.get('Options','runID'),pname)
-    in_conf = open("/config/multiqc_config.yaml","r")
+    pipeline = PIPELINE_MAP.get(config.get("Options","Libprep"),None)
+    in_conf = open("/config/multiqc_config" + ("-" + pipeline if pipeline else "") + ".yaml","r")
     out_conf = open(conf_name,"w+")
     mqc_conf = yaml.load(in_conf,Loader=yaml.FullLoader)
 
@@ -498,31 +512,17 @@ def multiqc_worker(d) :
     in_conf.close()
     out_conf.close()
 
-    modules = ["fastq_screen","star","picard","fastp","fastqc","custom_content"]
+    cmd = "{multiqc_cmd} {multiqc_opts} --config {conf} {flow_dir}/QC_{pname} {flow_dir}/{pname} {modules} --filename {flow_dir}/QC_{pname}/multiqc_{pname}.html".format(
+            multiqc_cmd = config.get("MultiQC", "multiqc_command"),
+            multiqc_opts = config.get("MultiQC", "multiqc_options"),
+            conf = conf_name,
+            flow_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
+            pname=pname,
+            modules = get_pipeline_multiqc_modules(config)
+            )
+    syslog.syslog("[multiqc_worker] Processing %s\n" % d)
+    subprocess.check_call(cmd, shell=True)
 
-    cmd = "{multiqc_cmd} {multiqc_opts} --config {conf} {flow_dir}/QC_{pname} {flow_dir}/{pname} -m {modules} --filename {flow_dir}/QC_{pname}/multiqc_{pname}.html".format(
-            multiqc_cmd = config.get("MultiQC", "multiqc_command"),
-            multiqc_opts = config.get("MultiQC", "multiqc_options"),
-            conf = conf_name,
-            flow_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
-            pname=pname,
-            modules = " -m ".join(modules)
-            )
-    syslog.syslog("[multiqc_worker] Processing %s\n" % d)
-    subprocess.check_call(cmd, shell=True)
-    """
-    align_dir = os.path.join(os.environ["TMPDIR"],"analysis_{}".format(pname))
-    cmd = "{multiqc_cmd} {multiqc_opts} --config {conf} {flow_dir}/QC_{pname} {flow_dir}/{pname} {align_dir} --filename {flow_dir}/QC_{pname}/multiqc_{pname}_full.html".format(
-            multiqc_cmd = config.get("MultiQC", "multiqc_command"),
-            multiqc_opts = config.get("MultiQC", "multiqc_options"),
-            conf = conf_name,
-            align_dir = align_dir,
-            flow_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
-            pname=pname,
-            )
-    syslog.syslog("[multiqc_worker] Processing %s\n" % d)
-    subprocess.check_call(cmd, shell=True)
-    """
     os.chdir(oldWd)
 
 def multiqc_stats(project_dirs) :
@@ -716,42 +716,17 @@ def get_software_versions(config):
     return software
 
 def post_rna_seq(var_d):
-    """
-    #move fastp
-    if not os.path.exists(os.path.join(base_dir, "QC_{}".format(p), "fastp")):
-        os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "fastp"))
-    cmd = "cp -r {} {}".format(
-        os.path.join(os.environ["TMPDIR"], "analysis_{}".format(p),"data/tmp/rnaseq/filter/merged_fastq/trimmed/fastp/qc"),
-        os.path.join(base_dir, "QC_{}".format(p), "fastp", "qc"),
-    )
-    subprocess.check_call(cmd, shell=True)
-
-    #move star
-    star_path = os.path.join(os.environ["TMPDIR"], "analysis_{}".format(p), "data/tmp/rnaseq/align/star")
-    star_keep = [os.path.join(star_path, x) for x in os.listdir(star_path) if ((not x.endswith(".wig")) and (not x == "QC"))]
-    if not os.path.exists(os.path.join(base_dir, "QC_{}".format(p), "star")):
-        os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "star"))
-    for x in star_keep:
-        shutil.copy2(x, os.path.join(base_dir, "QC_{}".format(p), "star"))
-
-    #move picard
-    cmd = "cp -r {} {}".format(
-        os.path.join(star_path, "QC", "picard"),
-        os.path.join(base_dir, "QC_{}".format(p), "picard"),
-    )
-    subprocess.check_call(cmd, shell=True)
-    """
     p = var_d['p']
     base_dir = var_d['base_dir']
     #move expressions and bam
-    cmd = "cp -rL {} {}".format(
+    cmd = "rsync -rvL {}/ {}".format(
         os.path.join(os.environ["TMPDIR"], "analysis_{}".format(p),"data","tmp","rnaseq","bfq"),
-        os.path.join(base_dir, "QC_{}".format(p), "rnaseq"),
+        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
     )
     subprocess.check_call(cmd, shell=True)
 
     #move logs
-    cmd = "cp -r {} {}".format(
+    cmd = "rsync -rvL {}/ {}".format(
         os.path.join(os.environ["TMPDIR"], "analysis_{}".format(p),"logs"),
         os.path.join(base_dir, "QC_{}".format(p)),
     )
@@ -779,14 +754,14 @@ def full_align(config):
         os.chdir(os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p)))
 
         #create config.yaml
-        if os.path.exists("config.yaml"):
-            shutil.rmtree("data/raw/",ignore_errors=True)
-        cmd = "/opt/conda/bin/python /opt/conda/bin/configmaker.py {runfolder} -p {project} -s {samplesheet} -S {sample_sub} --libkit '{lib}' --create-fastq-dir".format(
+        cmd = "/opt/conda/bin/python /opt/conda/bin/configmaker.py {runfolder} -p {project} -s {samplesheet} -S {sample_sub} --libkit '{lib}' --machine '{machine}' {create_fastq}".format(
             runfolder = base_dir,
             project = p,
             lib = libprep,
             samplesheet = os.path.join(base_dir,"SampleSheet.csv"),
             sample_sub = os.path.join(base_dir,"Sample-Submission-Form.xlsx"),
+            machine = get_sequencer(config.get("Options","runID")),
+            create_fastq = " --create-fastq-dir" if not os.path.exists("data/raw/fastq") else ""
         )
         subprocess.check_call(cmd,shell=True)
 
@@ -804,12 +779,29 @@ def full_align(config):
             )
 
         #run snakemake pipeline
-        cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR -j32 -p bfq_all"
+        cmd = "snakemake --reason --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR -j32 -p bfq_all"
         subprocess.check_call(cmd,shell=True)
 
         POST_PIPELINE_MAP[pipeline]({'p': p, 'base_dir': base_dir})
 
+        analysis_dir = os.path.join(config.get("Paths","analysisDir"),"{}_{}".format(p,config.get("Options","runID").split("_")[0]))
+        """
+        cmd = "cp -r --no-dereference --no-preserve=mode {src} {dst} && touch {transfer_done} && rm -rf {src}".format(
+            src = os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p)),
+            dst = analysis_dir,
+            transfer_done = os.path.join(analysis_dir,"transfer.done")
+        )
+        """
+        cmd = "rsync -r --copy-links --times {src}/ {dst} && touch {transfer_done} && rm -rf {src}".format(
+            src = os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p)),
+            dst = analysis_dir,
+            transfer_done = os.path.join(analysis_dir,"transfer.done")
+        )
+        #subprocess.check_call(cmd,shell=True)
+        subprocess.Popen(cmd, shell=True, stdin=None, stdout=None, stderr=None, close_fds=True)
+
     os.chdir(old_wd)
+    open(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made"), "w").close()
     return True
 
 
@@ -875,7 +867,8 @@ def postMakeSteps(config) :
     p.close()
     p.join()
 
-    full_align(config)
+    if config.get("Options","Organism") in PIPELINE_ORGANISMS.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),[]) and not os.path.exists(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made")):
+        full_align(config)
 
     #customer_samplesheet
     samplesheet_worker(config,projectDirs)
