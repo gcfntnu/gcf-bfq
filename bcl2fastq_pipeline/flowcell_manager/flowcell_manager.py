@@ -48,6 +48,7 @@ def archive_flowcell(**args):
         confirm = input("Delete? (yes/no): ").lower()
     if confirm == 'yes':
         deletions = [os.path.join(flowcell,pid) for pid in fc_for_deletion['project']]
+        deletions.extend([os.path.join(flowcell,"QC_".format(pid),"bfq") for pid in fc_for_deletion['project']])
         deletions.append("{}/*.fastq.gz".format(flowcell))
         deletions.append("{}/*.7za".format(flowcell))
         cmd = "rm -rf {}".format(" ".join(deletions))

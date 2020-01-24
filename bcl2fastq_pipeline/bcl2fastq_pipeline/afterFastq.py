@@ -728,7 +728,7 @@ def post_rna_seq(var_d):
     #move logs
     cmd = "rsync -rvL {}/ {}".format(
         os.path.join(os.environ["TMPDIR"], "analysis_{}".format(p),"logs"),
-        os.path.join(base_dir, "QC_{}".format(p)),
+        os.path.join(base_dir, "QC_{}".format(p),"logs"),
     )
     subprocess.check_call(cmd, shell=True)
     return None
