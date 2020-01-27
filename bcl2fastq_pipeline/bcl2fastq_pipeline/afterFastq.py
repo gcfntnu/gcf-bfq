@@ -472,7 +472,14 @@ def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
         else:
             data = s_dict
         """
-        data = s_dict
+        data = {}
+        if read_geometry.startswith('Paired end') and not seq_stats and not PIPELINE_MAP.get(config.get("Options","Libprep"),'') == 'rna-seq':
+            for k,v in s_dict.items():
+                data['{}_R1'.format(k)] = v
+                data['{}_R2'.format(k)] = v
+        else:
+            data = s_dict
+        #data = s_dict
         general_statistics = {
             'plot_type': 'generalstats',
             'pconfig': [pconfig],
