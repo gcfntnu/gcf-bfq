@@ -273,35 +273,21 @@ def FastQC_worker(fname) :
     global localConfig
     config = localConfig
     lanes = config.get("Options", "lanes")
-    if lanes != "":
-        lanes = "_lanes{}".format(lanes)
 
     #projectName = fname.split("/")[-3]
     projectName = get_gcf_name(fname)
 
-    libName = fname.split("/")[-2] #The last directory
-    cmd = "%s %s -o %s/%s%s/QC_%s/FASTQC %s" % (
-          config.get("FastQC","fastqc_command"),
-          config.get("FastQC","fastqc_options"),
-          config.get("Paths","outputDir"),
-          config.get("Options","runID"),
-          lanes,
-          projectName,
-          fname)
-
     # Skip if the output exists
-    fastqc_fname = glob.glob("{}/{}{}/QC_{}/FASTQC/*/{}".format(
+    fastqc_fname = glob.glob("{}/{}/QC_{}/FASTQC/*/{}".format(
           config.get("Paths","outputDir"),
           config.get("Options","runID"),
-          lanes,
           projectName,
           os.path.basename(fname).replace(".fastq.gz","_fastqc.zip")
           ))
 
-    fastqc_fname.extend(glob.glob("{}/{}{}/QC_{}/FASTQC/{}".format(
+    fastqc_fname.extend(glob.glob("{}/{}/QC_{}/FASTQC/{}".format(
           config.get("Paths","outputDir"),
           config.get("Options","runID"),
-          lanes,
           projectName,
           os.path.basename(fname).replace(".fastq.gz","_fastqc.zip")
           )))
@@ -309,13 +295,53 @@ def FastQC_worker(fname) :
     if fastqc_fname:
         return
 
-    os.makedirs("%s/%s%s/QC_%s/FASTQC" % (config.get("Paths","outputDir"),
+    os.makedirs("%s/%s/QC_%s/FASTQC" % (
+            config.get("Paths","outputDir"),
+            config.get("Options","runID"),
+            projectName), exist_ok=True
+            )
+
+    cmd = "%s %s -o %s/%s/QC_%s/FASTQC %s" % (
+          config.get("FastQC","fastqc_command"),
+          config.get("FastQC","fastqc_options"),
+          config.get("Paths","outputDir"),
           config.get("Options","runID"),
-          lanes,
-          projectName), exist_ok=True)
+          projectName,
+          fname
+          )
 
     syslog.syslog("[FastQC_worker] Running %s\n" % cmd)
     subprocess.check_call(cmd, shell=True)
+
+def fastp_worker(fname):
+    global localConfig
+    config = localConfig
+
+    if "10X Genomics" in config.get("Options","Libprep"):
+        return
+
+    #We use R1 files to construct R2 filenames for paired end
+    if "R2.fastq.gz" in fname:
+        return
+
+    project_name = get_gcf_name(fname)
+
+    if os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.json".format(os.path.basename(fname).replace("_R1.fastq.gz","")))):
+        return
+
+    in2 = ("--in2=" + fname.replace("R1.fastq.gz","R2.fastq.gz")) if os.path.exists(fname.replace("R1.fastq.gz","R2.fastq.gz")) else ""
+
+    cmd = "{fastp} --in1={in1} {in2} --json={json} --html={html} --thread={thread}".format(
+            fastp = config.get("fastp","command"),
+            in1 = fname,
+            in2 = in2,
+            json = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.json".format(os.path.basename(fname).replace("_R1.fastq.gz",""))),
+            html = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.html".format(os.path.basename(fname).replace("_R1.fastq.gz",""))),
+            thread = config.get("fastp","threads")
+            )
+    syslog.syslog("[fastp_worker] Processing %s\n" % cmd)
+    subprocess.check_call(cmd, shell=True)
+
 
 def toDirs(files) :
     s = set()
@@ -465,21 +491,15 @@ def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
 
         """
         data = {}
-        if read_geometry.startswith('Paired end') and not seq_stats:
-            for k,v in s_dict.items():
-                data['{}_R1'.format(k)] = v
-                data['{}_R2'.format(k)] = v
-        else:
-            data = s_dict
-        """
-        data = {}
         if read_geometry.startswith('Paired end') and not seq_stats and not PIPELINE_MAP.get(config.get("Options","Libprep"),'') == 'rna-seq':
             for k,v in s_dict.items():
                 data['{}_R1'.format(k)] = v
                 data['{}_R2'.format(k)] = v
         else:
             data = s_dict
-        #data = s_dict
+        """
+        data = s_dict
+
         general_statistics = {
             'plot_type': 'generalstats',
             'pconfig': [pconfig],
@@ -495,7 +515,7 @@ def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
 
 def get_pipeline_multiqc_modules(config):
     modules = PIPELINE_MULTIQC_MODULES.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),None)
-    return ('-m ' + ' -m '.join(modules)) if modules else '-e fastqc_rnaseq'
+    return ('-m ' + ' -m '.join(modules)) if modules else '-e fastqc'
 
 def multiqc_worker(d) :
     global localConfig
@@ -773,9 +793,9 @@ def full_align(config):
         subprocess.check_call(cmd,shell=True)
 
         #copy snakemake pipeline
-        cmd = "cp -r {} {}".format(
-            os.path.join("/opt",pipeline),
-            os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"src",pipeline)
+        cmd = "rm -rf {dst} && cp -r {src} {dst}".format(
+            src = os.path.join("/opt",pipeline),
+            dst = os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"src",pipeline)
         )
         subprocess.check_call(cmd,shell=True)
 
@@ -867,6 +887,16 @@ def postMakeSteps(config) :
     p.close()
     p.join()
 
+    #fastp
+    if not PIPELINE_MAP.get(config.get("Options","Libprep"),"") in ['rna-seq']:
+        for d in get_project_dirs(config):
+            project_name = os.path.basename(d)
+            os.makedirs(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp"), exist_ok=True)
+
+        p = mp.Pool(int(int(config.get("system","threads"))/int(config.get("fastp","threads"))))
+        p.map(fastp_worker, sampleFiles)
+        p.close()
+        p.join()
 
     #fastq_screen
     p = mp.Pool(int(config.get("Options", "fastqScreenThreads")))

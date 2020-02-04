@@ -1,10 +1,9 @@
-FROM continuumio/miniconda3
+FROM continuumio/miniconda3:4.7.12
 
 RUN conda update conda -y
-RUN pip install --upgrade pip
+RUN conda install -y pip
 
-RUN apt update && apt install -y -q git alien tabix pigz gzip openjdk-8-jdk openjdk-8-jre zlibc zlib1g-dev zlib1g
-RUN conda update conda
+RUN apt update && apt install -y -q git alien tabix pigz gzip zlibc zlib1g-dev zlib1g
 RUN conda config --add channels conda-forge
 RUN conda config --add channels bioconda
 RUN conda install -y fastq-screen bowtie2 fastqc bbmap pandas bioblend reportlab xlrd
@@ -57,36 +56,33 @@ ENV DEBIAN_FRONTEND="noninteractive"
 RUN wget -O- http://neuro.debian.net/lists/stretch.de-md.full | tee /etc/apt/sources.list.d/neurodebian.sources.list
 RUN ["/bin/bash", "-c", "set -o pipefail && apt-key adv --recv-keys --keyserver hkp://pool.sks-keyservers.net:80 0xA5D32F012649A5A9"]
 RUN apt-get update --yes && apt install -y singularity-container 
-
+RUN apt update && apt install -y curl
 RUN ["/bin/bash", "-c", "set -o pipefail && curl -fsSL get.nextflow.io | /bin/bash"]
 RUN mv nextflow /usr/local/bin
 
 COPY files/logo_ntnu.png /opt/images/
 
-ARG TAG=0.1
+RUN conda install -y fastp cutadapt
 
-#ADD https://api.github.com/repos/gcfntnu/configmaker/git/refs/heads/master conf_version.json
-#RUN pip install --upgrade 'git+https://github.com/gcfntnu/configmaker#egg=configmaker'
-RUN pip install https://github.com/gcfntnu/configmaker/archive/$TAG.zip
+ARG TAG=0
+RUN echo "BUILDING WITH TAG = ${TAG}"
 
-#ADD https://api.github.com/repos/flatberg/MultiQC/git/refs/heads/bfq mqc_version.json
-#RUN pip install --upgrade 'git+https://github.com/flatberg/MultiQC/tree/bfq#egg=multiqc'
-#RUN pip install https://github.com/flatberg/MultiQC/archive/bfq.zip
-RUN pip install https://github.com/gcfntnu/MultiQC/archive/$TAG.zip
+ADD https://api.github.com/repos/gcfntnu/configmaker/git/refs/heads/bfq-dev conf_version
+RUN if [ ${TAG} -eq 0 ] ; then pip install https://github.com/gcfntnu/configmaker/archive/bfq-dev.zip ; else pip install https://github.com/gcfntnu/configmaker/archive/$TAG.zip ; fi
 
-#FOR DEV
-#ADD https://api.github.com/repos/gcfntnu/gcfdb/git/refs/heads/dev gcfdb_version.json
-#RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout dev 
-RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout tags/$TAG
+ADD https://api.github.com/repos/gcfntnu/MultiQC/git/refs/heads/bfq-dev multiqc_version
+RUN if [ ${TAG} -eq 0 ] ; then pip install https://github.com/gcfntnu/MultiQC/archive/bfq-dev.zip ; else pip install https://github.com/gcfntnu/MultiQC/archive/$TAG.zip ; fi
+
+ADD https://api.github.com/repos/gcfntnu/gcfdb/git/refs/heads/bfq-dev gcfdb_version
+RUN if [ ${TAG} -eq 0 ] ; then cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout bfq-dev ; else cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout tags/$TAG ; fi
 ENV GCF_DB=/opt/gcfdb
 
-#FOR DEV
-#ADD https://api.github.com/repos/gcfntnu/rna-seq/git/refs/heads/dev rnaseq_version.json
-#RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout dev
-RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout tags/$TAG
+ADD https://api.github.com/repos/gcfntnu/rna-seq/git/refs/heads/bfq-dev rnaseq_version
+RUN if [ ${TAG} -eq 0 ] ; then cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout bfq-dev ; else cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout tags/$TAG ; fi
 
-#COPY ./bcl2fastq_pipeline /opt/bcl2fastq_pipeline
-RUN cd /tmp && git clone https://github.com/gcfntnu/gcf-bfq.git && cd gcf-bfq && git checkout tags/$TAG && cp -r bcl2fastq_pipeline /opt
+
+COPY ./bcl2fastq_pipeline /opt/bcl2fastq_pipeline
+RUN if [ ${TAG} -ne 0 ] ; then rm -rf /opt/bcl2fastq_pipeline && cd /tmp && git clone https://github.com/gcfntnu/gcf-bfq.git && cd gcf-bfq && git checkout tags/$TAG && cp -r bcl2fastq_pipeline /opt ; fi
 
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline/flowcell_manager
 
@@ -98,6 +94,7 @@ RUN ./setup.py install
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline
 
 ADD ./files/snakefiles /opt/snakefiles
+ADD ./files/qiaseq /opt/qiaseq
 
 ENV TMPDIR=/instrument-archive/tmp
 ENV EXT_DIR=/instrument-archive/ext

@@ -63,30 +63,22 @@ RUN mv nextflow /usr/local/bin
 
 COPY files/logo_ntnu.png /opt/images/
 
-ARG TAG=0.1
+ADD https://api.github.com/repos/gcfntnu/configmaker/git/refs/heads/bfq-dev conf_version.json
+RUN pip install https://github.com/gcfntnu/configmaker/archive/bfq-dev.zip
 
-#ADD https://api.github.com/repos/gcfntnu/configmaker/git/refs/heads/master conf_version.json
-#RUN pip install --upgrade 'git+https://github.com/gcfntnu/configmaker#egg=configmaker'
-RUN pip install https://github.com/gcfntnu/configmaker/archive/$TAG.zip
-
-#ADD https://api.github.com/repos/flatberg/MultiQC/git/refs/heads/bfq mqc_version.json
-#RUN pip install --upgrade 'git+https://github.com/flatberg/MultiQC/tree/bfq#egg=multiqc'
-#RUN pip install https://github.com/flatberg/MultiQC/archive/bfq.zip
-RUN pip install https://github.com/gcfntnu/MultiQC/archive/$TAG.zip
+ADD https://api.github.com/repos/gcfntnu/MultiQC/git/refs/heads/bfq-dev mqc_version.json
+RUN pip install https://github.com/gcfntnu/MultiQC/archive/bfq-dev.zip
 
 #FOR DEV
-#ADD https://api.github.com/repos/gcfntnu/gcfdb/git/refs/heads/dev gcfdb_version.json
-#RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout dev 
-RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout tags/$TAG
+ADD https://api.github.com/repos/gcfntnu/gcfdb/git/refs/heads/bfq-dev gcfdb_version.json
+RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout bfq-dev
 ENV GCF_DB=/opt/gcfdb
 
 #FOR DEV
-#ADD https://api.github.com/repos/gcfntnu/rna-seq/git/refs/heads/dev rnaseq_version.json
-#RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout dev
-RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout tags/$TAG
+ADD https://api.github.com/repos/gcfntnu/rna-seq/git/refs/heads/bfq-dev rnaseq_version.json
+RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout bfq-dev
 
-#COPY ./bcl2fastq_pipeline /opt/bcl2fastq_pipeline
-RUN cd /tmp && git clone https://github.com/gcfntnu/gcf-bfq.git && cd gcf-bfq && git checkout tags/$TAG && cp -r bcl2fastq_pipeline /opt
+COPY ./bcl2fastq_pipeline /opt/bcl2fastq_pipeline
 
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline/flowcell_manager
 

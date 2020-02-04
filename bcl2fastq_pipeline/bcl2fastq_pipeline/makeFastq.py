@@ -1,6 +1,7 @@
 '''
 This file contains functions required to actually convert the bcl files to fastq
 '''
+import multiprocessing as mp
 import subprocess
 import os
 import sys
@@ -18,6 +19,8 @@ from reportlab.platypus import BaseDocTemplate, Table, Preformatted, Paragraph, 
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+import bcl2fastq_pipeline.afterFastq as bfq_afq
+
 
 MKFASTQ_10X = {
     '10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit': 'cellranger_spatial_mkfastq',
@@ -143,6 +146,74 @@ def bcl2fq(config) :
     subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
     logOut.close()
     os.chdir(old_wd)
+
+
+def demultiplex_qiaseq(config):
+    old_dir = os.getcwd()
+    tmp_dir = os.path.join(os.environ["TMPDIR"],config.get("Options","runID"))
+    os.makedirs(tmp_dir, exist_ok=True)
+    os.chdir(tmp_dir)
+    project_dirs = bfq_afq.get_project_dirs(config)
+    pnames = bfq_afq.get_project_names(project_dirs)
+    for p in pnames:
+        os.makedirs(p, exist_ok=True)
+        os.chdir(p)
+        os.makedirs("log", exist_ok=True)
+        os.makedirs(os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), "QC_{}".format(p), "cutadapt"), exist_ok=True)
+
+        r1 = glob.glob(os.path.join(config.get("Paths","outputDir"),config.get("Options","runID"),p,"*R1.fastq.gz"))
+        p = mp.Pool(4)
+        p.map(cutadapt_worker, r1)
+        p.close()
+        p.join()
+        #cutadapt logs in try except
+        cmd = "/opt/conda/bin/python /opt/qiaseq/qiaseq_region_summary.py log/*_qiaseq_demultiplex.log > {odir}/qiaseq_regions_mqc.yaml".format(
+            odir = os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), "QC_{}".format(p), "cutadapt")
+        )
+        try:
+            subprocess.check_call(cmd, shell=True)
+        except Exception as e:
+            err = "Got an error in qiaseq_region_summary.py: {}\n".format(e)
+            syslog.syslog(err)
+            bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), err)
+        
+        #move demultiplexed files to utputfolder/runid/pnr
+        cmd = "rm -rf {dst}/*.fastq.gz && cp -v {src}/*.fastq.gz {dst}/ && rm -rf {src}/* ".format(
+            dst = os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), p),
+            src = os.path.join(tmp_dir,p)
+        )
+        subprocess.check_call(cmd, shell=True)
+
+        os.chdir(tmp_dir)
+        
+
+
+def cutadapt_worker(fname):
+    sample = os.path.basename(fname).replace("_R1.fastq.gz","")
+
+    cmd = "/opt/conda/bin/cutadapt -g file:/opt/qiaseq/qiaseq_primers_fwd.fa -G file:/opt/qiaseq/qiaseq_primers_rev.fa --pair-adapters --no-indels -e 0.1 --suffix ':region={{name}}' -o {sample}_{{name}}_R1.fastq -p {sample}_{{name}}_R2.fastq {r1} {r2} > log/{sample}_qiaseq_demultiplex.log".format(
+        sample = sample,
+        r1 = fname,
+        r2 = fname.replace("R1.fastq.gz","R2.fastq.gz")
+        )
+    subprocess.check_call(cmd, shell=True)
+
+    R1 = glob.glob("{}*R1.fastq".format(sample))
+    r1 = " ".join(R1)
+    r2 = r1.replace("R1.fastq", "R2.fastq")
+
+    #cat and compress
+    cmd = "cat {r1} | pigz -6 -p 8 > {sample}_R1.fastq.gz".format(r1 = r1, sample = sample)
+    subprocess.check_call(cmd, shell=True)
+    cmd = "cat {r2} | pigz -6 -p 8 > {sample}_R2.fastq.gz".format(r2 = r2, sample = sample)
+    subprocess.check_call(cmd, shell=True)
+
+    #unlink r1 and r2 from above
+    cmd = "rm -f {}".format(r1)
+    subprocess.check_call(cmd, shell=True)
+    cmd = "rm -f {}".format(r2)
+    subprocess.check_call(cmd, shell=True)
+
 
 def getOffSpecies(fname) :
     total = 0
