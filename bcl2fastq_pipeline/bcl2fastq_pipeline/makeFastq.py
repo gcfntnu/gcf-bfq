@@ -162,10 +162,15 @@ def demultiplex_qiaseq(config):
         os.makedirs(os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), "QC_{}".format(p), "cutadapt"), exist_ok=True)
 
         r1 = glob.glob(os.path.join(config.get("Paths","outputDir"),config.get("Options","runID"),p,"*R1.fastq.gz"))
+        for f in r1:
+            cutadapt_worker(f)
+
+        """
         p = mp.Pool(4)
         p.map(cutadapt_worker, r1)
         p.close()
         p.join()
+        """
         #cutadapt logs in try except
         cmd = "/opt/conda/bin/python /opt/qiaseq/qiaseq_region_summary.py log/*_qiaseq_demultiplex.log > {odir}/qiaseq_regions_mqc.yaml".format(
             odir = os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), "QC_{}".format(p), "cutadapt")
@@ -176,7 +181,7 @@ def demultiplex_qiaseq(config):
             err = "Got an error in qiaseq_region_summary.py: {}\n".format(e)
             syslog.syslog(err)
             bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), err)
-        
+
         #move demultiplexed files to utputfolder/runid/pnr
         cmd = "rm -rf {dst}/*.fastq.gz && cp -v {src}/*.fastq.gz {dst}/ && rm -rf {src}/* ".format(
             dst = os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), p),
@@ -185,7 +190,6 @@ def demultiplex_qiaseq(config):
         subprocess.check_call(cmd, shell=True)
 
         os.chdir(tmp_dir)
-        
 
 
 def cutadapt_worker(fname):
