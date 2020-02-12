@@ -746,15 +746,29 @@ def post_rna_seq(var_d):
     p = var_d['p']
     base_dir = var_d['base_dir']
     #move expressions and bam
+    """
     cmd = "rsync -rvL {}/ {}".format(
         os.path.join(os.environ["TMPDIR"], "analysis_{}".format(p),"data","tmp","rnaseq","bfq"),
         os.path.join(base_dir, "QC_{}".format(p), "bfq"),
     )
     subprocess.check_call(cmd, shell=True)
+    """
+    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
+    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
+    cmd = "rsync -rvLp {}/ {}".format(
+        os.path.join(analysis_dir, "data", "tmp", "rnaseq", "bfq", "exprs"),
+        os.path.join(base_dir, "QC_{}".format(p), "bfq", "exprs"),
+    )
+    subprocess.check_call(cmd, shell=True)
+    cmd = "rsync -rvLp {}/ {}".format(
+        os.path.join(analysis_dir, "data", "tmp", "rnaseq", "bfq", "figs"),
+        os.path.join(base_dir, "QC_{}".format(p), "bfq", "figs"),
+    )
+    subprocess.check_call(cmd, shell=True)
 
     #move logs
-    cmd = "rsync -rvL {}/ {}".format(
-        os.path.join(os.environ["TMPDIR"], "analysis_{}".format(p),"logs"),
+    cmd = "rsync -rvLp {}/ {}".format(
+        os.path.join(analysis_dir,"logs"),
         os.path.join(base_dir, "QC_{}".format(p),"logs"),
     )
     subprocess.check_call(cmd, shell=True)
@@ -774,11 +788,12 @@ def full_align(config):
     os.chdir(os.environ["TMPDIR"])
     project_names = get_project_names(get_project_dirs(config))
     for p in project_names:
-        os.makedirs(os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p)), exist_ok=True)
-        os.makedirs(os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"src"), exist_ok=True)
-        os.makedirs(os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"data"), exist_ok=True)
+        analysis_dir = os.path.join(os.environ["TMPDIR"],"analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
+        os.makedirs(analysis_dir, exist_ok=True)
+        os.makedirs(os.path.join(analysis_dir,"src"), exist_ok=True)
+        os.makedirs(os.path.join(analysis_dir,"data"), exist_ok=True)
 
-        os.chdir(os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p)))
+        os.chdir(analysis_dir)
 
         #create config.yaml
         cmd = "/opt/conda/bin/python /opt/conda/bin/configmaker.py {runfolder} -p {project} -s {samplesheet} -S {sample_sub} --libkit '{lib}' --machine '{machine}' {create_fastq}".format(
@@ -795,14 +810,14 @@ def full_align(config):
         #copy snakemake pipeline
         cmd = "rm -rf {dst} && cp -r {src} {dst}".format(
             src = os.path.join("/opt",pipeline),
-            dst = os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"src",pipeline)
+            dst = os.path.join(analysis_dir,"src",pipeline)
         )
         subprocess.check_call(cmd,shell=True)
 
         #copy template Snakefile for pipeline
         shutil.copyfile(
             os.path.join("/opt","snakefiles","Snakefile-{}".format(pipeline)),
-            os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p),"Snakefile"),
+            os.path.join(analysis_dir,"Snakefile"),
             )
 
         #run snakemake pipeline
@@ -811,7 +826,7 @@ def full_align(config):
 
         POST_PIPELINE_MAP[pipeline]({'p': p, 'base_dir': base_dir})
 
-        analysis_dir = os.path.join(config.get("Paths","analysisDir"),"{}_{}".format(p,config.get("Options","runID").split("_")[0]))
+        analysis_export_dir = os.path.join(config.get("Paths","analysisDir"),"{}_{}".format(p,config.get("Options","runID").split("_")[0]))
         """
         cmd = "cp -r --no-dereference --no-preserve=mode {src} {dst} && touch {transfer_done} && rm -rf {src}".format(
             src = os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p)),
@@ -819,13 +834,13 @@ def full_align(config):
             transfer_done = os.path.join(analysis_dir,"transfer.done")
         )
         """
-        cmd = "rsync -r --copy-links --times {src}/ {dst} && touch {transfer_done} && rm -rf {src}".format(
-            src = os.path.join(os.environ["TMPDIR"],"analysis_{}".format(p)),
-            dst = analysis_dir,
-            transfer_done = os.path.join(analysis_dir,"transfer.done")
+        cmd = "nohup /bin/sh -c 'rsync -r --copy-links --times --progress --remove-source-files {src}/ {dst} && touch {transfer_done}' > /dev/null &".format(
+            src = analysis_dir,
+            dst = analysis_export_dir,
+            transfer_done = os.path.join(analysis_export_dir,"transfer.done")
         )
-        #subprocess.check_call(cmd,shell=True)
-        subprocess.Popen(cmd, shell=True, stdin=None, stdout=None, stderr=None, close_fds=True)
+        subprocess.check_call(cmd,shell=True)
+        #subprocess.Popen(cmd, shell=True, stdin=None, stdout=None, stderr=None, close_fds=True)
 
     os.chdir(old_wd)
     open(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made"), "w").close()

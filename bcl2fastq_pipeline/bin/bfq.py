@@ -94,7 +94,7 @@ while True:
                 bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error in fixNames")
                 continue
 
-        if config.get("Options","Libprep") == "QIAseq 16S/ITS Region Panels" and not os.path.exists("{}/{}/qiaseq.done".format(config["Paths"]["outputDir"], config["Options"]["runID"])):
+        if config.get("Options","Libprep") == "QIAseq 16S ITS Region Panels" and not os.path.exists("{}/{}/qiaseq.done".format(config["Paths"]["outputDir"], config["Options"]["runID"])):
             try:
                 bcl2fastq_pipeline.makeFastq.demultiplex_qiaseq(config)
                 open("{}/{}/qiaseq.done".format(config["Paths"]["outputDir"], config["Options"]["runID"]), "w").close()
