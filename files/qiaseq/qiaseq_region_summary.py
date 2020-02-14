@@ -31,9 +31,9 @@ def find_region_counts(txt):
     return counts
 
 def add_unkown_counts(txt, counts):
-    tot = re.findall('Total read pairs processed:\s+([\d,]+)', txt)[0]
+    tot = re.findall('Total read pairs processed:\s+([\d,]+)', txt)[-1]
     total = float(tot.replace(',', ''))
-    in_region = re.findall('Read 1 with adapter:\s+([\d,]+)', txt)[0]
+    in_region = re.findall('Read 1 with adapter:\s+([\d,]+)', txt)[-1]
     in_region = float(in_region.replace(',', ''))
     counts['unknown'] = total - in_region
 

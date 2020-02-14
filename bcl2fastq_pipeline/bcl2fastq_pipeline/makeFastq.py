@@ -197,12 +197,15 @@ def cutadapt_worker(fname):
     forward = pd.read_csv("/opt/qiaseq/qiaseq_primers_fwd.csv", index_col=0)
     reverse = pd.read_csv("/opt/qiaseq/qiaseq_primers_rev.csv", index_col=0)
 
+    cmd = "rm log/{}_qiaseq_demultiplex.log".format(sample)
+    subprocess.check_call(cmd, shell=True)
+
     for i, r in forward.iterrows():
         if os.path.exists("{}_unknown_R1.fastq".format(sample)):
             fname = "{}_unknown_R1.fastq".format(sample)
-            cp_cmd = "cp -f {} input_{}".format(fname, fname)
+            cp_cmd = "mv -f {} input_{}".format(fname, fname)
             subprocess.check_call(cp_cmd, shell=True)
-            cp_cmd = "cp -f {} input_{}".format(fname.replace("R1.fastq","R2.fastq"), fname.replace("R1.fastq","R2.fastq"))
+            cp_cmd = "mv -f {} input_{}".format(fname.replace("R1.fastq","R2.fastq"), fname.replace("R1.fastq","R2.fastq"))
             subprocess.check_call(cp_cmd, shell=True)
 
         cmd = "cutadapt -g {region}={fwd_primer} -G {region}={rev_primer} --pair-adapters --no-indels -e 0.1 --untrimmed-output {unknown_r1} --untrimmed-paired-output {unknown_r2} --suffix ':region={{name}}' -o {sample}_{{name}}_R1.fastq -p {sample}_{{name}}_R2.fastq {r1} {r2} >> log/{sample}_qiaseq_demultiplex.log".format(

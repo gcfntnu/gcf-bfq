@@ -32,12 +32,26 @@ def cutadapt_worker(fname):
     rm_cmd = "rm input_{}_*fastq".format(sample)
     subprocess.check_call(rm_cmd, shell=True)
 
+    R1 = glob.glob("{}*R1.fastq".format(sample))
+    r1 = " ".join(R1)
+    r2 = r1.replace("R1.fastq", "R2.fastq")
+    
+    #cat and compress
+    cmd = "cat {r1} | pigz -6 -p 8 > {sample}_R1.fastq.gz".format(r1 = r1, sample = sample)
+    subprocess.check_call(cmd, shell=True)
+    cmd = "cat {r2} | pigz -6 -p 8 > {sample}_R2.fastq.gz".format(r2 = r2, sample = sample)
+    subprocess.check_call(cmd, shell=True)
 
+    #unlink r1 and r2 from above
+    cmd = "rm -f {}".format(r1)
+    subprocess.check_call(cmd, shell=True)
+    cmd = "rm -f {}".format(r2)
+    subprocess.check_call(cmd, shell=True)
 
-
+os.makedirs("log", exist_ok=True)
 r1 = glob.glob(os.path.join("data","*R1.fastq.gz"))
 
-p = mp.Pool(4)
+p = mp.Pool(32)
 p.map(cutadapt_worker, r1)
 p.close()
 p.join()
