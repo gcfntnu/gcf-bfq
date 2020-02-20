@@ -16,6 +16,10 @@ def cutadapt_worker(fname):
             subprocess.check_call(cp_cmd, shell=True)
             cp_cmd = "mv -f {} input_{}".format(fname.replace("R1.fastq","R2.fastq"), fname.replace("R1.fastq","R2.fastq"))
             subprocess.check_call(cp_cmd, shell=True)
+            sed_cmd = "sed -i -e s/:region=no_adapter//g input_{}".format(fname)
+            subprocess.check_call(sed_cmd, shell=True)
+            sed_cmd = "sed -i -e s/:region=no_adapter//g input_{}".format(fname.replace("R1.fastq","R2.fastq"))
+            subprocess.check_call(sed_cmd, shell=True)
 
         cmd = "cutadapt -g {region}={fwd_primer} -G {region}={rev_primer} --pair-adapters --no-indels -e 0.1 --untrimmed-output {unknown_r1} --untrimmed-paired-output {unknown_r2} --suffix ':region={{name}}' -o {sample}_{{name}}_R1.fastq -p {sample}_{{name}}_R2.fastq {r1} {r2} >> log/{sample}_qiaseq_demultiplex.log".format(
             sample = sample,
