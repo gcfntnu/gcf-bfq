@@ -834,7 +834,7 @@ def full_align(config):
             transfer_done = os.path.join(analysis_dir,"transfer.done")
         )
         """
-        cmd = "nohup /bin/sh -c 'rsync -r --copy-links --times --progress --remove-source-files {src}/ {dst} && touch {transfer_done}' > /dev/null &".format(
+        cmd = "nohup /bin/sh -c 'rsync -rvl --remove-source-files {src}/ {dst} && touch {transfer_done}' > /dev/null &".format(
             src = analysis_dir,
             dst = analysis_export_dir,
             transfer_done = os.path.join(analysis_export_dir,"transfer.done")

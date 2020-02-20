@@ -63,6 +63,7 @@ RUN mv nextflow /usr/local/bin
 COPY files/logo_ntnu.png /opt/images/
 
 RUN conda install -y fastp cutadapt
+RUN apt update && apt install -y rsync
 
 ENV TMPDIR=/instrument-archive/tmp
 ENV EXT_DIR=/instrument-archive/ext
