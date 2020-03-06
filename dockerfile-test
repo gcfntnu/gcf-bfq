@@ -1,5 +1,8 @@
 FROM gcfntnu/bfq:base
 
+ADD https://api.github.com/repos/gsmashd/vimrc/git/refs/heads/master vim_version
+RUN cd /tmp && git clone https://github.com/gsmashd/vimrc.git && cd vimrc && sh install.sh
+
 ADD https://api.github.com/repos/gcfntnu/configmaker/git/refs/heads/bfq-dev conf_version
 RUN pip install https://github.com/gcfntnu/configmaker/archive/bfq-dev.zip 
 
