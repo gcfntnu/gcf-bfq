@@ -217,9 +217,9 @@ def fastq_screen_worker(fname) :
 
     if os.path.exists(ofile.replace(".fastq.gz","_screen.html")) :
         return
-    
+
     os.makedirs(os.path.dirname(ofile), exist_ok=True)
-    
+
     #fastq_screen
     cmd = "%s %s --outdir '%s' '%s'" % (
         config.get("fastq_screen", "fastq_screen_command"),
@@ -342,12 +342,25 @@ def fastp_worker(fname):
         json_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.json".format(os.path.basename(fname).replace("_R1.fastq.gz","")))
         html_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.html".format(os.path.basename(fname).replace("_R1.fastq.gz","")))
 
-    cmd = "{fastp} --in1={in1} {in2} --json={json} --html={html} --thread={thread}".format(
+
+    tmpdir = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options","runID")))
+    os.makedirs(tmpdir, exist_ok=True)
+
+    adapter = ("--adapter_sequence=" + config["Options"].get("Adapter","")) if config["Options"].get("Adapter","") else "auto"
+    adapter += (" --adapter_sequence_r2=" + config["Options"].get("AdapterRead2","")) if (config["Options"].get("AdapterRead2","") and in2) else ""
+
+    out1 = os.path.join(tmpdir ,os.path.basename(fname))
+    out2 = os.path.join(tmpdir, os.path.basename(in2)) if in2 else ""
+
+    cmd = "{fastp} --in1={in1} {in2} --out1={out1} {out2} --json={json} --html={html} {adapter} --thread={thread}".format(
             fastp = config.get("fastp","command"),
             in1 = fname,
             in2 = in2,
+            out1 = out1,
+            out2 = out2,
             json = json_out,
             html = html_out,
+            adapter = adapter,
             thread = config.get("fastp","threads")
             )
     syslog.syslog("[fastp_worker] Processing %s\n" % cmd)
@@ -859,6 +872,17 @@ def full_align(config):
     open(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made"), "w").close()
     return True
 
+def get_tmp(fname):
+    project_name = get_gcf_name(fname)
+    tmpdir = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options","runID")))
+    return os.path.join(tmpdir, "{}_{}".format(project_name, config.get("Options","runID")), os.path.basename(fname))
+
+def get_tmp_sample_files(sample_files):
+    return [get_tmp(x) for x in sample_files]
+
+def clean_up_tmp_sample_files(tmp_sample_files):
+    for x in tmp_sample_files:
+        os.unlink(x)
 
 #All steps that should be run after `make` go here
 def postMakeSteps(config) :
@@ -917,29 +941,34 @@ def postMakeSteps(config) :
     p.join()
     clumpify_mark_done(config)
     """
-    #FastQC
+    #fastp
+    for d in get_project_dirs(config):
+        project_name = os.path.basename(d)
+        os.makedirs(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp"), exist_ok=True)
 
-    p = mp.Pool(int(config.get("Options","fastqcThreads")))
-    p.map(FastQC_worker, sampleFiles)
+    p = mp.Pool(int(int(config.get("system","threads"))/int(config.get("fastp","threads"))))
+    p.map(fastp_worker, sampleFiles)
     p.close()
     p.join()
 
-    #fastp
-    if not PIPELINE_MAP.get(config.get("Options","Libprep"),"") in ['rna-seq']:
-        for d in get_project_dirs(config):
-            project_name = os.path.basename(d)
-            os.makedirs(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp"), exist_ok=True)
+    tmp_sample_files = get_tmp_sample_files(sampleFiles)
 
-        p = mp.Pool(int(int(config.get("system","threads"))/int(config.get("fastp","threads"))))
-        p.map(fastp_worker, sampleFiles)
-        p.close()
-        p.join()
+    #FastQC
+    p = mp.Pool(int(config.get("Options","fastqcThreads")))
+    #p.map(FastQC_worker, sampleFiles)
+    p.map(FastQC_worker, tmp_sample_files)
+    p.close()
+    p.join()
+
 
     #fastq_screen
     p = mp.Pool(int(config.get("Options", "fastqScreenThreads")))
-    p.map(fastq_screen_worker, sampleFiles)
+    #p.map(fastq_screen_worker, sampleFiles)
+    p.map(fastq_screen_worker, tmp_sample_files)
     p.close()
     p.join()
+
+    clean_up_tmp_sample_files(tmp_sample_files)
 
     if config.get("Options","Organism") in PIPELINE_ORGANISMS.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),[]) and not os.path.exists(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made")):
         full_align(config)
