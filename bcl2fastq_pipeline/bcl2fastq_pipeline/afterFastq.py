@@ -205,7 +205,7 @@ def fastq_screen_worker(fname) :
     project_nr = get_gcf_name(fname)
 
     #Skip read 1 when single cell
-    if "10X Genomics" in config.get("Options","Libprep") and ("R1.fastq" in fname or "R1_001.fastq" in fname):
+    if "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3" == config.get("Options","Libprep") and ("R1.fastq" in fname or "R1_001.fastq" in fname):
         return
 
     ofile="{}/{}/QC_{}/fastq_screen/{}".format(
@@ -317,26 +317,37 @@ def fastp_worker(fname):
     global localConfig
     config = localConfig
 
-    if "10X Genomics" in config.get("Options","Libprep"):
-        return
-
-    #We use R1 files to construct R2 filenames for paired end
-    if "R2.fastq.gz" in fname:
-        return
+    if config.get("Options","Libprep") == "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3":
+        in2 = ""
+    elif config.get("Options","Libprep") == "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1":
+        if "R3_001.fastq.gz" in fname:
+            return
+        in2 = ("--in2=" + fname.replace("R1_001.fastq.gz","R3_001.fastq.gz")) if os.path.exists(fname.replace("R1_001.fastq.gz","R3_001.fastq.gz")) else ""
+    else:
+        #We use R1 files to construct R2 filenames for paired end
+        if "R2.fastq.gz" in fname:
+            return
+        in2 = ("--in2=" + fname.replace("R1.fastq.gz","R2.fastq.gz")) if os.path.exists(fname.replace("R1.fastq.gz","R2.fastq.gz")) else ""
 
     project_name = get_gcf_name(fname)
-
     if os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.json".format(os.path.basename(fname).replace("_R1.fastq.gz","")))):
         return
+    elif os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.json".format(os.path.basename(fname).replace("_R1_001.fastq.gz","")))):
+        return
 
-    in2 = ("--in2=" + fname.replace("R1.fastq.gz","R2.fastq.gz")) if os.path.exists(fname.replace("R1.fastq.gz","R2.fastq.gz")) else ""
+    if "10X Genomics" in config.get("Options","Libprep"):
+        json_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.json".format(os.path.basename(fname).replace("_R1_001.fastq.gz","")))
+        html_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.html".format(os.path.basename(fname).replace("_R1_001.fastq.gz","")))
+    else:
+        json_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.json".format(os.path.basename(fname).replace("_R1.fastq.gz","")))
+        html_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.html".format(os.path.basename(fname).replace("_R1.fastq.gz","")))
 
     cmd = "{fastp} --in1={in1} {in2} --json={json} --html={html} --thread={thread}".format(
             fastp = config.get("fastp","command"),
             in1 = fname,
             in2 = in2,
-            json = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.json".format(os.path.basename(fname).replace("_R1.fastq.gz",""))),
-            html = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.html".format(os.path.basename(fname).replace("_R1.fastq.gz",""))),
+            json = json_out,
+            html = html_out,
             thread = config.get("fastp","threads")
             )
     syslog.syslog("[fastp_worker] Processing %s\n" % cmd)
@@ -408,11 +419,10 @@ def md5sum_archive_worker(config):
     project_dirs = get_project_dirs(config)
     pnames = get_project_names(project_dirs)
     for p in pnames:
-        if os.path.exists('md5sum_{}_archive.txt'.format(p)):
-            continue
-        cmd = "md5sum {p}.7za > md5sum_{p}_archive.txt".format(p=p)
-        syslog.syslog("[md5sum_worker] Processing %s\n" % os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')))
-        subprocess.check_call(cmd, shell=True)
+        if os.path.exists('md5sum_{}_archive.txt'.format(p)) and (os.path.getmtime('{}.7za'.format(p)) > os.path.getmtime('md5sum_{}_archive.txt'.format(p))) :
+            cmd = "md5sum {p}.7za > md5sum_{p}_archive.txt".format(p=p)
+            syslog.syslog("[md5sum_worker] Processing %s\n" % os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')))
+            subprocess.check_call(cmd, shell=True)
     os.chdir(old_wd)
 
 def md5sum_instrument_worker(config):
@@ -440,7 +450,7 @@ def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
 
     if not seq_stats:
         pipeline = PIPELINE_MAP.get(config.get("Options","Libprep"),"default")
-        with open("/opt/mqc_headers/{}_mqc_header.txt","r") as header_file:
+        with open("/opt/mqc_headers/{}_mqc_header.txt".format(pipeline),"r") as header_file:
             header_text = header_file.read()
         mqc_conf['intro_text'] = header_text.format(pname=mqc_conf['title'])
         software = get_software_versions(config)
@@ -682,7 +692,7 @@ def samplesheet_worker(config,project_dirs):
 
         sample_ids = sample_df['Sample_ID']
         #project_dirs = cm.inspect_dirs([os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))])
-        sample_dict = cm.find_samples(sample_df,[os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))])
+        sample_dict = cm.find_samples(sample_df,[os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'), pid)])
 
         keep_cols = ['Sample_ID']
         try:
@@ -859,15 +869,24 @@ def postMakeSteps(config) :
     Other steps could easily be added to follow those. Note that this function
     will try to use a pool of threads. The size of the pool is set by config.postMakeThreads
     '''
-    lanes = config.get("Options", "lanes")
-    if lanes != "":
-        lanes = "_lanes{}".format(lanes)
 
     projectDirs = get_project_dirs(config)
-    sampleFiles = glob.glob("%s/%s%s/*/*R[12].fastq.gz" % (config.get("Paths","outputDir"),config.get("Options","runID"), lanes))
-    sampleFiles.extend(glob.glob("%s/%s%s/*/*/*R[12].fastq.gz" % (config.get("Paths","outputDir"),config.get("Options","runID"), lanes)))
-    sampleFiles.extend(glob.glob("%s/%s%s/*/*R[12]_001.fastq.gz" % (config.get("Paths","outputDir"),config.get("Options","runID"), lanes)))
-    sampleFiles.extend(glob.glob("%s/%s%s/*/*/*R[12]_001.fastq.gz" % (config.get("Paths","outputDir"),config.get("Options","runID"), lanes)))
+
+    if config.get("Options", "Libprep") == "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1":
+        sampleFiles = glob.glob("{}/{}/*/*R[13].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")))
+        sampleFiles.extend(glob.glob("{}/{}/*/*/*R[13].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
+        sampleFiles.extend(glob.glob("{}/{}/*/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
+        sampleFiles.extend(glob.glob("{}/{}/*/*/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
+    elif config.get("Options", "Libprep") == "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3":
+        sampleFiles = glob.glob("{}/{}/*/*R2.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")))
+        sampleFiles.extend(glob.glob("{}/{}/*/*/*R2.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
+        sampleFiles.extend(glob.glob("{}/{}/*/*R2_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
+        sampleFiles.extend(glob.glob("{}/{}/*/*/*R2_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
+    else:
+        sampleFiles = glob.glob("{}/{}/*/*R[12].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")))
+        sampleFiles.extend(glob.glob("{}/{}/*/*/*R[12].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
+        sampleFiles.extend(glob.glob("{}/{}/*/*R[12]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
+        sampleFiles.extend(glob.glob("{}/{}/*/*/*R[12]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
 
     sampleFiles = [sf for sf in sampleFiles if not 'contaminated' in sf]
     sampleFiles = [sf for sf in sampleFiles if not 'filtered' in sf]
