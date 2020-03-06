@@ -346,8 +346,8 @@ def fastp_worker(fname):
     tmpdir = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options","runID")))
     os.makedirs(tmpdir, exist_ok=True)
 
-    adapter = ("--adapter_sequence=" + config["Options"].get("Adapter","")) if config["Options"].get("Adapter","") else "auto"
-    adapter += (" --adapter_sequence_r2=" + config["Options"].get("AdapterRead2","")) if (config["Options"].get("AdapterRead2","") and in2) else ""
+    adapter = "--adapter_sequence=" + config["Options"].get("Adapter","auto")
+    adapter += (" --adapter_sequence_r2=" + config["Options"].get("AdapterRead2","auto")) if in2 else ""
 
     out1 = os.path.join(tmpdir ,os.path.basename(fname))
     out2 = os.path.join(tmpdir, os.path.basename(in2)) if in2 else ""
@@ -872,13 +872,13 @@ def full_align(config):
     open(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made"), "w").close()
     return True
 
-def get_tmp(fname):
+def get_tmp(config, fname):
     project_name = get_gcf_name(fname)
     tmpdir = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options","runID")))
-    return os.path.join(tmpdir, "{}_{}".format(project_name, config.get("Options","runID")), os.path.basename(fname))
+    return os.path.join(tmpdir, os.path.basename(fname))
 
-def get_tmp_sample_files(sample_files):
-    return [get_tmp(x) for x in sample_files]
+def get_tmp_sample_files(config, sample_files):
+    return [get_tmp(config, x) for x in sample_files]
 
 def clean_up_tmp_sample_files(tmp_sample_files):
     for x in tmp_sample_files:
@@ -951,7 +951,7 @@ def postMakeSteps(config) :
     p.close()
     p.join()
 
-    tmp_sample_files = get_tmp_sample_files(sampleFiles)
+    tmp_sample_files = get_tmp_sample_files(config, sampleFiles)
 
     #FastQC
     p = mp.Pool(int(config.get("Options","fastqcThreads")))
