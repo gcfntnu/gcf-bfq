@@ -76,7 +76,7 @@ def parseSampleSheet(ss):
         if line.startswith("[Data]"):
             return ss,opt_d
         elif line.startswith("[CustomOptions]"):
-            opt_d = dict.fromkeys(CUSTOM_OPTS,False)
+            opt_d = dict.fromkeys(CUSTOM_OPTS,'')
             opts_data = True
             continue
         elif opts_data:

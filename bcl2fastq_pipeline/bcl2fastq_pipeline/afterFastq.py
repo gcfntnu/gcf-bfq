@@ -264,7 +264,7 @@ def suprDUPr_worker(fname) :
 def get_gcf_name(fname):
     for name in fname.split('/'):
         if re.match(r'GCF-[0-9]{4}-[0-9]{3,}',name):
-            return name
+            return re.search(r'GCF-[0-9]{4}-[0-9]{3,}',name)[0]
     raise Exception('Unable to determine GCF project number for filename {}\n'.format(fname))
 
 
@@ -374,7 +374,7 @@ def toDirs(files) :
         if d.split('/')[-1].startswith("GCF-"):
             s.add(d)
         else:
-            s.add(d[:d.rfind('/')]) 
+            s.add(d[:d.rfind('/')])
     return s
 
 
