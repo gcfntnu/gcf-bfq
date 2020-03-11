@@ -346,8 +346,12 @@ def fastp_worker(fname):
     tmpdir = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options","runID")))
     os.makedirs(tmpdir, exist_ok=True)
 
-    adapter = "--adapter_sequence=" + config["Options"].get("Adapter","auto")
-    adapter += (" --adapter_sequence_r2=" + config["Options"].get("AdapterRead2","auto")) if in2 else ""
+    with open("/opt/gcfdb/libprep.config","r") as libpreppconf:
+        libconf = yaml.load(libprepconf)
+
+    adapter = "--adapter_sequence=" + libconf.get(config.get("Options","Libprep"), {}).get("adapter","auto")
+    if in2:
+        adapter += " --adapter_sequence_r2=" + libconf.get(config.get("Options","Libprep"), {}).get("adapter2","auto") + " --detect_adapter_for_pe "
 
     out1 = os.path.join(tmpdir ,os.path.basename(fname))
     out2 = os.path.join(tmpdir, os.path.basename(in2)) if in2 else ""
