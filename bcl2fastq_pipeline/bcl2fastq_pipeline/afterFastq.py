@@ -349,9 +349,32 @@ def fastp_worker(fname):
     with open("/opt/gcfdb/libprep.config","r") as libpreppconf:
         libconf = yaml.load(libprepconf)
 
-    adapter = "--adapter_sequence=" + libconf.get(config.get("Options","Libprep"), {}).get("adapter","auto")
-    if in2:
-        adapter += " --adapter_sequence_r2=" + libconf.get(config.get("Options","Libprep"), {}).get("adapter2","auto") + " --detect_adapter_for_pe "
+    l_conf = libconf.get(config.get("Options","Libprep"), {})
+    if l_conf:
+        if in1 and in2:
+            #Paired End
+            if 'paired_end' in l_conf.keys():
+                adapter1 = l_conf.get('paired_end').get('adapter','auto')
+                adapter2 = l_conf.get('paired_end').get('adapter2','auto')
+            else:
+                adapter1 = 'auto'
+                adapter2 = 'auto'
+        else:
+            #Single End
+            adapter2 = ''
+            if 'single_end' in l_conf.keys():
+                adapter1 = l_conf.get('single_end').get('adapter','auto')
+            elif 'adapter' in l_conf.keys():
+                adapter1 = l_conf.get('adapter','auto')
+            else:
+                adapter1 = 'auto'
+    else:
+        adapter1 = 'auto'
+        adapter2 = 'auto' if in2 else ''
+
+    adapter = "--adapter_sequence=" + adapter1
+    if adapter2:
+        adapter += " --adapter_sequence_r2=" + adpater2 + (" --detect_adapter_for_pe " if adapter2 == 'auto' else '')
 
     out1 = os.path.join(tmpdir ,os.path.basename(fname))
     out2 = os.path.join(tmpdir, os.path.basename(in2)) if in2 else ""
@@ -436,7 +459,7 @@ def md5sum_archive_worker(config):
     project_dirs = get_project_dirs(config)
     pnames = get_project_names(project_dirs)
     for p in pnames:
-        if os.path.exists('md5sum_{}_archive.txt'.format(p)) and (os.path.getmtime('{}.7za'.format(p)) > os.path.getmtime('md5sum_{}_archive.txt'.format(p))) :
+        if (not os.path.exists('md5sum_{}_archive.txt'.format(p))) or (os.path.exists('md5sum_{}_archive.txt'.format(p)) and (os.path.getmtime('{}.7za'.format(p)) > os.path.getmtime('md5sum_{}_archive.txt'.format(p)))) :
             cmd = "md5sum {p}.7za > md5sum_{p}_archive.txt".format(p=p)
             syslog.syslog("[md5sum_worker] Processing %s\n" % os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')))
             subprocess.check_call(cmd, shell=True)
