@@ -14,7 +14,10 @@ RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb &
 ENV GCF_DB=/opt/gcfdb
 
 ADD https://api.github.com/repos/gcfntnu/rna-seq/git/refs/heads/bfq-dev rnaseq_version
-RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout bfq-dev 
+RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout bfq-dev
+
+ADD https://api.github.com/repos/gcfntnu/microbiome/git/refs/heads/bfq-dev microbiome_version
+RUN cd /opt && git clone https://github.com/gcfntnu/microbiome.git && cd /opt/microbiome && git checkout bfq-dev
 
 COPY ./bcl2fastq_pipeline /opt/bcl2fastq_pipeline
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline/flowcell_manager
