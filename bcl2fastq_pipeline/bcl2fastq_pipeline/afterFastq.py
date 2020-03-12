@@ -336,11 +336,11 @@ def fastp_worker(fname):
         return
 
     if "10X Genomics" in config.get("Options","Libprep"):
-        json_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.json".format(os.path.basename(fname).replace("_R1_001.fastq.gz","")))
-        html_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.html".format(os.path.basename(fname).replace("_R1_001.fastq.gz","")))
+        json_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}.fastp.json".format(os.path.basename(fname).replace("_R1_001.fastq.gz","")))
+        html_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}.fastp.html".format(os.path.basename(fname).replace("_R1_001.fastq.gz","")))
     else:
-        json_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.json".format(os.path.basename(fname).replace("_R1.fastq.gz","")))
-        html_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.html".format(os.path.basename(fname).replace("_R1.fastq.gz","")))
+        json_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}.fastp.json".format(os.path.basename(fname).replace("_R1.fastq.gz","")))
+        html_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}.fastp.html".format(os.path.basename(fname).replace("_R1.fastq.gz","")))
 
 
     tmpdir = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options","runID")))
