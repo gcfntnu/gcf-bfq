@@ -3,12 +3,14 @@ import subprocess
 import multiprocessing as mp
 import glob
 import pandas as pd
+import sys
 
 forward = pd.read_csv("qiaseq_primers_fwd.csv", index_col=0)
 reverse = pd.read_csv("qiaseq_primers_rev.csv", index_col=0)
 
 def cutadapt_worker(fname):
-    sample = os.path.basename(fname).replace("_R1.fastq.gz","")
+    sample = os.path.basename(fname).replace("_R1.fastq.gz", "")
+    regions = ['unknown']
     for i, r in forward.iterrows():
         if os.path.exists("{}_unknown_R1.fastq".format(sample)):
             fname = "{}_unknown_R1.fastq".format(sample)
@@ -31,12 +33,15 @@ def cutadapt_worker(fname):
             r1 = ("input_" + fname) if "unknown_R1.fastq" in fname else fname,
             r2 = ("input_" + fname.replace("R1.fastq", "R2.fastq")) if "unknown_R1.fastq" in fname else fname.replace("R1.fastq", "R2.fastq")
             )
+        regions.append(i)
         subprocess.check_call(cmd, shell=True)
 
-    rm_cmd = "rm input_{}_*fastq".format(sample)
-    subprocess.check_call(rm_cmd, shell=True)
+    if os.path.exists("input_{}_*fastq".format(sample)):
+        rm_cmd = "rm input_{}_*fastq".format(sample)
+        subprocess.check_call(rm_cmd, shell=True)
 
-    R1 = glob.glob("{}*R1.fastq".format(sample))
+    R1_comb = ["{}_{}_R1.fastq".format(sample, r) for r in regions]
+    R1 = [r1 for r1 in R1_comb if os.path.exists(r1)]
     r1 = " ".join(R1)
     r2 = r1.replace("R1.fastq", "R2.fastq")
     
@@ -51,6 +56,7 @@ def cutadapt_worker(fname):
     subprocess.check_call(cmd, shell=True)
     cmd = "rm -f {}".format(r2)
     subprocess.check_call(cmd, shell=True)
+    print("finished sample: {}".format(sample))
 
 os.makedirs("log", exist_ok=True)
 r1 = glob.glob(os.path.join("data","*R1.fastq.gz"))
