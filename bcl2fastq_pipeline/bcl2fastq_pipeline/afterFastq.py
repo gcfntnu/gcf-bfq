@@ -60,15 +60,19 @@ PIPELINE_MAP = {
     'Lexogen SENSE mRNA-Seq Library Prep Kit V2': 'rna-seq',
     'Illumina TruSeq Stranded Total RNA Library Prep (Human/Mouse/Rat)': 'rna-seq',
     'Illumina TruSeq Stranded Total RNA Library Prep (Globin)': 'rna-seq',
-    'Illumina TruSeq Stranded mRNA Library Prep': 'rna-seq'
+    'Illumina TruSeq Stranded mRNA Library Prep': 'rna-seq',
+    'QIAseq 16S ITS Region Panels': 'microbiome',
+    '16S Metagenomic Sequencing Library Prep': 'microbiome',
 }
 
 PIPELINE_MULTIQC_MODULES = {
-    'rna-seq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"]
+    'rna-seq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"],
+    'microbiome': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content", "qiime2"],
 }
 
 PIPELINE_ORGANISMS = {
-    'rna-seq': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus']
+    'rna-seq': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus'],
+    'microbiome': ['N/A']
 }
 
 
@@ -827,8 +831,34 @@ def post_rna_seq(var_d):
     subprocess.check_call(cmd, shell=True)
     return None
 
+def post_microbiome(var_d):
+    p = var_d['p']
+    base_dir = var_d['base_dir']
+    #move expressions and bam
+    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
+    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
+    cmd = "rsync -rvLp {}/ {}".format(
+        os.path.join(analysis_dir, "data", "tmp", "microbiome", "bfq", "exprs"),
+        os.path.join(base_dir, "QC_{}".format(p), "bfq", "exprs"),
+    )
+    subprocess.check_call(cmd, shell=True)
+    cmd = "rsync -rvLp {}/ {}".format(
+        os.path.join(analysis_dir, "data", "tmp", "microbiome", "bfq", "figs"),
+        os.path.join(base_dir, "QC_{}".format(p), "bfq", "figs"),
+    )
+    subprocess.check_call(cmd, shell=True)
+
+    #move logs
+    cmd = "rsync -rvLp {}/ {}".format(
+        os.path.join(analysis_dir,"logs"),
+        os.path.join(base_dir, "QC_{}".format(p),"logs"),
+    )
+    subprocess.check_call(cmd, shell=True)
+    return None
+
 POST_PIPELINE_MAP = {
     'rna-seq': post_rna_seq,
+    'microbiome': post_microbiome,
 }
 
 def full_align(config):
