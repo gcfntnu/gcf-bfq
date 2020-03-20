@@ -52,6 +52,7 @@ QC_PLACEMENT = {
     'Customer_Comment': 30,
     '260/230': 40,
     '260/280': 50,
+    'Concentration': 50,
     'RIN': 60
 }
 
@@ -334,9 +335,9 @@ def fastp_worker(fname):
         in2 = ("--in2=" + fname.replace("R1.fastq.gz","R2.fastq.gz")) if os.path.exists(fname.replace("R1.fastq.gz","R2.fastq.gz")) else ""
 
     project_name = get_gcf_name(fname)
-    if os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.json".format(os.path.basename(fname).replace("_R1.fastq.gz","")))):
+    if os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}.fastp.json".format(os.path.basename(fname).replace("_R1.fastq.gz","")))):
         return
-    elif os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}_fastp.json".format(os.path.basename(fname).replace("_R1_001.fastq.gz","")))):
+    elif os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}.fastp.json".format(os.path.basename(fname).replace("_R1_001.fastq.gz","")))):
         return
 
     if "10X Genomics" in config.get("Options","Libprep"):
@@ -355,7 +356,7 @@ def fastp_worker(fname):
 
     l_conf = libconf.get(config.get("Options","Libprep"), {})
     if l_conf:
-        if in1 and in2:
+        if in2:
             #Paired End
             if 'paired_end' in l_conf.keys():
                 adapter1 = l_conf.get('paired_end').get('adapter','auto')
@@ -378,10 +379,10 @@ def fastp_worker(fname):
 
     adapter = "--adapter_sequence=" + adapter1
     if adapter2:
-        adapter += " --adapter_sequence_r2=" + adpater2 + (" --detect_adapter_for_pe " if adapter2 == 'auto' else '')
+        adapter += " --adapter_sequence_r2=" + adapter2 + (" --detect_adapter_for_pe " if adapter2 == 'auto' else '')
 
     out1 = os.path.join(tmpdir ,os.path.basename(fname))
-    out2 = os.path.join(tmpdir, os.path.basename(in2)) if in2 else ""
+    out2 = ("--out2=" + os.path.join(tmpdir, os.path.basename(in2))) if in2 else ""
 
     cmd = "{fastp} --in1={in1} {in2} --out1={out1} {out2} --json={json} --html={html} {adapter} --thread={thread}".format(
             fastp = config.get("fastp","command"),
@@ -661,9 +662,9 @@ def multiqc_stats(project_dirs) :
     in_conf.close()
     out_conf.close()
 
-    cmd = "{multiqc_cmd} {multiqc_opts} --config {conf} {flow_dir}/Stats --filename {flow_dir}/Stats/sequencer_stats_{pname}.html".format(
-            multiqc_cmd = config.get("MultiQC", "multiqc_command"), 
-            multiqc_opts = config.get("MultiQC", "multiqc_options"), 
+    cmd = "{multiqc_cmd} {multiqc_opts} --config {conf} {flow_dir}/Stats --filename {flow_dir}/Stats/sequencer_stats_{pname}.html -e qiime2".format(
+            multiqc_cmd = config.get("MultiQC", "multiqc_command"),
+            multiqc_opts = config.get("MultiQC", "multiqc_options"),
             conf = conf_name,
             flow_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
             pname = pnames.replace(", ","_")
@@ -745,7 +746,7 @@ def samplesheet_worker(config,project_dirs):
                     #TODO: get message from merge (check intersection between sample sheet and sample-sub-form and attach message to email
                     sample_dict = cm.merge_samples_with_submission_form(ssub,sample_dict)
 
-                keep_cols.extend(['External_ID', 'Sample_Group','Sample_Biosource','Customer_Comment', 'RIN', '260/280', '260/230'])
+                keep_cols.extend(['External_ID', 'Sample_Group','Sample_Biosource','Customer_Comment', 'RIN', '260/280', '260/230', 'Concentration'])
                 try:
                     sample_df = pd.DataFrame.from_dict(sample_dict,orient='index')[keep_cols]
                 except Exception as e:
@@ -838,13 +839,8 @@ def post_microbiome(var_d):
     analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
     os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
     cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "microbiome", "bfq", "exprs"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq", "exprs"),
-    )
-    subprocess.check_call(cmd, shell=True)
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "microbiome", "bfq", "figs"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq", "figs"),
+        os.path.join(analysis_dir, "data", "tmp", "microbiome", "bfq"),
+        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
     )
     subprocess.check_call(cmd, shell=True)
 
@@ -903,6 +899,14 @@ def full_align(config):
             os.path.join(analysis_dir,"Snakefile"),
             )
 
+        if pipeline == 'microbiome':
+            os.makedirs(os.path.join(analysis_dir, "data", "tmp"), exist_ok=True)
+            cmd = "cp {} {}".format(
+                os.path.join(base_dir, "{}_samplesheet.tsv".format(p)),
+                os.path.join(analysis_dir, "data", "tmp", "sample_info.tsv")
+            )
+            subprocess.check_call(cmd,shell=True)
+
         #run snakemake pipeline
         cmd = "snakemake --reason --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR -j32 -p bfq_all"
         subprocess.check_call(cmd,shell=True)
@@ -917,7 +921,15 @@ def full_align(config):
             transfer_done = os.path.join(analysis_dir,"transfer.done")
         )
         """
+        """
         cmd = "nohup /bin/sh -c 'rsync -rvl --remove-source-files {src}/ {dst} && touch {transfer_done}' > /dev/null &".format(
+            src = analysis_dir,
+            dst = analysis_export_dir,
+            transfer_done = os.path.join(analysis_export_dir,"transfer.done")
+        )
+        """
+        #while testing, don't remove source files 
+        cmd = "nohup /bin/sh -c 'rsync -rvl {src}/ {dst} && touch {transfer_done}' > /dev/null &".format(
             src = analysis_dir,
             dst = analysis_export_dir,
             transfer_done = os.path.join(analysis_export_dir,"transfer.done")
@@ -932,7 +944,8 @@ def full_align(config):
 def get_tmp(config, fname):
     project_name = get_gcf_name(fname)
     tmpdir = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options","runID")))
-    return os.path.join(tmpdir, os.path.basename(fname))
+    if os.path.exists(os.path.join(tmpdir, os.path.basename(fname))):
+        return os.path.join(tmpdir, os.path.basename(fname))
 
 def get_tmp_sample_files(config, sample_files):
     return [get_tmp(config, x) for x in sample_files]
@@ -998,40 +1011,40 @@ def postMakeSteps(config) :
     p.join()
     clumpify_mark_done(config)
     """
-    #fastp
-    for d in get_project_dirs(config):
-        project_name = os.path.basename(d)
-        os.makedirs(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp"), exist_ok=True)
+    if not os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done")):
+        #fastp
+        for d in get_project_dirs(config):
+            project_name = os.path.basename(d)
+            os.makedirs(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp"), exist_ok=True)
 
-    p = mp.Pool(int(int(config.get("system","threads"))/int(config.get("fastp","threads"))))
-    p.map(fastp_worker, sampleFiles)
-    p.close()
-    p.join()
+        p = mp.Pool(int(int(config.get("system","threads"))/int(config.get("fastp","threads"))))
+        p.map(fastp_worker, sampleFiles)
+        p.close()
+        p.join()
+        tmp_sample_files = get_tmp_sample_files(config, sampleFiles)
 
-    tmp_sample_files = get_tmp_sample_files(config, sampleFiles)
+        #FastQC
+        p = mp.Pool(int(config.get("Options","fastqcThreads")))
+        p.map(FastQC_worker, tmp_sample_files)
+        p.close()
+        p.join()
 
-    #FastQC
-    p = mp.Pool(int(config.get("Options","fastqcThreads")))
-    #p.map(FastQC_worker, sampleFiles)
-    p.map(FastQC_worker, tmp_sample_files)
-    p.close()
-    p.join()
+        #fastq_screen
+        p = mp.Pool(int(config.get("Options", "fastqScreenThreads")))
+        p.map(fastq_screen_worker, tmp_sample_files)
+        p.close()
+        p.join()
 
-
-    #fastq_screen
-    p = mp.Pool(int(config.get("Options", "fastqScreenThreads")))
-    #p.map(fastq_screen_worker, sampleFiles)
-    p.map(fastq_screen_worker, tmp_sample_files)
-    p.close()
-    p.join()
-
-    clean_up_tmp_sample_files(tmp_sample_files)
-
-    if config.get("Options","Organism") in PIPELINE_ORGANISMS.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),[]) and not os.path.exists(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made")):
-        full_align(config)
+        if tmp_sample_files:
+            clean_up_tmp_sample_files(tmp_sample_files)
+        open(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done"),"w").close()
 
     #customer_samplesheet
     samplesheet_worker(config,projectDirs)
+
+
+    if config.get("Options","Organism") in PIPELINE_ORGANISMS.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),[]) and not os.path.exists(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made")):
+        full_align(config)
 
     # multiqc
     p = mp.Pool(int(config.get("Options","postMakeThreads")))
