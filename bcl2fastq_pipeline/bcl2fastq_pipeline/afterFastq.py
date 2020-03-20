@@ -350,7 +350,7 @@ def fastp_worker(fname):
     tmpdir = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options","runID")))
     os.makedirs(tmpdir, exist_ok=True)
 
-    with open("/opt/gcfdb/libprep.config","r") as libpreppconf:
+    with open("/opt/gcfdb/libprep.config","r") as libprepconf:
         libconf = yaml.load(libprepconf)
 
     l_conf = libconf.get(config.get("Options","Libprep"), {})
