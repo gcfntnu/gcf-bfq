@@ -20,6 +20,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 import bcl2fastq_pipeline.afterFastq as bfq_afq
+import pandas as pd
 
 
 MKFASTQ_10X = {
