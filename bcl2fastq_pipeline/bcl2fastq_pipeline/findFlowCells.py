@@ -44,7 +44,11 @@ def rerunFlowcell(config):
     if not opts:
         return False
     if opts.get("Rerun",False) == True:
-        prev_start = os.path.getmtime(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"SampleSheet.csv"))
+        if os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"SampleSheet.csv")):
+            prev_start = os.path.getmtime(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"SampleSheet.csv"))
+        else:
+            #The bfq output for the flowcell has been deleted manually. Rerun
+            return True
         instr_ss = os.path.getmtime(ss)
         if instr_ss > prev_start:
             fm.rerun_flowcell(flowcell=os.path.join(config.get("Paths","outputDir"), config.get("Options","runID")),force=True)
