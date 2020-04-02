@@ -221,8 +221,9 @@ def cutadapt_worker(fname):
     forward = pd.read_csv("/opt/qiaseq/qiaseq_primers_fwd.csv", index_col=0)
     reverse = pd.read_csv("/opt/qiaseq/qiaseq_primers_rev.csv", index_col=0)
 
-    cmd = "rm log/{}_qiaseq_demultiplex.log".format(sample)
-    subprocess.check_call(cmd, shell=True)
+    if os.path.exists("rm log/{}_qiaseq_demultiplex.log".format(sample)):
+        cmd = "rm log/{}_qiaseq_demultiplex.log".format(sample)
+        subprocess.check_call(cmd, shell=True)
 
     for i, r in forward.iterrows():
         if os.path.exists("{}_unknown_R1.fastq".format(sample)):
