@@ -573,7 +573,7 @@ def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
 
 def get_pipeline_multiqc_modules(config):
     modules = PIPELINE_MULTIQC_MODULES.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),None)
-    return ('-m ' + ' -m '.join(modules)) if modules else '-e fastqc'
+    return ('-m ' + ' -m '.join(modules)) if modules else '-e fastqc -e qiime2'
 
 def multiqc_worker(d) :
     global localConfig
