@@ -65,10 +65,10 @@ COPY files/logo_ntnu.png /opt/images/
 RUN conda install -y fastp cutadapt
 RUN apt update && apt install -y rsync
 
-ENV TMPDIR=/instrument-archive/tmp
-ENV EXT_DIR=/instrument-archive/ext
+ENV TMPDIR=/bfq-tmp
+ENV EXT_DIR=/bfq-ext
 ENV GCF_EXT=$EXT_DIR
-ENV SINGULARITY_BINDPATH=/mnt,/instrument-archive,/opt/gcfdb
+ENV SINGULARITY_BINDPATH=/mnt,/instrument-archive,/opt/gcfdb,/bfq-tmp,/bfq-ext
 ENV SINGULARITY_CACHEDIR=$TMPDIR/singularity/
 ENV SINGULARITY_TMPDIR=$SINGULARITY_CACHEDIR/tmp
 ENV SINGULARITY_LOCALCACHEDIR=$SINGULARITY_CACHEDIR/tmp/
