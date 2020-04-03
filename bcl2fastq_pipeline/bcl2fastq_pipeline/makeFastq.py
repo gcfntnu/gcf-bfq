@@ -172,7 +172,7 @@ def bcl2fq(config) :
     os.chdir(old_wd)
 
 
-def demultiplex_qiaseq(config):
+def demultiplex_16s_its(config):
     old_dir = os.getcwd()
     tmp_dir = os.path.join(os.environ["TMPDIR"],config.get("Options","runID"))
     os.makedirs(tmp_dir, exist_ok=True)
@@ -184,10 +184,10 @@ def demultiplex_qiaseq(config):
         os.chdir(p)
         os.makedirs("log", exist_ok=True)
         os.makedirs(os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), "QC_{}".format(p), "cutadapt"), exist_ok=True)
-
+        primers = get_16s_its_primers(config)
         r1 = glob.glob(os.path.join(config.get("Paths","outputDir"),config.get("Options","runID"),p,"*R1.fastq.gz"))
         for f in r1:
-            cutadapt_worker(f)
+            cutadapt_worker(config, primers, f)
 
         """
         p = mp.Pool(4)
@@ -215,17 +215,30 @@ def demultiplex_qiaseq(config):
 
         os.chdir(tmp_dir)
 
+def get_16s_its_primers(config):
+    with open("/opt/gcfdb/libprep.config","r") as libprepconf:
+        libconf = yaml.load(libprepconf)
 
-def cutadapt_worker(fname):
+    l_conf = libconf.get(config.get("Options","Libprep"), {})
+    forward_primers = {}
+    reverse_primers = {}
+    for region, primers in l_conf.get('primers', {}):
+        forward_primers[region] = primers.split('-')[0]
+        reverse_primers[region] = primers.split('-')[1]
+
+    return {'forward': forward_primers, 'reverse': reverse_primers}
+
+def cutadapt_worker(config, primers, fname):
     sample = os.path.basename(fname).replace("_R1.fastq.gz","")
-    forward = pd.read_csv("/opt/qiaseq/qiaseq_primers_fwd.csv", index_col=0)
-    reverse = pd.read_csv("/opt/qiaseq/qiaseq_primers_rev.csv", index_col=0)
+    forward = primers.get('forward', {})
+    reverse = primers.get('reverse', {})
 
     if os.path.exists("rm log/{}_qiaseq_demultiplex.log".format(sample)):
         cmd = "rm log/{}_qiaseq_demultiplex.log".format(sample)
         subprocess.check_call(cmd, shell=True)
 
-    for i, r in forward.iterrows():
+    regions = ['unknown']
+    for region, primer in forward.items():
         if os.path.exists("{}_unknown_R1.fastq".format(sample)):
             fname = "{}_unknown_R1.fastq".format(sample)
             cp_cmd = "mv -f {} input_{}".format(fname, fname)
@@ -241,18 +254,21 @@ def cutadapt_worker(fname):
             sample = sample,
             unknown_r1 = "{}_unknown_R1.fastq".format(sample),
             unknown_r2 = "{}_unknown_R2.fastq".format(sample),
-            region = i,
-            fwd_primer = r['primer'],
-            rev_primer = reverse.loc[i, 'primer'],
+            region = region,
+            fwd_primer = primer,
+            rev_primer = reverse[region],
             r1 = ("input_" + fname) if "unknown_R1.fastq" in fname else fname,
             r2 = ("input_" + fname.replace("R1.fastq", "R2.fastq")) if "unknown_R1.fastq" in fname else fname.replace("R1.fastq", "R2.fastq")
             )
+        regions.append(region)
         subprocess.check_call(cmd, shell=True)
 
-    rm_cmd = "rm input_{}_*fastq".format(sample)
-    subprocess.check_call(rm_cmd, shell=True)
+    if os.path.exists("input_{}_*fastq".format(sample)):
+        rm_cmd = "rm input_{}_*fastq".format(sample)
+        subprocess.check_call(rm_cmd, shell=True)
 
-    R1 = glob.glob("{}*R1.fastq".format(sample))
+    R1_comb = ["{}_{}_R1.fastq".format(sample, r) for r in regions]
+    R1 = [r1 for r1 in R1_comb if os.path.exists(r1)]
     r1 = " ".join(R1)
     r2 = r1.replace("R1.fastq", "R2.fastq")
 
@@ -267,6 +283,7 @@ def cutadapt_worker(fname):
     subprocess.check_call(cmd, shell=True)
     cmd = "rm -f {}".format(r2)
     subprocess.check_call(cmd, shell=True)
+    print("finished sample: {}".format(sample))
 
 
 def getOffSpecies(fname) :

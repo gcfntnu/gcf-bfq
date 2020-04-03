@@ -94,10 +94,10 @@ while True:
                 bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error in fixNames")
                 continue
 
-        if config.get("Options","Libprep") == "QIAseq 16S ITS Region Panels" and not os.path.exists("{}/{}/qiaseq.done".format(config["Paths"]["outputDir"], config["Options"]["runID"])):
+        if config.get("Options","Libprep") in ["QIAseq 16S ITS Region Panels", "16S Metagenomic Sequencing Library Prep"] and not os.path.exists("{}/{}/16S_demux.done".format(config["Paths"]["outputDir"], config["Options"]["runID"])):
             try:
-                bcl2fastq_pipeline.makeFastq.demultiplex_qiaseq(config)
-                open("{}/{}/qiaseq.done".format(config["Paths"]["outputDir"], config["Options"]["runID"]), "w").close()
+                bcl2fastq_pipeline.makeFastq.demultiplex_16s_its(config)
+                open("{}/{}/16S_demux.done".format(config["Paths"]["outputDir"], config["Options"]["runID"]), "w").close()
             except:
                 syslog.syslog("Got an error in demultiplex_qiaseq\n")
                 bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error in demultiplex_qiaseq")
