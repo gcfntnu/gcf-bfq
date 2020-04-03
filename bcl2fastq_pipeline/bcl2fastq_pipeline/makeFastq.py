@@ -223,7 +223,7 @@ def get_16s_its_primers(config):
     l_conf = libconf.get(config.get("Options","Libprep"), {})
     forward_primers = {}
     reverse_primers = {}
-    for region, primers in l_conf.get('primers', {}):
+    for region, primers in l_conf.get('primers', {}).items():
         forward_primers[region] = primers.split('-')[0]
         reverse_primers[region] = primers.split('-')[1]
 
