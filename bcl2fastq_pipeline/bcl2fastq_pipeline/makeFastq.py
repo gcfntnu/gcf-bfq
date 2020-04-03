@@ -21,6 +21,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 import bcl2fastq_pipeline.afterFastq as bfq_afq
 import pandas as pd
+import yaml
 
 
 MKFASTQ_10X = {
