@@ -915,14 +915,20 @@ def full_align(config):
 
         #push analysis folder
         analysis_export_dir = os.path.join(config.get("Paths","analysisDir"),"{}_{}".format(p,config.get("Options","runID").split("_")[0]))
-
+        """
         cmd = "nohup /bin/sh -c 'rsync -rvl --remove-source-files {src}/ {dst} && touch {transfer_done}' > /dev/null &".format(
             src = analysis_dir,
             dst = analysis_export_dir,
             transfer_done = os.path.join(analysis_export_dir,"transfer.done")
         )
         subprocess.check_call(cmd,shell=True)
-
+        """
+        cmd = "cp -rvP --preserve=timestamps {src}/ {dst} && touch {transfer_done}".format(
+            src = analysis_dir,
+            dst = analysis_export_dir,
+            transfer_done = os.path.join(analysis_export_dir,"transfer.done")
+        )
+        subprocess.check_call(cmd,shell=True)
     os.chdir(old_wd)
     open(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made"), "w").close()
     return True
