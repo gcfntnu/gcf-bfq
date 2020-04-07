@@ -21,6 +21,9 @@ ENV PATH=$PATH:/opt/bcl2fastq_pipeline/flowcell_manager
 ADD https://api.github.com/repos/gcfntnu/microbiome/git/refs/heads/bfq-prod microbiome_version
 RUN cd /opt && git clone https://github.com/gcfntnu/microbiome.git && cd /opt/microbiome && git checkout bfq-prod
 
+ADD https://api.github.com/repos/gcfntnu/single-cell/git/refs/heads/bfq-prod single-cell_version
+RUN cd /opt && git clone https://github.com/gcfntnu/single-cell.git && cd /opt/single-cell && git checkout bfq-prod
+
 WORKDIR /opt/bcl2fastq_pipeline
 RUN gcc splitFastq.c -o splitFastq
 RUN ./setup.py build

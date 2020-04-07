@@ -65,16 +65,19 @@ PIPELINE_MAP = {
     'Illumina TruSeq Stranded mRNA Library Prep': 'rna-seq',
     'QIAseq 16S ITS Region Panels': 'microbiome',
     '16S Metagenomic Sequencing Library Prep': 'microbiome',
+    '10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3': 'single-cell'
 }
 
 PIPELINE_MULTIQC_MODULES = {
     'rna-seq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"],
     'microbiome': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content", "qiime2"],
+    'rna-seq': ["fastq_screen","star","fastp","fastqc_rnaseq","custom_content"],
 }
 
 PIPELINE_ORGANISMS = {
     'rna-seq': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus'],
-    'microbiome': ['N/A']
+    'microbiome': ['N/A'],
+    'single-cell': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus'],
 }
 
 
@@ -804,14 +807,8 @@ def get_software_versions(config):
 def post_rna_seq(var_d):
     p = var_d['p']
     base_dir = var_d['base_dir']
+
     #move expressions and bam
-    """
-    cmd = "rsync -rvL {}/ {}".format(
-        os.path.join(os.environ["TMPDIR"], "analysis_{}".format(p),"data","tmp","rnaseq","bfq"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
-    )
-    subprocess.check_call(cmd, shell=True)
-    """
     analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
     os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
     cmd = "rsync -rvLp {}/ {}".format(
@@ -853,9 +850,30 @@ def post_microbiome(var_d):
     subprocess.check_call(cmd, shell=True)
     return None
 
+def post_single_cell(var_d):
+    p = var_d['p']
+    base_dir = var_d['base_dir']
+    #move expressions and bam
+    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
+    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
+    cmd = "rsync -rvLp {}/ {}".format(
+        os.path.join(analysis_dir, "data", "tmp", "single-cell", "bfq"),
+        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
+    )
+    subprocess.check_call(cmd, shell=True)
+
+    #move logs
+    cmd = "rsync -rvLp {}/ {}".format(
+        os.path.join(analysis_dir,"logs"),
+        os.path.join(base_dir, "QC_{}".format(p),"logs"),
+    )
+    subprocess.check_call(cmd, shell=True)
+    return None
+
 POST_PIPELINE_MAP = {
     'rna-seq': post_rna_seq,
     'microbiome': post_microbiome,
+    'single-cell': post_single_cell,
 }
 
 def full_align(config):
@@ -916,14 +934,7 @@ def full_align(config):
 
         #push analysis folder
         analysis_export_dir = os.path.join(config.get("Paths","analysisDir"),"{}_{}".format(p,config.get("Options","runID").split("_")[0]))
-        """
-        cmd = "nohup /bin/sh -c 'rsync -rvl --remove-source-files {src}/ {dst} && touch {transfer_done}' > /dev/null &".format(
-            src = analysis_dir,
-            dst = analysis_export_dir,
-            transfer_done = os.path.join(analysis_export_dir,"transfer.done")
-        )
-        subprocess.check_call(cmd,shell=True)
-        """
+
         cmd = "cp -rvP --preserve=timestamps {src}/ {dst} && touch {transfer_done}".format(
             src = analysis_dir,
             dst = analysis_export_dir,
