@@ -50,6 +50,7 @@ QC_PLACEMENT = {
     'Sample_Biosource': 10,
     'Sample_Group': 20,
     'Customer_Comment': 30,
+    'Fragment_Length': 35,
     '260/230': 40,
     '260/280': 50,
     'Concentration': 50,
@@ -746,7 +747,7 @@ def samplesheet_worker(config,project_dirs):
                     #TODO: get message from merge (check intersection between sample sheet and sample-sub-form and attach message to email
                     sample_dict = cm.merge_samples_with_submission_form(ssub,sample_dict)
 
-                keep_cols.extend(['External_ID', 'Sample_Group','Sample_Biosource','Customer_Comment', 'RIN', '260/280', '260/230', 'Concentration'])
+                keep_cols.extend(['External_ID', 'Sample_Group','Sample_Biosource','Customer_Comment', 'Fragment_Length','RIN', '260/280', '260/230', 'Concentration'])
                 try:
                     sample_df = pd.DataFrame.from_dict(sample_dict,orient='index')[keep_cols]
                 except Exception as e:
