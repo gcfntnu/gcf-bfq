@@ -71,7 +71,7 @@ PIPELINE_MAP = {
 PIPELINE_MULTIQC_MODULES = {
     'rna-seq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"],
     'microbiome': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content", "qiime2"],
-    'rna-seq': ["fastq_screen","starsolo", "cellranger", "star", "fastp","fastqc_rnaseq","custom_content"],
+    'single-cell': ["fastq_screen","star", "cellranger", "starsolo", "fastp","fastqc_rnaseq","custom_content"],
 }
 
 PIPELINE_ORGANISMS = {
@@ -862,14 +862,12 @@ def post_single_cell(var_d):
     )
     subprocess.check_call(cmd, shell=True)
 
-    """
     #move logs
     cmd = "rsync -rvLp {}/ {}".format(
         os.path.join(analysis_dir,"logs"),
         os.path.join(base_dir, "QC_{}".format(p),"logs"),
     )
-    subprocess.check_call(cmd, shell=True)
-    """
+    #subprocess.check_call(cmd, shell=True)
     return None
 
 POST_PIPELINE_MAP = {
