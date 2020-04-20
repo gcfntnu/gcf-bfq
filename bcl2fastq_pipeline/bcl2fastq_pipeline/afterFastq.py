@@ -958,6 +958,9 @@ def clean_up_tmp_sample_files(tmp_sample_files):
     for x in tmp_sample_files:
         os.unlink(x)
 
+def concat_sc_rna_seq_input_files(config):
+    return None
+
 #All steps that should be run after `make` go here
 def postMakeSteps(config) :
     '''
@@ -976,10 +979,27 @@ def postMakeSteps(config) :
         sampleFiles.extend(glob.glob("{}/{}/*/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
         sampleFiles.extend(glob.glob("{}/{}/*/*/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
     elif config.get("Options", "Libprep") == "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3":
+        """
         sampleFiles = glob.glob("{}/{}/*/*R2.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")))
         sampleFiles.extend(glob.glob("{}/{}/*/*/*R2.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
         sampleFiles.extend(glob.glob("{}/{}/*/*R2_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
         sampleFiles.extend(glob.glob("{}/{}/*/*/*R2_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
+        """
+        sampleFiles = []
+        for d in get_project_dirs(config):
+            project_name = os.path.basename(d)
+            tmp_raw = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options", "runID")), "raw")
+            os.makedirs(tmp_raw, exist_ok=True)
+            for sample in os.listdir(d):
+                s_files = sorted(glob.glob(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), project_name, sample, "{}_*_R2_001.fastq.gz".format(sample))))
+                tmp_sample = os.path.join(tmp_raw, "{}_R2.fastq.gz".format(sample))
+                cmd = "cat {infiles} > {tmp_sample}".format(
+                    infiles = " ".join(s_files),
+                    tmp_sample = tmp_sample,
+                )
+                subprocess.check_call(cmd, shell=True)
+                sampleFiles.append(tmp_sample)
+
     else:
         sampleFiles = glob.glob("{}/{}/*/*R[12].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")))
         sampleFiles.extend(glob.glob("{}/{}/*/*/*R[12].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
@@ -992,14 +1012,6 @@ def postMakeSteps(config) :
     global localConfig
     localConfig = config
 
-    #suprDUPr
-    """
-    SKIP SUPRDUPR FOR NOW - NEED ./filterfq to work
-    p = mp.Pool(int(config.get("Options","postMakeThreads")))
-    p.map(suprDUPr_worker, sampleFiles)
-    p.close()
-    p.join()
-    """
     #Decontaminate with masked genome
     if config.get("Options","RemoveHumanReads") == "1":
         p = mp.Pool(int(1))
@@ -1007,14 +1019,6 @@ def postMakeSteps(config) :
         p.close()
         p.join()
 
-    #clumpify
-    """
-    p = mp.Pool(int(config.get("Options","clumpifyWorkerThreads")))
-    p.map(clumpify_worker, sampleFiles)
-    p.close()
-    p.join()
-    clumpify_mark_done(config)
-    """
     if not os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done")):
         #fastp
         for d in get_project_dirs(config):
@@ -1026,6 +1030,13 @@ def postMakeSteps(config) :
         p.close()
         p.join()
         tmp_sample_files = get_tmp_sample_files(config, sampleFiles)
+
+        if config.get("Options", "Libprep") == "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3":
+            for d in get_project_dirs(config):
+                project_name = os.path.basename(d)
+                tmp_raw = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options", "runID")), "raw")
+                cmd = "rm -rf {}".format(tmp_raw)
+                subprocess.check_call(cmd, shell=True)
 
         #FastQC
         p = mp.Pool(int(config.get("Options","fastqcThreads")))
