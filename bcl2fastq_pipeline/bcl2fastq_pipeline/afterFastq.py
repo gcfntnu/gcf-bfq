@@ -65,16 +65,19 @@ PIPELINE_MAP = {
     'Illumina TruSeq Stranded mRNA Library Prep': 'rna-seq',
     'QIAseq 16S ITS Region Panels': 'microbiome',
     '16S Metagenomic Sequencing Library Prep': 'microbiome',
+    '10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3': 'single-cell'
 }
 
 PIPELINE_MULTIQC_MODULES = {
     'rna-seq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"],
     'microbiome': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content", "qiime2"],
+    'single-cell': ["fastq_screen","star", "cellranger", "starsolo", "fastp","fastqc_rnaseq","custom_content"],
 }
 
 PIPELINE_ORGANISMS = {
     'rna-seq': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus'],
-    'microbiome': ['N/A']
+    'microbiome': ['N/A'],
+    'single-cell': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus'],
 }
 
 
@@ -804,14 +807,8 @@ def get_software_versions(config):
 def post_rna_seq(var_d):
     p = var_d['p']
     base_dir = var_d['base_dir']
+
     #move expressions and bam
-    """
-    cmd = "rsync -rvL {}/ {}".format(
-        os.path.join(os.environ["TMPDIR"], "analysis_{}".format(p),"data","tmp","rnaseq","bfq"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
-    )
-    subprocess.check_call(cmd, shell=True)
-    """
     analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
     os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
     cmd = "rsync -rvLp {}/ {}".format(
@@ -853,9 +850,30 @@ def post_microbiome(var_d):
     subprocess.check_call(cmd, shell=True)
     return None
 
+def post_single_cell(var_d):
+    p = var_d['p']
+    base_dir = var_d['base_dir']
+    #move expressions and bam
+    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
+    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
+    cmd = "rsync -rvLp {}/ {}".format(
+        os.path.join(analysis_dir, "data", "tmp", "singlecell", "bfq"),
+        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
+    )
+    subprocess.check_call(cmd, shell=True)
+
+    #move logs
+    cmd = "rsync -rvLp {}/ {}".format(
+        os.path.join(analysis_dir,"logs"),
+        os.path.join(base_dir, "QC_{}".format(p),"logs"),
+    )
+    #subprocess.check_call(cmd, shell=True)
+    return None
+
 POST_PIPELINE_MAP = {
     'rna-seq': post_rna_seq,
     'microbiome': post_microbiome,
+    'single-cell': post_single_cell,
 }
 
 def full_align(config):
@@ -900,7 +918,7 @@ def full_align(config):
             os.path.join(analysis_dir,"Snakefile"),
             )
 
-        if pipeline == 'microbiome':
+        if pipeline in ['microbiome', 'single-cell']:
             os.makedirs(os.path.join(analysis_dir, "data", "tmp"), exist_ok=True)
             cmd = "cp {} {}".format(
                 os.path.join(base_dir, "{}_samplesheet.tsv".format(p)),
@@ -916,14 +934,7 @@ def full_align(config):
 
         #push analysis folder
         analysis_export_dir = os.path.join(config.get("Paths","analysisDir"),"{}_{}".format(p,config.get("Options","runID").split("_")[0]))
-        """
-        cmd = "nohup /bin/sh -c 'rsync -rvl --remove-source-files {src}/ {dst} && touch {transfer_done}' > /dev/null &".format(
-            src = analysis_dir,
-            dst = analysis_export_dir,
-            transfer_done = os.path.join(analysis_export_dir,"transfer.done")
-        )
-        subprocess.check_call(cmd,shell=True)
-        """
+
         cmd = "cp -rvP --preserve=timestamps {src}/ {dst} && touch {transfer_done}".format(
             src = analysis_dir,
             dst = analysis_export_dir,
@@ -947,6 +958,9 @@ def clean_up_tmp_sample_files(tmp_sample_files):
     for x in tmp_sample_files:
         os.unlink(x)
 
+def concat_sc_rna_seq_input_files(config):
+    return None
+
 #All steps that should be run after `make` go here
 def postMakeSteps(config) :
     '''
@@ -965,10 +979,27 @@ def postMakeSteps(config) :
         sampleFiles.extend(glob.glob("{}/{}/*/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
         sampleFiles.extend(glob.glob("{}/{}/*/*/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
     elif config.get("Options", "Libprep") == "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3":
+        """
         sampleFiles = glob.glob("{}/{}/*/*R2.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")))
         sampleFiles.extend(glob.glob("{}/{}/*/*/*R2.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
         sampleFiles.extend(glob.glob("{}/{}/*/*R2_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
         sampleFiles.extend(glob.glob("{}/{}/*/*/*R2_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
+        """
+        sampleFiles = []
+        for d in get_project_dirs(config):
+            project_name = os.path.basename(d)
+            tmp_raw = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options", "runID")), "raw")
+            os.makedirs(tmp_raw, exist_ok=True)
+            for sample in os.listdir(d):
+                s_files = sorted(glob.glob(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), project_name, sample, "{}_*_R2_001.fastq.gz".format(sample))))
+                tmp_sample = os.path.join(tmp_raw, "{}.fastq.gz".format(sample))
+                cmd = "cat {infiles} > {tmp_sample}".format(
+                    infiles = " ".join(s_files),
+                    tmp_sample = tmp_sample,
+                )
+                subprocess.check_call(cmd, shell=True)
+                sampleFiles.append(tmp_sample)
+
     else:
         sampleFiles = glob.glob("{}/{}/*/*R[12].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")))
         sampleFiles.extend(glob.glob("{}/{}/*/*/*R[12].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
@@ -981,14 +1012,6 @@ def postMakeSteps(config) :
     global localConfig
     localConfig = config
 
-    #suprDUPr
-    """
-    SKIP SUPRDUPR FOR NOW - NEED ./filterfq to work
-    p = mp.Pool(int(config.get("Options","postMakeThreads")))
-    p.map(suprDUPr_worker, sampleFiles)
-    p.close()
-    p.join()
-    """
     #Decontaminate with masked genome
     if config.get("Options","RemoveHumanReads") == "1":
         p = mp.Pool(int(1))
@@ -996,14 +1019,6 @@ def postMakeSteps(config) :
         p.close()
         p.join()
 
-    #clumpify
-    """
-    p = mp.Pool(int(config.get("Options","clumpifyWorkerThreads")))
-    p.map(clumpify_worker, sampleFiles)
-    p.close()
-    p.join()
-    clumpify_mark_done(config)
-    """
     if not os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done")):
         #fastp
         for d in get_project_dirs(config):
@@ -1015,6 +1030,13 @@ def postMakeSteps(config) :
         p.close()
         p.join()
         tmp_sample_files = get_tmp_sample_files(config, sampleFiles)
+
+        if config.get("Options", "Libprep") == "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3":
+            for d in get_project_dirs(config):
+                project_name = os.path.basename(d)
+                tmp_raw = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options", "runID")), "raw")
+                cmd = "rm -rf {}".format(tmp_raw)
+                subprocess.check_call(cmd, shell=True)
 
         #FastQC
         p = mp.Pool(int(config.get("Options","fastqcThreads")))
