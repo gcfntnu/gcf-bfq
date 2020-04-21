@@ -4,7 +4,7 @@ configfile:
     'config.yaml'
 
 include:
-    'src/single-cell/single-cell.sm'
+    'src/microbiome/microbiome-seq.sm'
 include:
-    'src/single-cell/rules/quant/bfq.rules'
-
+    'src/microbiome/rules/quant/bfq.rules'
+    

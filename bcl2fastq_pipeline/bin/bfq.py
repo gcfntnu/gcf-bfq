@@ -76,7 +76,7 @@ while True:
         lanes = config["Options"]["lanes"]
         if lanes != "":
             lanes = "_lanes{}".format(lanes)
-        if not os.path.exists("{}/{}{}/bcl.done".format(config["Paths"]["outputDir"], config["Options"]["runID"], lanes)):
+        if not os.path.exists("{}/{}/bcl.done".format(config["Paths"]["outputDir"], config["Options"]["runID"])):
             try:
                 bcl2fastq_pipeline.makeFastq.bcl2fq(config)
                 open("{}/{}{}/bcl.done".format(config["Paths"]["outputDir"], config["Options"]["runID"], lanes), "w").close()
@@ -93,6 +93,16 @@ while True:
                 syslog.syslog("Got an error in fixNames\n")
                 bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error in fixNames")
                 continue
+
+        if config.get("Options","Libprep") in ["QIAseq 16S ITS Region Panels", "16S Metagenomic Sequencing Library Prep"] and not os.path.exists("{}/{}/16S_demux.done".format(config["Paths"]["outputDir"], config["Options"]["runID"])):
+            try:
+                bcl2fastq_pipeline.makeFastq.demultiplex_16s_its(config)
+                open("{}/{}/16S_demux.done".format(config["Paths"]["outputDir"], config["Options"]["runID"]), "w").close()
+            except:
+                syslog.syslog("Got an error in demultiplex_qiaseq\n")
+                bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error in demultiplex_qiaseq")
+                continue
+
 
         #Run post-processing steps
         try :

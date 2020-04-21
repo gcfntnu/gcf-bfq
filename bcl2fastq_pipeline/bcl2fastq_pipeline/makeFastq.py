@@ -1,6 +1,7 @@
 '''
 This file contains functions required to actually convert the bcl files to fastq
 '''
+import multiprocessing as mp
 import subprocess
 import os
 import sys
@@ -18,10 +19,14 @@ from reportlab.platypus import BaseDocTemplate, Table, Preformatted, Paragraph, 
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+import bcl2fastq_pipeline.afterFastq as bfq_afq
+import pandas as pd
+import yaml
+
 
 MKFASTQ_10X = {
     '10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit': 'cellranger_spatial_mkfastq',
-    '10X Genommics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1': 'cellranger_atac_mkfastq',
+    '10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1': 'cellranger_atac_mkfastq',
     '10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3': 'cellranger_mkfastq'
 }
 
@@ -138,11 +143,149 @@ def bcl2fq(config) :
             config.get("Paths","outputDir"),
             config.get("Options","runID"),
         )
-    syslog.syslog("[bcl2fq] Running: %s\n" % cmd)
-    logOut = open("%s/%s%s.log" % (config.get("Paths","logDir"), config.get("Options","runID"), lanes), "w")
-    subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
+    try:
+        syslog.syslog("[bcl2fq] Running: %s\n" % cmd)
+        with open("%s/%s%s.log" % (config.get("Paths","logDir"), config.get("Options","runID"), lanes), "w") as logOut:
+            subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
+    except:
+        if "10X Genomics" not in config.get("Options", "Libprep"):
+            with open("%s/%s%s.log" % (config.get("Paths","logDir"), config.get("Options","runID"), lanes), "r") as logOut:
+                log_content = logOut.read()
+            if "<bcl2fastq::layout::BarcodeCollisionError>" in log_content:
+                cmd += " --barcode-mismatches 0 "
+                with open("%s/%s%s.log" % (config.get("Paths","logDir"), config.get("Options","runID"), lanes), "w") as logOut:
+                    syslog.syslog("[bcl2fq] Retrying with --barcode-mismatches 0 : %s\n" % cmd)
+                    subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
+    #retrieve mkfastq logs
+    if "10X Genomics" in config.get("Options","Libprep"):
+        project_dirs = bfq_afq.get_project_dirs(config)
+        pnames = bfq_afq.get_project_names(project_dirs)
+        for p in pnames:
+            os.makedirs(os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), "QC_{}".format(p), "10X_mkfastq"), exist_ok=True)
+            cmd = "cp {} {}".format(
+                os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), config.get("Options","runID").split("_")[-1][1:], "outs", "qc_summary.json"),
+                os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), "QC_{}".format(p), "10X_mkfastq", "qc_summary.json")
+
+            )
+            subprocess.check_call(cmd, shell=True)
+
     logOut.close()
     os.chdir(old_wd)
+
+
+def demultiplex_16s_its(config):
+    old_dir = os.getcwd()
+    tmp_dir = os.path.join(os.environ["TMPDIR"],config.get("Options","runID"))
+    os.makedirs(tmp_dir, exist_ok=True)
+    os.chdir(tmp_dir)
+    project_dirs = bfq_afq.get_project_dirs(config)
+    pnames = bfq_afq.get_project_names(project_dirs)
+    for p in pnames:
+        os.makedirs(p, exist_ok=True)
+        os.chdir(p)
+        os.makedirs("log", exist_ok=True)
+        os.makedirs(os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), "QC_{}".format(p), "cutadapt"), exist_ok=True)
+        primers = get_16s_its_primers(config)
+        r1 = glob.glob(os.path.join(config.get("Paths","outputDir"),config.get("Options","runID"),p,"*R1.fastq.gz"))
+        for f in r1:
+            cutadapt_worker(config, primers, f)
+
+        """
+        p = mp.Pool(4)
+        p.map(cutadapt_worker, r1)
+        p.close()
+        p.join()
+        """
+        #cutadapt logs in try except
+        cmd = "/opt/conda/bin/python /opt/qiaseq/qiaseq_region_summary.py log/*_qiaseq_demultiplex.log > {odir}/qiaseq_regions_mqc.yaml".format(
+            odir = os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), "QC_{}".format(p), "cutadapt")
+        )
+        try:
+            subprocess.check_call(cmd, shell=True)
+        except Exception as e:
+            err = "Got an error in qiaseq_region_summary.py: {}\n".format(e)
+            syslog.syslog(err)
+            bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), err)
+
+        #move demultiplexed files to utputfolder/runid/pnr
+        cmd = "rm -rf {dst}/*.fastq.gz && cp -v {src}/*.fastq.gz {dst}/ && rm -rf {src}/* ".format(
+            dst = os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), p),
+            src = os.path.join(tmp_dir,p)
+        )
+        subprocess.check_call(cmd, shell=True)
+
+        os.chdir(tmp_dir)
+
+def get_16s_its_primers(config):
+    with open("/opt/gcfdb/libprep.config","r") as libprepconf:
+        libconf = yaml.load(libprepconf)
+
+    l_conf = libconf.get(config.get("Options","Libprep"), {})
+    forward_primers = {}
+    reverse_primers = {}
+    for region, primers in l_conf.get('primers', {}).items():
+        forward_primers[region] = primers.split('-')[0]
+        reverse_primers[region] = primers.split('-')[1]
+
+    return {'forward': forward_primers, 'reverse': reverse_primers}
+
+def cutadapt_worker(config, primers, fname):
+    sample = os.path.basename(fname).replace("_R1.fastq.gz","")
+    forward = primers.get('forward', {})
+    reverse = primers.get('reverse', {})
+
+    if os.path.exists("rm log/{}_qiaseq_demultiplex.log".format(sample)):
+        cmd = "rm log/{}_qiaseq_demultiplex.log".format(sample)
+        subprocess.check_call(cmd, shell=True)
+
+    regions = ['unknown']
+    for region, primer in forward.items():
+        if os.path.exists("{}_unknown_R1.fastq".format(sample)):
+            fname = "{}_unknown_R1.fastq".format(sample)
+            cp_cmd = "mv -f {} input_{}".format(fname, fname)
+            subprocess.check_call(cp_cmd, shell=True)
+            cp_cmd = "mv -f {} input_{}".format(fname.replace("R1.fastq","R2.fastq"), fname.replace("R1.fastq","R2.fastq"))
+            subprocess.check_call(cp_cmd, shell=True)
+            sed_cmd = "sed -i -e s/:region=no_adapter//g input_{}".format(fname)
+            subprocess.check_call(sed_cmd, shell=True)
+            sed_cmd = "sed -i -e s/:region=no_adapter//g input_{}".format(fname.replace("R1.fastq","R2.fastq"))
+            subprocess.check_call(sed_cmd, shell=True)
+
+        cmd = "cutadapt -g {region}={fwd_primer} -G {region}={rev_primer} --pair-adapters --no-indels -e 0.1 --untrimmed-output {unknown_r1} --untrimmed-paired-output {unknown_r2} --suffix ':region={{name}}' -o {sample}_{{name}}_R1.fastq -p {sample}_{{name}}_R2.fastq {r1} {r2} >> log/{sample}_qiaseq_demultiplex.log".format(
+            sample = sample,
+            unknown_r1 = "{}_unknown_R1.fastq".format(sample),
+            unknown_r2 = "{}_unknown_R2.fastq".format(sample),
+            region = region,
+            fwd_primer = primer,
+            rev_primer = reverse[region],
+            r1 = ("input_" + fname) if "unknown_R1.fastq" in fname else fname,
+            r2 = ("input_" + fname.replace("R1.fastq", "R2.fastq")) if "unknown_R1.fastq" in fname else fname.replace("R1.fastq", "R2.fastq")
+            )
+        regions.append(region)
+        subprocess.check_call(cmd, shell=True)
+
+    if os.path.exists("input_{}_*fastq".format(sample)):
+        rm_cmd = "rm input_{}_*fastq".format(sample)
+        subprocess.check_call(rm_cmd, shell=True)
+
+    R1_comb = ["{}_{}_R1.fastq".format(sample, r) for r in regions]
+    R1 = [r1 for r1 in R1_comb if os.path.exists(r1)]
+    r1 = " ".join(R1)
+    r2 = r1.replace("R1.fastq", "R2.fastq")
+
+    #cat and compress
+    cmd = "cat {r1} | pigz -6 -p 8 > {sample}_R1.fastq.gz".format(r1 = r1, sample = sample)
+    subprocess.check_call(cmd, shell=True)
+    cmd = "cat {r2} | pigz -6 -p 8 > {sample}_R2.fastq.gz".format(r2 = r2, sample = sample)
+    subprocess.check_call(cmd, shell=True)
+
+    #unlink r1 and r2 from above
+    cmd = "rm -f {}".format(r1)
+    subprocess.check_call(cmd, shell=True)
+    cmd = "rm -f {}".format(r2)
+    subprocess.check_call(cmd, shell=True)
+    print("finished sample: {}".format(sample))
+
 
 def getOffSpecies(fname) :
     total = 0

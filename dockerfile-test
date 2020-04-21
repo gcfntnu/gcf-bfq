@@ -1,0 +1,39 @@
+FROM gcfntnu/bfq:base
+
+ADD https://api.github.com/repos/gsmashd/vimrc/git/refs/heads/master vim_version
+RUN cd /tmp && git clone https://github.com/gsmashd/vimrc.git && cd vimrc && sh install.sh
+
+ADD https://api.github.com/repos/gcfntnu/configmaker/git/refs/heads/bfq-dev conf_version
+RUN pip install https://github.com/gcfntnu/configmaker/archive/bfq-dev.zip 
+
+ADD https://api.github.com/repos/gcfntnu/MultiQC/git/refs/heads/bfq-dev multiqc_version
+RUN pip install https://github.com/gcfntnu/MultiQC/archive/bfq-dev.zip 
+
+ADD https://api.github.com/repos/gcfntnu/gcfdb/git/refs/heads/bfq-dev gcfdb_version
+RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout bfq-dev 
+ENV GCF_DB=/opt/gcfdb
+
+ADD https://api.github.com/repos/gcfntnu/rna-seq/git/refs/heads/bfq-dev rnaseq_version
+RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout bfq-dev
+
+ADD https://api.github.com/repos/gcfntnu/microbiome/git/refs/heads/bfq-dev microbiome_version
+RUN cd /opt && git clone https://github.com/gcfntnu/microbiome.git && cd /opt/microbiome && git checkout bfq-dev
+
+ADD https://api.github.com/repos/gcfntnu/single-cell/git/refs/heads/bfq-dev single-cell_version
+RUN cd /opt && git clone https://github.com/gcfntnu/single-cell.git && cd /opt/single-cell && git checkout bfq-dev
+
+COPY ./bcl2fastq_pipeline /opt/bcl2fastq_pipeline
+ENV PATH=$PATH:/opt/bcl2fastq_pipeline/flowcell_manager
+WORKDIR /opt/bcl2fastq_pipeline
+RUN gcc splitFastq.c -o splitFastq
+RUN ./setup.py build
+RUN ./setup.py install
+
+ENV PATH=$PATH:/opt/bcl2fastq_pipeline
+
+ADD ./files/snakefiles /opt/snakefiles
+ADD ./files/qiaseq /opt/qiaseq
+ADD ./files/mqc_headers /opt/mqc_headers
+
+ENV PATH=$PATH:/opt/bcl2fastq_pipeline
+CMD bin/bfq.py
