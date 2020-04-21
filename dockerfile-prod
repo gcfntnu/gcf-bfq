@@ -1,28 +1,28 @@
 FROM gcfntnu/bfq:base
 
-ADD https://api.github.com/repos/gcfntnu/configmaker/git/refs/heads/bfq-prod conf_version
-RUN pip install https://github.com/gcfntnu/configmaker/archive/bfq-prod.zip
+ADD https://api.github.com/repos/gcfntnu/configmaker/git/refs/heads/master conf_version
+RUN pip install https://github.com/gcfntnu/configmaker/archive/master.zip
 
-ADD https://api.github.com/repos/gcfntnu/MultiQC/git/refs/heads/bfq-prod multiqc_version
-RUN pip install https://github.com/gcfntnu/MultiQC/archive/bfq-prod.zip 
+ADD https://api.github.com/repos/gcfntnu/MultiQC/git/refs/heads/master multiqc_version
+RUN pip install https://github.com/gcfntnu/MultiQC/archive/master.zip 
 
-ADD https://api.github.com/repos/gcfntnu/gcfdb/git/refs/heads/bfq-prod gcfdb_version
-RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout bfq-prod 
+ADD https://api.github.com/repos/gcfntnu/gcfdb/git/refs/heads/master gcfdb_version
+RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git 
 ENV GCF_DB=/opt/gcfdb
 
-ADD https://api.github.com/repos/gcfntnu/rna-seq/git/refs/heads/bfq-prod rnaseq_version
-RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout bfq-prod 
+ADD https://api.github.com/repos/gcfntnu/rna-seq/git/refs/heads/master rnaseq_version
+RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git 
 
 
-ADD https://api.github.com/repos/gcfntnu/gcf-bfq/git/refs/heads/bfq-prod gcf-bfq_version
-RUN cd /tmp && git clone https://github.com/gcfntnu/gcf-bfq.git && cd gcf-bfq && git checkout bfq-prod && cp -r bcl2fastq_pipeline /opt 
+ADD https://api.github.com/repos/gcfntnu/gcf-bfq/git/refs/heads/master gcf-bfq_version
+RUN cd /tmp && git clone https://github.com/gcfntnu/gcf-bfq.git && cp -r gcf-bfq/bcl2fastq_pipeline /opt
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline/flowcell_manager
 
-ADD https://api.github.com/repos/gcfntnu/microbiome/git/refs/heads/bfq-prod microbiome_version
-RUN cd /opt && git clone https://github.com/gcfntnu/microbiome.git && cd /opt/microbiome && git checkout bfq-prod
+ADD https://api.github.com/repos/gcfntnu/microbiome/git/refs/heads/master microbiome_version
+RUN cd /opt && git clone https://github.com/gcfntnu/microbiome.git 
 
-ADD https://api.github.com/repos/gcfntnu/single-cell/git/refs/heads/bfq-prod single-cell_version
-RUN cd /opt && git clone https://github.com/gcfntnu/single-cell.git && cd /opt/single-cell && git checkout bfq-prod
+ADD https://api.github.com/repos/gcfntnu/single-cell/git/refs/heads/master single-cell_version
+RUN cd /opt && git clone https://github.com/gcfntnu/single-cell.git 
 
 WORKDIR /opt/bcl2fastq_pipeline
 RUN gcc splitFastq.c -o splitFastq
