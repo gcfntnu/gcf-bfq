@@ -992,7 +992,7 @@ def postMakeSteps(config) :
             os.makedirs(tmp_raw, exist_ok=True)
             for sample in os.listdir(d):
                 s_files = sorted(glob.glob(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), project_name, sample, "{}_*_R2_001.fastq.gz".format(sample))))
-                tmp_sample = os.path.join(tmp_raw, "{}_R2.fastq.gz".format(sample))
+                tmp_sample = os.path.join(tmp_raw, "{}.fastq.gz".format(sample))
                 cmd = "cat {infiles} > {tmp_sample}".format(
                     infiles = " ".join(s_files),
                     tmp_sample = tmp_sample,
