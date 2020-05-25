@@ -737,7 +737,7 @@ def samplesheet_worker(config,project_dirs):
     for pid in project_names:
         with open(config.get("Options","sampleSheet"),'r') as ss:
             #sample_df, _ = cm.get_data_from_samplesheet(ss)
-            sample_df, _ = cm.get_project_samples_from_samplesheet(ss,[os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))] , pid)
+            sample_df, _ = cm.get_project_samples_from_samplesheet(ss,[os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))] , [pid])
 
         sample_ids = sample_df['Sample_ID']
         #project_dirs = cm.inspect_dirs([os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))])
@@ -748,7 +748,7 @@ def samplesheet_worker(config,project_dirs):
             if not config.get("Options","sampleSubForm") == "":
                 with open(config.get("Options","sampleSubForm"),'r') as ssub:
                     #TODO: get message from merge (check intersection between sample sheet and sample-sub-form and attach message to email
-                    sample_dict = cm.merge_samples_with_submission_form(ssub,sample_dict)
+                    sample_dict = cm.merge_samples_with_submission_form([ssub],sample_dict)
 
                 keep_cols.extend(['External_ID', 'Sample_Group','Sample_Biosource','Customer_Comment', 'Fragment_Length','RIN', '260/280', '260/230', 'Concentration'])
                 try:
@@ -1037,26 +1037,21 @@ def postMakeSteps(config) :
                 tmp_raw = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options", "runID")), "raw")
                 cmd = "rm -rf {}".format(tmp_raw)
                 subprocess.check_call(cmd, shell=True)
-
         #FastQC
         p = mp.Pool(int(config.get("Options","fastqcThreads")))
         p.map(FastQC_worker, tmp_sample_files)
         p.close()
         p.join()
-
         #fastq_screen
         p = mp.Pool(int(config.get("Options", "fastqScreenThreads")))
         p.map(fastq_screen_worker, tmp_sample_files)
         p.close()
         p.join()
-
         if tmp_sample_files:
             clean_up_tmp_sample_files(tmp_sample_files)
         open(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done"),"w").close()
-
     #customer_samplesheet
     samplesheet_worker(config,projectDirs)
-
 
     if config.get("Options","Organism") in PIPELINE_ORGANISMS.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),[]) and not os.path.exists(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made")):
         full_align(config)
