@@ -65,6 +65,7 @@ PIPELINE_MAP = {
     'Illumina TruSeq Stranded mRNA Library Prep': 'rna-seq',
     'QIAseq 16S ITS Region Panels': 'microbiome',
     '16S Metagenomic Sequencing Library Prep': 'microbiome',
+    'ITS Low input GCFlab Custom': 'microbiome',
     '10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3': 'single-cell'
 }
 
