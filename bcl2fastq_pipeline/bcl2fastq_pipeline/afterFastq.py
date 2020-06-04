@@ -895,7 +895,7 @@ def full_align(config):
         os.chdir(analysis_dir)
 
         #create config.yaml
-        cmd = "/opt/conda/bin/python /opt/conda/bin/configmaker.py {runfolder} -p {project} -s {samplesheet} -S {sample_sub} --libkit '{lib}' --machine '{machine}' {create_fastq}".format(
+        cmd = "/opt/conda/bin/python /opt/conda/bin/configmaker.py {runfolder} -p {project} --libkit '{lib}' --machine '{machine}' {create_fastq}".format(
             runfolder = base_dir,
             project = p,
             lib = libprep,
