@@ -72,7 +72,7 @@ PIPELINE_MAP = {
 PIPELINE_MULTIQC_MODULES = {
     'rna-seq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"],
     'microbiome': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content", "qiime2"],
-    'single-cell': ["fastq_screen","star", "cellranger", "starsolo", "fastp","fastqc_rnaseq","custom_content"],
+    'single-cell': ["fastq_screen","star", "picard", "cellranger", "starsolo", "fastp","fastqc_rnaseq","custom_content"],
 }
 
 PIPELINE_ORGANISMS = {
