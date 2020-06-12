@@ -747,9 +747,9 @@ def samplesheet_worker(config,project_dirs):
         keep_cols = ['Sample_ID']
         try:
             if not config.get("Options","sampleSubForm") == "":
-                with open(config.get("Options","sampleSubForm"),'r') as ssub:
-                    #TODO: get message from merge (check intersection between sample sheet and sample-sub-form and attach message to email
-                    sample_dict = cm.merge_samples_with_submission_form([ssub],sample_dict)
+                ssub_d = {config.get("Options","sampleSubForm"): open(config.get("Options","sampleSubForm"),'rb')}
+                #TODO: get message from merge (check intersection between sample sheet and sample-sub-form and attach message to email
+                sample_dict = cm.merge_samples_with_submission_form(ssub_d,sample_dict)
 
                 keep_cols.extend(['External_ID', 'Sample_Group','Sample_Biosource','Customer_Comment', 'Fragment_Length','RIN', '260/280', '260/230', 'Concentration'])
                 try:
