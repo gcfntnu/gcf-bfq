@@ -251,13 +251,18 @@ def cutadapt_worker(config, primers, fname):
             sed_cmd = "sed -i -e s/:region=no_adapter//g input_{}".format(fname.replace("R1.fastq","R2.fastq"))
             subprocess.check_call(sed_cmd, shell=True)
 
-        cmd = "cutadapt -g {region}={fwd_primer} -G {region}={rev_primer} --pair-adapters --no-indels -e 0.1 --untrimmed-output {unknown_r1} --untrimmed-paired-output {unknown_r2} --suffix ':region={{name}}' -o {sample}_{{name}}_R1.fastq -p {sample}_{{name}}_R2.fastq {r1} {r2} >> log/{sample}_qiaseq_demultiplex.log".format(
+        overlap_fwd = len(primer.replace("N",""))
+        overlap_rev = len(reverse[region].replace("N",""))
+
+        cmd = "cutadapt -g \"{region}={fwd_primer};min_overlap={overlap_fwd};max_error_rate=0.25\" -G \"{region}={rev_primer};min_overlap={overlap_rev};max_error_rate=0.3\" --pair-adapters --untrimmed-output {unknown_r1} --untrimmed-paired-output {unknown_r2} --suffix ':region={{name}}' -o {sample}_{{name}}_R1.fastq -p {sample}_{{name}}_R2.fastq {r1} {r2} >> log/{sample}_qiaseq_demultiplex.log".format(
             sample = sample,
             unknown_r1 = "{}_unknown_R1.fastq".format(sample),
             unknown_r2 = "{}_unknown_R2.fastq".format(sample),
             region = region,
             fwd_primer = primer,
             rev_primer = reverse[region],
+            overlap_fwd = overlap_fwd,
+            overlap_rev = overlap_rev,
             r1 = ("input_" + fname) if "unknown_R1.fastq" in fname else fname,
             r2 = ("input_" + fname.replace("R1.fastq", "R2.fastq")) if "unknown_R1.fastq" in fname else fname.replace("R1.fastq", "R2.fastq")
             )

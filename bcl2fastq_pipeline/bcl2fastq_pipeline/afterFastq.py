@@ -65,13 +65,14 @@ PIPELINE_MAP = {
     'Illumina TruSeq Stranded mRNA Library Prep': 'rna-seq',
     'QIAseq 16S ITS Region Panels': 'microbiome',
     '16S Metagenomic Sequencing Library Prep': 'microbiome',
+    'ITS Low Input GCF Custom': 'microbiome',
     '10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3': 'single-cell'
 }
 
 PIPELINE_MULTIQC_MODULES = {
     'rna-seq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"],
     'microbiome': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content", "qiime2"],
-    'single-cell': ["fastq_screen","star", "cellranger", "starsolo", "fastp","fastqc_rnaseq","custom_content"],
+    'single-cell': ["fastq_screen","star", "picard", "cellranger", "starsolo", "fastp","fastqc_rnaseq","custom_content"],
 }
 
 PIPELINE_ORGANISMS = {
@@ -737,7 +738,7 @@ def samplesheet_worker(config,project_dirs):
     for pid in project_names:
         with open(config.get("Options","sampleSheet"),'r') as ss:
             #sample_df, _ = cm.get_data_from_samplesheet(ss)
-            sample_df, _ = cm.get_project_samples_from_samplesheet(ss,[os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))] , pid)
+            sample_df, _ = cm.get_project_samples_from_samplesheet(ss,[os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))] , [pid])
 
         sample_ids = sample_df['Sample_ID']
         #project_dirs = cm.inspect_dirs([os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))])
@@ -746,9 +747,9 @@ def samplesheet_worker(config,project_dirs):
         keep_cols = ['Sample_ID']
         try:
             if not config.get("Options","sampleSubForm") == "":
-                with open(config.get("Options","sampleSubForm"),'r') as ssub:
-                    #TODO: get message from merge (check intersection between sample sheet and sample-sub-form and attach message to email
-                    sample_dict = cm.merge_samples_with_submission_form(ssub,sample_dict)
+                ssub_d = {config.get("Options","sampleSubForm"): open(config.get("Options","sampleSubForm"),'rb')}
+                #TODO: get message from merge (check intersection between sample sheet and sample-sub-form and attach message to email
+                sample_dict = cm.merge_samples_with_submission_form(ssub_d,sample_dict)
 
                 keep_cols.extend(['External_ID', 'Sample_Group','Sample_Biosource','Customer_Comment', 'Fragment_Length','RIN', '260/280', '260/230', 'Concentration'])
                 try:
@@ -894,7 +895,7 @@ def full_align(config):
         os.chdir(analysis_dir)
 
         #create config.yaml
-        cmd = "/opt/conda/bin/python /opt/conda/bin/configmaker.py {runfolder} -p {project} -s {samplesheet} -S {sample_sub} --libkit '{lib}' --machine '{machine}' {create_fastq}".format(
+        cmd = "/opt/conda/bin/python /opt/conda/bin/configmaker.py {runfolder} -p {project} --libkit '{lib}' --machine '{machine}' {create_fastq}".format(
             runfolder = base_dir,
             project = p,
             lib = libprep,
@@ -1037,26 +1038,21 @@ def postMakeSteps(config) :
                 tmp_raw = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options", "runID")), "raw")
                 cmd = "rm -rf {}".format(tmp_raw)
                 subprocess.check_call(cmd, shell=True)
-
         #FastQC
         p = mp.Pool(int(config.get("Options","fastqcThreads")))
         p.map(FastQC_worker, tmp_sample_files)
         p.close()
         p.join()
-
         #fastq_screen
         p = mp.Pool(int(config.get("Options", "fastqScreenThreads")))
         p.map(fastq_screen_worker, tmp_sample_files)
         p.close()
         p.join()
-
         if tmp_sample_files:
             clean_up_tmp_sample_files(tmp_sample_files)
         open(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done"),"w").close()
-
     #customer_samplesheet
     samplesheet_worker(config,projectDirs)
-
 
     if config.get("Options","Organism") in PIPELINE_ORGANISMS.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),[]) and not os.path.exists(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made")):
         full_align(config)

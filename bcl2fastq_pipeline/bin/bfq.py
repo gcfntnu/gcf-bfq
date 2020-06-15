@@ -94,7 +94,7 @@ while True:
                 bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error in fixNames")
                 continue
 
-        if config.get("Options","Libprep") in ["QIAseq 16S ITS Region Panels", "16S Metagenomic Sequencing Library Prep"] and not os.path.exists("{}/{}/16S_demux.done".format(config["Paths"]["outputDir"], config["Options"]["runID"])):
+        if bcl2fastq_pipeline.afterFastq.PIPELINE_MAP.get(config.get("Options","Libprep"),None) == "microbiome" and not os.path.exists("{}/{}/16S_demux.done".format(config["Paths"]["outputDir"], config["Options"]["runID"])):
             try:
                 bcl2fastq_pipeline.makeFastq.demultiplex_16s_its(config)
                 open("{}/{}/16S_demux.done".format(config["Paths"]["outputDir"], config["Options"]["runID"]), "w").close()
