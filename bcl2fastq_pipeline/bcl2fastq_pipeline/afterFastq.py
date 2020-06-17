@@ -739,7 +739,6 @@ def samplesheet_worker(config,project_dirs):
         with open(config.get("Options","sampleSheet"),'r') as ss:
             #sample_df, _ = cm.get_data_from_samplesheet(ss)
             sample_df, _ = cm.get_project_samples_from_samplesheet(ss,[os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))] , [pid])
-
         sample_ids = sample_df['Sample_ID']
         #project_dirs = cm.inspect_dirs([os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))])
         sample_dict = cm.find_samples(sample_df,[os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'), pid)])
@@ -749,8 +748,7 @@ def samplesheet_worker(config,project_dirs):
             if not config.get("Options","sampleSubForm") == "":
                 ssub_d = {config.get("Options","sampleSubForm"): open(config.get("Options","sampleSubForm"),'rb')}
                 #TODO: get message from merge (check intersection between sample sheet and sample-sub-form and attach message to email
-                sample_dict = cm.merge_samples_with_submission_form(ssub_d,sample_dict)
-
+                sample_dict = cm.merge_samples_with_submission_form(ssub_d, sample_dict)
                 keep_cols.extend(['External_ID', 'Sample_Group','Sample_Biosource','Customer_Comment', 'Fragment_Length','RIN', '260/280', '260/230', 'Concentration'])
                 try:
                     sample_df = pd.DataFrame.from_dict(sample_dict,orient='index')[keep_cols]
@@ -762,7 +760,6 @@ def samplesheet_worker(config,project_dirs):
         except Exception as e:
             #TODO: attach message to error email
             sample_df = sample_ids
-
         sample_df.to_csv(
             os.path.join(config.get("Paths","outputDir"),config.get("Options","runID"),"{}_samplesheet.tsv".format(pid)),
             index=False,
@@ -834,6 +831,7 @@ def post_rna_seq(var_d):
 def post_microbiome(var_d):
     p = var_d['p']
     base_dir = var_d['base_dir']
+
     #move expressions and bam
     analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
     os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
@@ -843,12 +841,6 @@ def post_microbiome(var_d):
     )
     subprocess.check_call(cmd, shell=True)
 
-    #move logs
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir,"logs"),
-        os.path.join(base_dir, "QC_{}".format(p),"logs"),
-    )
-    subprocess.check_call(cmd, shell=True)
     return None
 
 def post_single_cell(var_d):
@@ -863,12 +855,6 @@ def post_single_cell(var_d):
     )
     subprocess.check_call(cmd, shell=True)
 
-    #move logs
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir,"logs"),
-        os.path.join(base_dir, "QC_{}".format(p),"logs"),
-    )
-    #subprocess.check_call(cmd, shell=True)
     return None
 
 POST_PIPELINE_MAP = {
@@ -1053,7 +1039,6 @@ def postMakeSteps(config) :
         open(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done"),"w").close()
     #customer_samplesheet
     samplesheet_worker(config,projectDirs)
-
     if config.get("Options","Organism") in PIPELINE_ORGANISMS.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),[]) and not os.path.exists(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made")):
         full_align(config)
 
