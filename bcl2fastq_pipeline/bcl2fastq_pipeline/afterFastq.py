@@ -327,7 +327,7 @@ def fastp_worker(fname):
     global localConfig
     config = localConfig
 
-    if config.get("Options","Libprep") == "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3":
+    if config.get("Options","Libprep") in ["10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3", "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit"]:
         in2 = ""
     elif config.get("Options","Libprep") == "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1":
         if "R3_001.fastq.gz" in fname:
@@ -966,12 +966,6 @@ def postMakeSteps(config) :
         sampleFiles.extend(glob.glob("{}/{}/*/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
         sampleFiles.extend(glob.glob("{}/{}/*/*/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
     elif config.get("Options", "Libprep") == "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3":
-        """
-        sampleFiles = glob.glob("{}/{}/*/*R2.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")))
-        sampleFiles.extend(glob.glob("{}/{}/*/*/*R2.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
-        sampleFiles.extend(glob.glob("{}/{}/*/*R2_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
-        sampleFiles.extend(glob.glob("{}/{}/*/*/*R2_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
-        """
         sampleFiles = []
         for d in get_project_dirs(config):
             project_name = os.path.basename(d)
@@ -979,6 +973,27 @@ def postMakeSteps(config) :
             os.makedirs(tmp_raw, exist_ok=True)
             for sample in os.listdir(d):
                 s_files = sorted(glob.glob(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), project_name, sample, "{}_*_R2_001.fastq.gz".format(sample))))
+                tmp_sample = os.path.join(tmp_raw, "{}.fastq.gz".format(sample))
+                cmd = "cat {infiles} > {tmp_sample}".format(
+                    infiles = " ".join(s_files),
+                    tmp_sample = tmp_sample,
+                )
+                subprocess.check_call(cmd, shell=True)
+                sampleFiles.append(tmp_sample)
+    elif config.get("Options", "Libprep") ==  "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit":
+        sampleFiles = []
+        for d in get_project_dirs(config):
+            project_name = os.path.basename(d)
+            tmp_raw = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options", "runID")), "raw")
+            os.makedirs(tmp_raw, exist_ok=True)
+            sample_names = set()
+            dna_reads = glob.glob(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), project_name, "*_R2_001.fastq.gz"))
+            for sample in dna_reads:
+                fn_format = re.search("_S[0-9]+_L[0-9]{3}_[RI][123]_001.fastq.gz", sample)
+                sample = sample.replace(fn_format.group(0),"")
+                sample_names.add(os.path.basename(sample))
+            for sample in sample_names:
+                s_files = sorted(glob.glob(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), project_name, "{}_*_R2_001.fastq.gz".format(sample))))
                 tmp_sample = os.path.join(tmp_raw, "{}.fastq.gz".format(sample))
                 cmd = "cat {infiles} > {tmp_sample}".format(
                     infiles = " ".join(s_files),
@@ -1018,7 +1033,7 @@ def postMakeSteps(config) :
         p.join()
         tmp_sample_files = get_tmp_sample_files(config, sampleFiles)
 
-        if config.get("Options", "Libprep") == "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3":
+        if config.get("Options", "Libprep") in ["10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3", "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit"]:
             for d in get_project_dirs(config):
                 project_name = os.path.basename(d)
                 tmp_raw = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options", "runID")), "raw")
