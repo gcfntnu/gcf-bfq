@@ -76,7 +76,7 @@ PIPELINE_MULTIQC_MODULES = {
 }
 
 PIPELINE_ORGANISMS = {
-    'rna-seq': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus'],
+    'rna-seq': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus', 'salmo_salar'],
     'microbiome': ['N/A'],
     'single-cell': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus'],
 }
