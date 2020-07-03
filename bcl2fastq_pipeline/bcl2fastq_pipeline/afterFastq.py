@@ -922,10 +922,9 @@ def full_align(config):
         #push analysis folder
         analysis_export_dir = os.path.join(config.get("Paths","analysisDir"),"{}_{}".format(p,config.get("Options","runID").split("_")[0]))
 
-        cmd = "cp -rvP --preserve=timestamps {src}/ {dst} && touch {transfer_done}".format(
+        cmd = "cp -rv {src}/ {dst} ".format(
             src = analysis_dir,
             dst = analysis_export_dir,
-            transfer_done = os.path.join(analysis_export_dir,"transfer.done")
         )
         subprocess.check_call(cmd,shell=True)
     os.chdir(old_wd)
