@@ -810,13 +810,8 @@ def post_rna_seq(var_d):
     analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
     os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
     cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "rnaseq", "bfq", "exprs"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq", "exprs"),
-    )
-    subprocess.check_call(cmd, shell=True)
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "rnaseq", "bfq", "figs"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq", "figs"),
+        os.path.join(analysis_dir, "data", "tmp", "rnaseq", "bfq"),
+        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
     )
     subprocess.check_call(cmd, shell=True)
 
