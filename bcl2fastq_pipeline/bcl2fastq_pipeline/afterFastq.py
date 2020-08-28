@@ -66,6 +66,7 @@ PIPELINE_MAP = {
     'QIAseq 16S ITS Region Panels': 'microbiome',
     '16S Metagenomic Sequencing Library Prep': 'microbiome',
     'ITS Low Input GCF Custom': 'microbiome',
+    'ITS2 Low Input GCF Custom': 'microbiome',
     '10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3': 'single-cell'
 }
 
