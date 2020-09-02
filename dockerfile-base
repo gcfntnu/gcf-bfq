@@ -1,13 +1,15 @@
 FROM continuumio/miniconda3:4.7.12
 
 RUN conda update conda -y
-RUN conda install -y pip
 
-RUN apt update && apt install -y -q git alien tabix pigz gzip zlibc zlib1g-dev zlib1g
+RUN apt update && apt install -y -q git alien tabix pigz gzip zlibc zlib1g-dev zlib1g xkcdpass vim p7zip-full parallel rsync
 RUN conda config --add channels conda-forge
 RUN conda config --add channels bioconda
-RUN conda install -y fastq-screen bowtie2 fastqc bbmap pandas bioblend reportlab xlrd
-RUN conda update numpy
+RUN conda install -y pip mamba
+RUN mamba install -y fastq-screen bowtie2 fastqc bbmap pandas bioblend reportlab xlrd ea-utils configparser matplotlib requests illumina-interop fastp cutadapt
+RUN mamba install -y snakemake=5.18
+RUN pip install cycler
+RUN mamba update numpy
 
 WORKDIR /opt
 
@@ -43,13 +45,6 @@ COPY files/spaceranger-1.0.0.tar.gz /tmp/spaceranger-1.0.0.tar.gz
 RUN tar -C /opt/ -xvf /tmp/spaceranger-1.0.0.tar.gz
 ENV PATH=$PATH:/opt/spaceranger-1.0.0
 
-RUN conda install -y configparser matplotlib
-RUN conda install -y requests illumina-interop
-RUN pip install cycler
-
-RUN apt-get -qq update && apt-get install -y -q xkcdpass vim p7zip-full parallel
-RUN conda install -y snakemake
-
 WORKDIR /tmp
 
 ENV DEBIAN_FRONTEND="noninteractive"
@@ -61,9 +56,6 @@ RUN ["/bin/bash", "-c", "set -o pipefail && curl -fsSL get.nextflow.io | /bin/ba
 RUN mv nextflow /usr/local/bin
 
 COPY files/logo_ntnu.png /opt/images/
-
-RUN conda install -y fastp cutadapt
-RUN apt update && apt install -y rsync
 
 ENV TMPDIR=/bfq-tmp
 ENV EXT_DIR=/bfq-ext
