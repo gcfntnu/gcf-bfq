@@ -790,14 +790,31 @@ def get_project_dirs(config):
 def get_software_versions(config):
     versions = {}
     versions['GCF-NTNU bcl2fastq pipeline'] = subprocess.check_output("cat /bfq_version/bfq.version",shell=True).rstrip()
-    if "10X Genomics" in config.get("Options","Libprep"):
-        subprocess.check_output("cellranger mkfastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[-1].rstrip().strip(b'(').strip(b')')
+    if "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit" in config.get("Options","Libprep"):
+        versions["cellranger"] = subprocess.check_output("cellranger mkfastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[-1].rstrip().strip(b'(').strip(b')').split(b'-')[-1]
+    elif "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit" in config.get("Options","Libprep"):
+        versions["cellranger-atac"] = subprocess.check_output("cellranger-atac mkfastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[0].split(b' ')[-1].rstrip().strip(b'(').strip(b')')
+    elif "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit" in config.get("Options","Libprep"):
+        versions["spaceranger"] = subprocess.check_output("spaceranger mkfastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[-1].rstrip().strip(b'(').strip(b')').split(b'-')[-1]
     else:
         versions['bcl2fastq'] = subprocess.check_output("bcl2fastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[1].rstrip()
-        versions['fastq_screen'] = subprocess.check_output("fastq_screen --version",shell=True).split(b' ')[-1].rstrip()
+    versions["fastp"] = subprocess.check_output("fastp --version",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
+    versions['fastq_screen'] = subprocess.check_output("fastq_screen --version",shell=True).split(b' ')[-1].rstrip()
     versions['FastQC'] = subprocess.check_output("fastqc --version",shell=True).split(b' ')[-1].rstrip()
-    versions['clumpify/bbmap'] = subprocess.check_output("clumpify.sh --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[-1].rstrip()
-    versions['multiqc'] = subprocess.check_output("multiqc --version",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
+    #versions['clumpify/bbmap'] = subprocess.check_output("clumpify.sh --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[-1].rstrip()
+    #versions['multiqc'] = subprocess.check_output("multiqc --version",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
+    if config.get("Options","Organism") in PIPELINE_ORGANISMS.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),[]):
+        pipeline = PIPELINE_MAP.get(config.get("Options","Libprep"),None)
+        branch = subprocess.check_output(f"cd /opt/{pipeline} && git branch",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
+        commit = subprocess.check_output(f"cd /opt/{pipeline} && git log",stderr=subprocess.STDOUT,shell=True).split(b'\n')[0].split(b' ')[1]
+
+        versions["Analysis pipeline"] = "github.com/gcfntnu/{}/tree/{} commit {}".format(pipeline, branch.decode(), commit.decode()).encode()
+
+        db_branch = subprocess.check_output(f"cd /opt/gcfdb && git branch",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
+        db_commit = subprocess.check_output(f"cd /opt/gcfdb && git log",stderr=subprocess.STDOUT,shell=True).split(b'\n')[0].split(b' ')[1].rstrip()
+
+        versions["gcfdb"] = "github.com/gcfntnu/gcfdb/tree/{} commit {}".format(db_branch.decode(), db_commit.decode()).encode()
+
     software = '\n'.join('{}: {}'.format(key,val.decode()) for (key,val) in versions.items())
     with open(os.path.join(config.get("Paths","outputDir"),config.get("Options","runID"),"software.versions"),'w+') as sf:
         sf.write(software)
