@@ -794,10 +794,23 @@ def get_software_versions(config):
         subprocess.check_output("cellranger mkfastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[-1].rstrip().strip(b'(').strip(b')')
     else:
         versions['bcl2fastq'] = subprocess.check_output("bcl2fastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[1].rstrip()
-        versions['fastq_screen'] = subprocess.check_output("fastq_screen --version",shell=True).split(b' ')[-1].rstrip()
+    versions["fastp"] = subprocess.check_output("fastp --version",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1]
+    versions['fastq_screen'] = subprocess.check_output("fastq_screen --version",shell=True).split(b' ')[-1].rstrip()
     versions['FastQC'] = subprocess.check_output("fastqc --version",shell=True).split(b' ')[-1].rstrip()
-    versions['clumpify/bbmap'] = subprocess.check_output("clumpify.sh --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[-1].rstrip()
+    #versions['clumpify/bbmap'] = subprocess.check_output("clumpify.sh --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[-1].rstrip()
     versions['multiqc'] = subprocess.check_output("multiqc --version",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
+    if config.get("Options","Organism") in PIPELINE_ORGANISMS.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),[]):
+        pipeline = PIPELINE_MAP.get(config.get("Options","Libprep"),None)
+        branch = subprocess.check_output(f"cd /opt/{pipeline} && git branch",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1]
+        commit = subprocess.check_output(f"cd /opt/{pipeline} && git log",stderr=subprocess.STDOUT,shell=True).split(b'\n')[0].spit(b' ')[1]
+
+        version["Analysis pipeline"] = f"github.com/gcfntnu/{pipeline}/tree/{branch} commit {commit}"
+
+        db_branch = subprocess.check_output(f"cd /opt/gcfdb && git branch",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1]
+        db_commit = subprocess.check_output(f"cd /opt/gcfdb && git log",stderr=subprocess.STDOUT,shell=True).split(b'\n')[0].spit(b' ')[1]
+
+        version["gcfdb"] = f"github.com/gcfntnu/gcfdb/tree/{db_branch} commit {db_commit}"
+
     software = '\n'.join('{}: {}'.format(key,val.decode()) for (key,val) in versions.items())
     with open(os.path.join(config.get("Paths","outputDir"),config.get("Options","runID"),"software.versions"),'w+') as sf:
         sf.write(software)
