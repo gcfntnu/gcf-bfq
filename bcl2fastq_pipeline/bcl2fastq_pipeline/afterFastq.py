@@ -940,6 +940,16 @@ def full_align(config):
             dst = analysis_export_dir,
         )
         subprocess.check_call(cmd,shell=True)
+
+        #touch bfq_all
+        os.chdir(analysis_export_dir)
+        cmd = "snakemake --touch -j1 bfq_all"
+        subprocess.check_call(cmd,shell=True)
+
+        #chmod outputdir
+        cmd = "chmod -R 775 {}".format(analysis_export_dir)
+        subprocess.check_call(cmd,shell=True)
+
     os.chdir(old_wd)
     open(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made"), "w").close()
     return True
