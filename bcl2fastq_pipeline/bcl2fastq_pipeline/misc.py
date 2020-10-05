@@ -28,7 +28,7 @@ import stat
 import codecs
 import requests
 import json
-
+import configmaker.configmaker as cm
 from bcl2fastq_pipeline.afterFastq import get_project_dirs, get_project_names, get_sequencer, get_read_geometry
 
 style = """
@@ -173,6 +173,22 @@ def getFCmetricsImproved(config):
     message += dfs[0].to_html(index=False,classes="border-collapse: collapse",border=1,justify="center",col_space=12)
     return message
 
+def parseSampleSheetMetrics(config):
+    project_dirs = get_project_dirs(config)
+    project_names = get_project_names(project_dirs)
+    sample_sheet_metrics = dict()
+    for pid in project_names:
+        with open(config.get("Options","sampleSheet"),'r') as ss:
+            sample_df, _ = cm.get_project_samples_from_samplesheet(ss,[os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))] , [pid])
+            sample_dict = cm.find_samples(sample_df,[os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'), pid)])
+            sample_sheet_metrics[pid] = {'N_sample_sheet': len(sample_df), 'N_demultiplexed': len(sample_dict.keys())}
+    sample_sub_form_d = cm.sample_submission_form_parser(config.get("Options","sampleSubForm"))
+
+    msg = "<strong>Sample sheet info</strong>\n"
+    for pid, info in sample_sheet_metrics.items():
+        msg += "<strong>{}</strong>: Found {} samples in samplesheet. Demultiplexed {} samples.\n".format(pid, info["N_sample_sheet"], info["N_demultiplexed"])
+    msg += "\nFound {} samples in sample submission form.\n".format(len(sample_sub_form_d))
+    return msg
 
 def parserDemultiplexStats(config) :
     '''
@@ -294,7 +310,10 @@ def finishedEmail(config, msg, runTime) :
     message = message.replace("\n","\n<br>")
     message += msg
 
-    message = "<html>\n<body>\n<head>\n" + style + "\n</head>\n" + message + "\n</body>\n</html>"
+    sample_sheet_metrics = parseSampleSheetMetrics(config)
+    sample_sheet_metrics = sample_sheet_metrics.replace("\n", "\n<br>")
+
+    message = "<html>\n<body>\n<head>\n" + style + "\n</head>\n" + message + "<br>"  + sample_sheet_metrics  + "\n</body>\n</html>"
 
     odir = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"))
 
