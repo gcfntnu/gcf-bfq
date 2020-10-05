@@ -196,7 +196,7 @@ def parseSampleSheetMetrics(config):
             n_missing = ssub_df["Sample_Group"].isnull().values.sum()
             n_groups = len(ssub_df["Sample_Group"].dropna().unique())
             msg += "Sample_Group has {} unique values: {}.\n".format(n_groups, ", ".join(ssub_df["Sample_Group"].dropna().unique().astype(str)))
-            msg += "Missing Sample_Group for {} value{}.\n".format(str(n_missing), "s" if n_missing > 1 else "")
+            msg += "Missing Sample_Group for {} sample{}.\n".format(str(n_missing), "s" if n_missing > 1 else "")
     else:
         msg += "Sample_Group has not been provided.\n"
 
