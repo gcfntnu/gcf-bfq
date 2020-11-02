@@ -6,7 +6,7 @@ RUN apt update && apt install -y -q git alien tabix pigz gzip zlibc zlib1g-dev z
 RUN conda config --add channels conda-forge
 RUN conda config --add channels bioconda
 RUN conda install -y pip mamba
-RUN mamba install -y fastq-screen bowtie2 fastqc bbmap pandas bioblend reportlab xlrd ea-utils configparser matplotlib requests illumina-interop fastp cutadapt
+RUN mamba install -y fastq-screen bowtie2 fastqc bbmap pandas bioblend reportlab xlrd ea-utils configparser matplotlib requests illumina-interop fastp cutadapt biopython
 RUN mamba install -y snakemake=5.18
 RUN pip install cycler
 RUN mamba update numpy

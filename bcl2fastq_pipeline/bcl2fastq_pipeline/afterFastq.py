@@ -935,7 +935,7 @@ def full_align(config):
         #push analysis folder
         analysis_export_dir = os.path.join(config.get("Paths","analysisDir"),"{}_{}".format(p,config.get("Options","runID").split("_")[0]))
 
-        cmd = "cp -rv {src}/ {dst} ".format(
+        cmd = "rm -rf {dst} && cp -rv {src}/ {dst} ".format(
             src = analysis_dir,
             dst = analysis_export_dir,
         )
