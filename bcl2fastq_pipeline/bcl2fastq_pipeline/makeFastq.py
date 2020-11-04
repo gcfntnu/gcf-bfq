@@ -284,25 +284,26 @@ def cutadapt_worker(config, primers, fname):
         subprocess.check_call(cmd, shell=True)
 
         #SECOND PASS OF CUtADAPT TO REMOVE REV COMP PRIMERS IN SHORT AMPLICONS
-        rev_comp_r = str(Seq(reverse[region]).reverse_complement())
-        rev_comp_f = str(Seq(primer).reverse_complement())
-        cmd = "cutadapt -a {rev_comp_r} -A {rev_comp_f} --pair-adapters -o tmp_{sample}_{region}_R1.fastq -p tmp_{sample}_{region}_R2.fastq --minimum-length 20 {sample}_{region}_R1.fastq {sample}_{region}_R2.fastq > rev_comp_log/{sample}_{region}_rev_comp.log".format(
-            sample = sample,
-            region = region,
-            rev_comp_r = rev_comp_r,
-            rev_comp_f = rev_comp_f,
-            )
-        subprocess.check_call(cmd, shell=True)
+        if os.path.exists(f"{sample}_{region}_R1.fastq"):
+            rev_comp_r = str(Seq(reverse[region]).reverse_complement())
+            rev_comp_f = str(Seq(primer).reverse_complement())
+            cmd = "cutadapt -a {rev_comp_r} -A {rev_comp_f} --pair-adapters -o tmp_{sample}_{region}_R1.fastq -p tmp_{sample}_{region}_R2.fastq --minimum-length 20 {sample}_{region}_R1.fastq {sample}_{region}_R2.fastq > rev_comp_log/{sample}_{region}_rev_comp.log".format(
+                sample = sample,
+                region = region,
+                rev_comp_r = rev_comp_r,
+                rev_comp_f = rev_comp_f,
+                )
+            subprocess.check_call(cmd, shell=True)
 
-        cmd = f"mv tmp_{sample}_{region}_R1.fastq {sample}_{region}_R1.fastq"
-        subprocess.check_call(cmd, shell=True)
-        cmd = f"mv tmp_{sample}_{region}_R2.fastq {sample}_{region}_R2.fastq"
-        subprocess.check_call(cmd, shell=True)
+            cmd = f"mv tmp_{sample}_{region}_R1.fastq {sample}_{region}_R1.fastq"
+            subprocess.check_call(cmd, shell=True)
+            cmd = f"mv tmp_{sample}_{region}_R2.fastq {sample}_{region}_R2.fastq"
+            subprocess.check_call(cmd, shell=True)
 
 
         regions.append(region)
 
-    if os.path.exists("input_{}_*fastq".format(sample)):
+    if glob.glob("input_{}_*fastq".format(sample)):
         rm_cmd = "rm input_{}_*fastq".format(sample)
         subprocess.check_call(rm_cmd, shell=True)
 
