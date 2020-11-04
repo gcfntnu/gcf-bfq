@@ -1032,6 +1032,7 @@ def postMakeSteps(config) :
 
     sampleFiles = [sf for sf in sampleFiles if not 'contaminated' in sf]
     sampleFiles = [sf for sf in sampleFiles if not 'filtered' in sf]
+    sampleFiles = [sf for sf in sampleFiles if not 'raw_fastq' in sf]
 
     global localConfig
     localConfig = config

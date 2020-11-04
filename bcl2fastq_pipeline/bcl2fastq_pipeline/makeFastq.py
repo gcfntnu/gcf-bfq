@@ -210,17 +210,19 @@ def demultiplex_16s_its(config):
             bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), err)
 
         #keep original files in utputfolder/runid/raw_fastq_pnr
-        cmd = "cp -v {src}/*.fastq.gz {dst}/ && rm -rf {src}/* ".format(
+        cmd = "mv {src} {dst}".format(
             src = os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), p),
             dst = os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), "raw_fastq_{}".format(p)),
         )
+        print(cmd)
         subprocess.check_call(cmd, shell=True)
 
         #move demultiplexed files to utputfolder/runid/pnr
-        cmd = "cp -v {src}/*.fastq.gz {dst}/ && rm -rf {src}/* ".format(
+        cmd = "cp -rv {src} {dst} && rm -rf {src}/* ".format(
             dst = os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), p),
             src = os.path.join(tmp_dir,p)
         )
+        print(cmd)
         subprocess.check_call(cmd, shell=True)
 
         os.chdir(tmp_dir)
@@ -284,13 +286,19 @@ def cutadapt_worker(config, primers, fname):
         #SECOND PASS OF CUtADAPT TO REMOVE REV COMP PRIMERS IN SHORT AMPLICONS
         rev_comp_r = str(Seq(reverse[region]).reverse_complement())
         rev_comp_f = str(Seq(primer).reverse_complement())
-        cmd = "cutadapt -a {rev_comp_r} -A {rev_comp_f} --pair-adapters -o {sample}_{region}_R1.fastq -p {sample}_{region}_R2.fastq --minimum-length 20 {sample}_{region}_R1.fastq {sample}_{region}_R2.fastq > rev_comp_log/{sample}_{region}_rev_comp.log".format(
+        cmd = "cutadapt -a {rev_comp_r} -A {rev_comp_f} --pair-adapters -o tmp_{sample}_{region}_R1.fastq -p tmp_{sample}_{region}_R2.fastq --minimum-length 20 {sample}_{region}_R1.fastq {sample}_{region}_R2.fastq > rev_comp_log/{sample}_{region}_rev_comp.log".format(
             sample = sample,
             region = region,
             rev_comp_r = rev_comp_r,
             rev_comp_f = rev_comp_f,
             )
         subprocess.check_call(cmd, shell=True)
+
+        cmd = f"mv tmp_{sample}_{region}_R1.fastq {sample}_{region}_R1.fastq"
+        subprocess.check_call(cmd, shell=True)
+        cmd = f"mv tmp_{sample}_{region}_R2.fastq {sample}_{region}_R2.fastq"
+        subprocess.check_call(cmd, shell=True)
+
 
         regions.append(region)
 
