@@ -785,6 +785,7 @@ def get_project_names(dirs):
 def get_project_dirs(config):
     projectDirs = glob.glob("%s/%s/*/*.fastq.gz" % (config.get("Paths","outputDir"), config.get("Options","runID")))
     projectDirs.extend(glob.glob("%s/%s/*/*/*.fastq.gz" % (config.get("Paths","outputDir"), config.get("Options","runID"))))
+    projectDirs = [x for x in projectDirs if "raw_fastq_GCF" not in x]
     return toDirs(projectDirs)
 
 def get_software_versions(config):
