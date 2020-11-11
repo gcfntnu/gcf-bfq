@@ -22,6 +22,7 @@ from reportlab.pdfgen import canvas
 import bcl2fastq_pipeline.afterFastq as bfq_afq
 import pandas as pd
 import yaml
+from  Bio.Seq import Seq
 
 
 MKFASTQ_10X = {
@@ -184,6 +185,7 @@ def demultiplex_16s_its(config):
         os.makedirs(p, exist_ok=True)
         os.chdir(p)
         os.makedirs("log", exist_ok=True)
+        os.makedirs("rev_comp_log", exist_ok=True)
         os.makedirs(os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), "QC_{}".format(p), "cutadapt"), exist_ok=True)
         primers = get_16s_its_primers(config)
         r1 = glob.glob(os.path.join(config.get("Paths","outputDir"),config.get("Options","runID"),p,"*R1.fastq.gz"))
@@ -207,11 +209,20 @@ def demultiplex_16s_its(config):
             syslog.syslog(err)
             bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), err)
 
+        #keep original files in utputfolder/runid/raw_fastq_pnr
+        cmd = "mv {src} {dst}".format(
+            src = os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), p),
+            dst = os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), "raw_fastq_{}".format(p)),
+        )
+        print(cmd)
+        subprocess.check_call(cmd, shell=True)
+
         #move demultiplexed files to utputfolder/runid/pnr
-        cmd = "rm -rf {dst}/*.fastq.gz && cp -v {src}/*.fastq.gz {dst}/ && rm -rf {src}/* ".format(
+        cmd = "cp -rv {src} {dst} && rm -rf {src}/* ".format(
             dst = os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), p),
             src = os.path.join(tmp_dir,p)
         )
+        print(cmd)
         subprocess.check_call(cmd, shell=True)
 
         os.chdir(tmp_dir)
@@ -234,9 +245,13 @@ def cutadapt_worker(config, primers, fname):
     forward = primers.get('forward', {})
     reverse = primers.get('reverse', {})
 
-    if os.path.exists("rm log/{}_qiaseq_demultiplex.log".format(sample)):
+    if os.path.exists("log/{}_qiaseq_demultiplex.log".format(sample)):
         cmd = "rm log/{}_qiaseq_demultiplex.log".format(sample)
         subprocess.check_call(cmd, shell=True)
+
+    rev_comp_logs = glob.glob("rev_comp_log/{}_*_rev_comp.log".format(sample))
+    if rev_comp_logs:
+        cmd = "rm {}".format(" ".join(rev_comp_logs))
 
     regions = ['unknown']
     for region, primer in forward.items():
@@ -254,7 +269,7 @@ def cutadapt_worker(config, primers, fname):
         overlap_fwd = len(primer.replace("N",""))
         overlap_rev = len(reverse[region].replace("N",""))
 
-        cmd = "cutadapt -g \"{region}={fwd_primer};min_overlap={overlap_fwd};max_error_rate=0.25\" -G \"{region}={rev_primer};min_overlap={overlap_rev};max_error_rate=0.3\" --pair-adapters --untrimmed-output {unknown_r1} --untrimmed-paired-output {unknown_r2} --suffix ':region={{name}}' -o {sample}_{{name}}_R1.fastq -p {sample}_{{name}}_R2.fastq {r1} {r2} >> log/{sample}_qiaseq_demultiplex.log".format(
+        cmd = "cutadapt -g \"{region}={fwd_primer};min_overlap={overlap_fwd};max_error_rate=0.25\" -G \"{region}={rev_primer};min_overlap={overlap_rev};max_error_rate=0.3\" --pair-adapters --untrimmed-output {unknown_r1} --untrimmed-paired-output {unknown_r2} --suffix ':region={{name}}' -o {sample}_{{name}}_R1.fastq -p {sample}_{{name}}_R2.fastq --minimum-length 20 {r1} {r2} >> log/{sample}_qiaseq_demultiplex.log".format(
             sample = sample,
             unknown_r1 = "{}_unknown_R1.fastq".format(sample),
             unknown_r2 = "{}_unknown_R2.fastq".format(sample),
@@ -264,10 +279,29 @@ def cutadapt_worker(config, primers, fname):
             overlap_fwd = overlap_fwd,
             overlap_rev = overlap_rev,
             r1 = ("input_" + fname) if "unknown_R1.fastq" in fname else fname,
-            r2 = ("input_" + fname.replace("R1.fastq", "R2.fastq")) if "unknown_R1.fastq" in fname else fname.replace("R1.fastq", "R2.fastq")
+            r2 = ("input_" + fname.replace("R1.fastq", "R2.fastq")) if "unknown_R1.fastq" in fname else fname.replace("R1.fastq", "R2.fastq"),
             )
-        regions.append(region)
         subprocess.check_call(cmd, shell=True)
+
+        #SECOND PASS OF CUtADAPT TO REMOVE REV COMP PRIMERS IN SHORT AMPLICONS
+        if os.path.exists(f"{sample}_{region}_R1.fastq"):
+            rev_comp_r = str(Seq(reverse[region]).reverse_complement())
+            rev_comp_f = str(Seq(primer).reverse_complement())
+            cmd = "cutadapt -a {rev_comp_r} -A {rev_comp_f} --pair-adapters -o tmp_{sample}_{region}_R1.fastq -p tmp_{sample}_{region}_R2.fastq --minimum-length 20 {sample}_{region}_R1.fastq {sample}_{region}_R2.fastq > rev_comp_log/{sample}_{region}_rev_comp.log".format(
+                sample = sample,
+                region = region,
+                rev_comp_r = rev_comp_r,
+                rev_comp_f = rev_comp_f,
+                )
+            subprocess.check_call(cmd, shell=True)
+
+            cmd = f"mv tmp_{sample}_{region}_R1.fastq {sample}_{region}_R1.fastq"
+            subprocess.check_call(cmd, shell=True)
+            cmd = f"mv tmp_{sample}_{region}_R2.fastq {sample}_{region}_R2.fastq"
+            subprocess.check_call(cmd, shell=True)
+
+
+        regions.append(region)
 
     if os.path.exists("input_{}_*fastq".format(sample)):
         rm_cmd = "rm input_{}_*fastq".format(sample)

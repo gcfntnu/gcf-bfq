@@ -785,6 +785,7 @@ def get_project_names(dirs):
 def get_project_dirs(config):
     projectDirs = glob.glob("%s/%s/*/*.fastq.gz" % (config.get("Paths","outputDir"), config.get("Options","runID")))
     projectDirs.extend(glob.glob("%s/%s/*/*/*.fastq.gz" % (config.get("Paths","outputDir"), config.get("Options","runID"))))
+    projectDirs = [x for x in projectDirs if "raw_fastq_GCF" not in x]
     return toDirs(projectDirs)
 
 def get_software_versions(config):
@@ -935,7 +936,7 @@ def full_align(config):
         #push analysis folder
         analysis_export_dir = os.path.join(config.get("Paths","analysisDir"),"{}_{}".format(p,config.get("Options","runID").split("_")[0]))
 
-        cmd = "cp -rv {src}/ {dst} ".format(
+        cmd = "rm -rf {dst} && cp -rv {src}/ {dst} ".format(
             src = analysis_dir,
             dst = analysis_export_dir,
         )
@@ -1032,6 +1033,7 @@ def postMakeSteps(config) :
 
     sampleFiles = [sf for sf in sampleFiles if not 'contaminated' in sf]
     sampleFiles = [sf for sf in sampleFiles if not 'filtered' in sf]
+    sampleFiles = [sf for sf in sampleFiles if not 'raw_fastq' in sf]
 
     global localConfig
     localConfig = config
