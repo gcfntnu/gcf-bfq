@@ -1,7 +1,7 @@
 FROM gcfntnu/bfq:base
 
-ADD https://api.github.com/repos/gcfntnu/configmaker/git/refs/heads/master conf_version
-RUN pip install https://github.com/gcfntnu/configmaker/archive/master.zip
+ADD https://api.github.com/repos/gcfntnu/gcf-tools/git/refs/heads/master conf_version
+RUN pip install https://github.com/gcfntnu/gcf-tools/archive/master.zip
 
 ADD https://api.github.com/repos/gcfntnu/MultiQC/git/refs/heads/master multiqc_version
 RUN pip install https://github.com/gcfntnu/MultiQC/archive/master.zip 
