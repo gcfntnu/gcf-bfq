@@ -303,7 +303,7 @@ def cutadapt_worker(config, primers, fname):
 
         regions.append(region)
 
-    if os.path.exists("input_{}_*fastq".format(sample)):
+    if glob.glob("input_{}_*fastq".format(sample)):
         rm_cmd = "rm input_{}_*fastq".format(sample)
         subprocess.check_call(rm_cmd, shell=True)
 
