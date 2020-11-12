@@ -3,8 +3,8 @@ FROM gcfntnu/bfq:base
 ADD https://api.github.com/repos/gsmashd/vimrc/git/refs/heads/master vim_version
 RUN cd /tmp && git clone https://github.com/gsmashd/vimrc.git && cd vimrc && sh install.sh
 
-ADD https://api.github.com/repos/gcfntnu/configmaker/git/refs/heads/bfq-dev conf_version
-RUN pip install https://github.com/gcfntnu/configmaker/archive/bfq-dev.zip 
+ADD https://api.github.com/repos/gcfntnu/gcf-tools/git/refs/heads/bfq-dev conf_version
+RUN pip install https://github.com/gcfntnu/gcf-tools/archive/bfq-dev.zip
 
 ADD https://api.github.com/repos/gcfntnu/MultiQC/git/refs/heads/bfq-dev multiqc_version
 RUN pip install https://github.com/gcfntnu/MultiQC/archive/bfq-dev.zip 
