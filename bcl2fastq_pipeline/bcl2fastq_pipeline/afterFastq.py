@@ -24,6 +24,7 @@ import datetime as dt
 import flowcell_manager.flowcell_manager as fm
 import configmaker.configmaker as cm
 import pandas as pd
+from configmaker import PIPELINE_MAP
 
 localConfig = None
 
@@ -55,19 +56,6 @@ QC_PLACEMENT = {
     '260/280': 50,
     'Concentration': 50,
     'RIN': 60
-}
-
-PIPELINE_MAP = {
-    'Lexogen SENSE Total RNA-Seq Library Prep Kit (w/RiboCop rRNA Depletion Kit V1.2)': 'rna-seq',
-    'Lexogen SENSE mRNA-Seq Library Prep Kit V2': 'rna-seq',
-    'Illumina TruSeq Stranded Total RNA Library Prep (Human/Mouse/Rat)': 'rna-seq',
-    'Illumina TruSeq Stranded Total RNA Library Prep (Globin)': 'rna-seq',
-    'Illumina TruSeq Stranded mRNA Library Prep': 'rna-seq',
-    'QIAseq 16S ITS Region Panels': 'microbiome',
-    '16S Metagenomic Sequencing Library Prep': 'microbiome',
-    'ITS Low Input GCF Custom': 'microbiome',
-    'ITS2 Low Input GCF Custom': 'microbiome',
-    '10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3': 'single-cell'
 }
 
 PIPELINE_MULTIQC_MODULES = {
