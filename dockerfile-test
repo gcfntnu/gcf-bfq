@@ -1,26 +1,29 @@
 FROM gcfntnu/bfq:base
 
-ADD https://api.github.com/repos/gsmashd/vimrc/git/refs/heads/master vim_version
-RUN cd /tmp && git clone https://github.com/gsmashd/vimrc.git && cd vimrc && sh install.sh
+ARG GCF_TOOLS_BRANCH=bfq-dev
+ADD https://api.github.com/repos/gcfntnu/gcf-tools/git/refs/heads/$GCF_TOOLS_BRANCH conf_version
+RUN pip install https://github.com/gcfntnu/gcf-tools/archive/$GCF_TOOLS_BRANCH.zip
 
-ADD https://api.github.com/repos/gcfntnu/gcf-tools/git/refs/heads/bfq-dev conf_version
-RUN pip install https://github.com/gcfntnu/gcf-tools/archive/bfq-dev.zip
+ARG MULTIQC_BRANCH=bfq-dev
+ADD https://api.github.com/repos/gcfntnu/MultiQC/git/refs/heads/$MULTIQC_BRANCH multiqc_version
+RUN pip install https://github.com/gcfntnu/MultiQC/archive/$MULTIQC_BRANCH.zip 
 
-ADD https://api.github.com/repos/gcfntnu/MultiQC/git/refs/heads/bfq-dev multiqc_version
-RUN pip install https://github.com/gcfntnu/MultiQC/archive/bfq-dev.zip 
-
-ADD https://api.github.com/repos/gcfntnu/gcfdb/git/refs/heads/bfq-dev gcfdb_version
-RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout bfq-dev 
+ARG GCFDB_BRANCH=bfq-dev
+ADD https://api.github.com/repos/gcfntnu/gcfdb/git/refs/heads/$GCFDB_BRANCH gcfdb_version
+RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout $GCFDB_BRANCH
 ENV GCF_DB=/opt/gcfdb
 
-ADD https://api.github.com/repos/gcfntnu/rna-seq/git/refs/heads/bfq-dev rnaseq_version
-RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout bfq-dev
+ARG RNA_SEQ_BRANCH=bfq-dev
+ADD https://api.github.com/repos/gcfntnu/rna-seq/git/refs/heads/$RNA_SEQ_BRANCH rnaseq_version
+RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout $RNA_SEQ_BRANCH
 
-ADD https://api.github.com/repos/gcfntnu/microbiome/git/refs/heads/bfq-dev microbiome_version
-RUN cd /opt && git clone https://github.com/gcfntnu/microbiome.git && cd /opt/microbiome && git checkout bfq-dev
+ARG MICROBIOME_BRANCH=bfq-dev
+ADD https://api.github.com/repos/gcfntnu/microbiome/git/refs/heads/$MICROBIOME_BRANCH microbiome_version
+RUN cd /opt && git clone https://github.com/gcfntnu/microbiome.git && cd /opt/microbiome && git checkout $MICROBIOME_BRANCH
 
-ADD https://api.github.com/repos/gcfntnu/single-cell/git/refs/heads/bfq-dev single-cell_version
-RUN cd /opt && git clone https://github.com/gcfntnu/single-cell.git && cd /opt/single-cell && git checkout bfq-dev
+ARG SINGLE_CELL_BRANCH=bfq-dev
+ADD https://api.github.com/repos/gcfntnu/single-cell/git/refs/heads/$SINGLE_CELL_BRANCH single-cell_version
+RUN cd /opt && git clone https://github.com/gcfntnu/single-cell.git && cd /opt/single-cell && git checkout $SINGLE_CELL_BRANCH
 
 COPY ./bcl2fastq_pipeline /opt/bcl2fastq_pipeline
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline/flowcell_manager
