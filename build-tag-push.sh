@@ -3,7 +3,7 @@
 if [ "$#" -lt 2 ] ; 
 then
     echo  -e "Usage: \n" \
-    "./build-tag-push.sh [prod|test|base] [docker-tag]\n\n" \
+    "./build-tag-push.sh [prod|test|base] [docker-tag] [optional args]\n\n" \
     "Optional branch args for dockerfile-test:\n" \
     "-d gcfdb \n" \
     "-r rna-seq \n" \
