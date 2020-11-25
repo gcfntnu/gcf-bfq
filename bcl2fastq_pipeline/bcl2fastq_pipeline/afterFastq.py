@@ -24,7 +24,7 @@ import datetime as dt
 import flowcell_manager.flowcell_manager as fm
 import configmaker.configmaker as cm
 import pandas as pd
-from configmaker import PIPELINE_MAP
+from configmaker.configmaker import PIPELINE_MAP
 
 localConfig = None
 
