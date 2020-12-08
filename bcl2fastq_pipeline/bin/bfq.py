@@ -107,8 +107,8 @@ while True:
         #Run post-processing steps
         try :
             message = bcl2fastq_pipeline.afterFastq.postMakeSteps(config)
-        except :
-            syslog.syslog("Got an error during postMakeSteps\n")
+        except Exception as e:
+            syslog.syslog("Got an error during postMakeSteps:\n {}".format(e))
             bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error during postMakeSteps")
             continue
 
