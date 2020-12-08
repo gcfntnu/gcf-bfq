@@ -6,5 +6,5 @@ configfile:
 include:
     'src/single-cell/single-cell.sm'
 include:
-    'src/single-cell/rules/quant/bfq.rules'
+    'src/single-cell/rules/bfq.rules'
 
