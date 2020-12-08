@@ -680,10 +680,13 @@ def archive_worker(config):
             with open(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),"encryption.{}".format(p)),'w') as pwfile:
                 pwfile.write('{}\n'.format(pw))
         opts = "-p{}".format(pw) if pw else ""
-        cmd = "7za a {opts} {flowdir}/{pnr}.7za {flowdir}/{pnr}/ {flowdir}/QC_{pnr} {flowdir}/Stats {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt {flowdir}/software.versions".format(
+        raw_fastq = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'), "raw_fastq_{}".format(p)) if PIPELINE_MAP.get(config.get("Options","Libprep")) == 'microbiome' else ''
+
+        cmd = "7za a {opts} {flowdir}/{pnr}.7za {flowdir}/{pnr}/ {flowdir}/QC_{pnr} {flowdir}/Stats {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt {flowdir}/software.versions {raw_fastq}".format(
                 opts = opts,
                 flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
-                pnr = p
+                pnr = p,
+                raw_fastq = raw_fastq
             )
         if "10X Genomics" in config.get("Options","Libprep"):
             cmd += " {}".format(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),config.get("Options","runID").split("_")[-1][1:]))
@@ -972,10 +975,7 @@ def postMakeSteps(config) :
     projectDirs = get_project_dirs(config)
 
     if config.get("Options", "Libprep") == "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1":
-        sampleFiles = glob.glob("{}/{}/*/*R[13].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")))
-        sampleFiles.extend(glob.glob("{}/{}/*/*/*R[13].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
-        sampleFiles.extend(glob.glob("{}/{}/*/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
-        sampleFiles.extend(glob.glob("{}/{}/*/*/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
+        sampleFiles = glob.glob("{}/{}/GCF*/**/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")), recursive = True)
     elif config.get("Options", "Libprep") == "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3":
         sampleFiles = []
         for d in get_project_dirs(config):
@@ -1014,13 +1014,8 @@ def postMakeSteps(config) :
                 sampleFiles.append(tmp_sample)
 
     else:
-        sampleFiles = glob.glob("{}/{}/*/*R[12].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")))
-        sampleFiles.extend(glob.glob("{}/{}/*/*/*R[12].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
-        sampleFiles.extend(glob.glob("{}/{}/*/*R[12]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
-        sampleFiles.extend(glob.glob("{}/{}/*/*/*R[12]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
+        sampleFiles = glob.glob("{}/{}/GCF*/**/*R[12].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")), recursive = True)
 
-    sampleFiles = [sf for sf in sampleFiles if not 'contaminated' in sf]
-    sampleFiles = [sf for sf in sampleFiles if not 'filtered' in sf]
     sampleFiles = [sf for sf in sampleFiles if not 'raw_fastq' in sf]
 
     global localConfig
