@@ -62,12 +62,14 @@ PIPELINE_MULTIQC_MODULES = {
     'rna-seq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"],
     'microbiome': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content", "qiime2"],
     'single-cell': ["fastq_screen","star", "picard", "cellranger", "starsolo", "fastp","fastqc_rnaseq","custom_content"],
+    'small-rna': ["fastq_screen","star","picard","fastp","fastqc_rnaseq", "unitas", "custom_content"],
 }
 
 PIPELINE_ORGANISMS = {
     'rna-seq': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus', 'salmo_salar'],
     'microbiome': ['N/A'],
     'single-cell': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus'],
+    'small-rna': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus'],
 }
 
 
@@ -680,10 +682,13 @@ def archive_worker(config):
             with open(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),"encryption.{}".format(p)),'w') as pwfile:
                 pwfile.write('{}\n'.format(pw))
         opts = "-p{}".format(pw) if pw else ""
-        cmd = "7za a {opts} {flowdir}/{pnr}.7za {flowdir}/{pnr}/ {flowdir}/QC_{pnr} {flowdir}/Stats {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt {flowdir}/software.versions".format(
+        raw_fastq = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'), "raw_fastq_{}".format(p)) if PIPELINE_MAP.get(config.get("Options","Libprep")) == 'microbiome' else ''
+
+        cmd = "7za a {opts} {flowdir}/{pnr}.7za {flowdir}/{pnr}/ {flowdir}/QC_{pnr} {flowdir}/Stats {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt {flowdir}/software.versions {raw_fastq}".format(
                 opts = opts,
                 flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
-                pnr = p
+                pnr = p,
+                raw_fastq = raw_fastq
             )
         if "10X Genomics" in config.get("Options","Libprep"):
             cmd += " {}".format(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),config.get("Options","runID").split("_")[-1][1:]))
@@ -859,10 +864,25 @@ def post_single_cell(var_d):
 
     return None
 
+def post_small_rna(var_d):
+    p = var_d['p']
+    base_dir = var_d['base_dir']
+    #move expressions and bam
+    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
+    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
+    cmd = "rsync -rvLp {}/ {}".format(
+        os.path.join(analysis_dir, "data", "tmp", "smallrna", "bfq"),
+        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
+    )
+    subprocess.check_call(cmd, shell=True)
+
+    return None
+
 POST_PIPELINE_MAP = {
     'rna-seq': post_rna_seq,
     'microbiome': post_microbiome,
     'single-cell': post_single_cell,
+    'small-rna': post_small_rna,
 }
 
 def full_align(config):
@@ -972,10 +992,7 @@ def postMakeSteps(config) :
     projectDirs = get_project_dirs(config)
 
     if config.get("Options", "Libprep") == "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1":
-        sampleFiles = glob.glob("{}/{}/*/*R[13].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")))
-        sampleFiles.extend(glob.glob("{}/{}/*/*/*R[13].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
-        sampleFiles.extend(glob.glob("{}/{}/*/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
-        sampleFiles.extend(glob.glob("{}/{}/*/*/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
+        sampleFiles = glob.glob("{}/{}/GCF*/**/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")), recursive = True)
     elif config.get("Options", "Libprep") == "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3":
         sampleFiles = []
         for d in get_project_dirs(config):
@@ -1014,13 +1031,8 @@ def postMakeSteps(config) :
                 sampleFiles.append(tmp_sample)
 
     else:
-        sampleFiles = glob.glob("{}/{}/*/*R[12].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")))
-        sampleFiles.extend(glob.glob("{}/{}/*/*/*R[12].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
-        sampleFiles.extend(glob.glob("{}/{}/*/*R[12]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
-        sampleFiles.extend(glob.glob("{}/{}/*/*/*R[12]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID"))))
+        sampleFiles = glob.glob("{}/{}/GCF*/**/*R[12].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")), recursive = True)
 
-    sampleFiles = [sf for sf in sampleFiles if not 'contaminated' in sf]
-    sampleFiles = [sf for sf in sampleFiles if not 'filtered' in sf]
     sampleFiles = [sf for sf in sampleFiles if not 'raw_fastq' in sf]
 
     global localConfig
@@ -1033,7 +1045,7 @@ def postMakeSteps(config) :
         p.close()
         p.join()
 
-    if not os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done")):
+    if not (os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done"))) and not (PIPELINE_MAP.get(config.get("Options","Libprep"),None) == 'small-rna'):
         #fastp
         for d in get_project_dirs(config):
             project_name = os.path.basename(d)

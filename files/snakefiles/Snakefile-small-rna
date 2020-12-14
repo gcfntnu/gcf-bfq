@@ -4,7 +4,7 @@ configfile:
     'config.yaml'
 
 include:
-    'src/single-cell/single-cell.sm'
+    'src/small-rna/small-rna.sm'
 include:
-    'src/single-cell/rules/bfq.rules'
-
+    'src/small-rna/rules/bfq.rules'
+    
