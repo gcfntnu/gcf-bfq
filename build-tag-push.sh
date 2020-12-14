@@ -11,6 +11,7 @@ then
     "-t gcf-tools \n" \
     "-q multiqc \n" \
     "-m microbiome \n" 
+    "-u small-rna \n" 
 	exit 1
 fi
 
@@ -20,8 +21,9 @@ single_cell=bfq-dev
 gcf_tools=bfq-dev
 multiqc=bfq-dev
 microbiome=bfq-dev
+small_rna=bfq-dev
 OPTIND=3
-while getopts d:r:s:t:q:m: flag
+while getopts d:r:s:t:q:m:u: flag
 do
     case "${flag}" in
         d) gcfdb=${OPTARG};;
@@ -30,11 +32,12 @@ do
         t) gcf_tools=${OPTARG};;
         q) multiqc=${OPTARG};;
         m) microbiome=${OPTARG};;
+        u) small_rna=${OPTARG};;
     esac
 done
 if [ "$1" == "test" ];
 then
-	BUILD_ARGS="--build-arg GCFDB_BRANCH=$gcfdb --build-arg RNA_SEQ_BRANCH=$rna_seq --build-arg SINGLE_CELL_BRANCH=$single_cell --build-arg GCF_TOOLS_BRANCH=$gcf_tools --build-arg MULTIQC_BRANCH=$multiqc --build-arg MICROBIOME_BRANCH=$microbiome"
+	BUILD_ARGS="--build-arg GCFDB_BRANCH=$gcfdb --build-arg RNA_SEQ_BRANCH=$rna_seq --build-arg SINGLE_CELL_BRANCH=$single_cell --build-arg GCF_TOOLS_BRANCH=$gcf_tools --build-arg MULTIQC_BRANCH=$multiqc --build-arg MICROBIOME_BRANCH=$microbiome --build-arg SMALL_RNA_BRANCH=$small_rna"
 else
 	BUILD_ARGS=""
 fi

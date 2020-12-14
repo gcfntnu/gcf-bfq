@@ -62,12 +62,14 @@ PIPELINE_MULTIQC_MODULES = {
     'rna-seq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"],
     'microbiome': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content", "qiime2"],
     'single-cell': ["fastq_screen","star", "picard", "cellranger", "starsolo", "fastp","fastqc_rnaseq","custom_content"],
+    'small-rna': ["fastq_screen","star","picard","fastp","fastqc_rnaseq", "unitas", "custom_content"],
 }
 
 PIPELINE_ORGANISMS = {
     'rna-seq': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus', 'salmo_salar'],
     'microbiome': ['N/A'],
     'single-cell': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus'],
+    'small-rna': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus'],
 }
 
 
@@ -862,10 +864,25 @@ def post_single_cell(var_d):
 
     return None
 
+def post_small_rna(var_d):
+    p = var_d['p']
+    base_dir = var_d['base_dir']
+    #move expressions and bam
+    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
+    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
+    cmd = "rsync -rvLp {}/ {}".format(
+        os.path.join(analysis_dir, "data", "tmp", "smallrna", "bfq"),
+        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
+    )
+    subprocess.check_call(cmd, shell=True)
+
+    return None
+
 POST_PIPELINE_MAP = {
     'rna-seq': post_rna_seq,
     'microbiome': post_microbiome,
     'single-cell': post_single_cell,
+    'small-rna': post_small_rna,
 }
 
 def full_align(config):
@@ -1028,7 +1045,7 @@ def postMakeSteps(config) :
         p.close()
         p.join()
 
-    if not os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done")):
+    if not (os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done"))) and not (PIPELINE_MAP.get(config.get("Options","Libprep"),None) == 'small-rna'):
         #fastp
         for d in get_project_dirs(config):
             project_name = os.path.basename(d)
