@@ -25,6 +25,10 @@ ARG SINGLE_CELL_BRANCH=bfq-dev
 ADD https://api.github.com/repos/gcfntnu/single-cell/git/refs/heads/$SINGLE_CELL_BRANCH single-cell_version
 RUN cd /opt && git clone https://github.com/gcfntnu/single-cell.git && cd /opt/single-cell && git checkout $SINGLE_CELL_BRANCH
 
+ARG SMALL_RNA_BRANCH=bfq-dev
+ADD https://api.github.com/repos/gcfntnu/small-rna/git/refs/heads/$SMALL_RNA_BRANCH small-rna_version
+RUN cd /opt && git clone https://github.com/gcfntnu/small-rna.git && cd /opt/small-rna && git checkout $SMALL_RNA_BRANCH
+
 COPY ./bcl2fastq_pipeline /opt/bcl2fastq_pipeline
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline/flowcell_manager
 WORKDIR /opt/bcl2fastq_pipeline
