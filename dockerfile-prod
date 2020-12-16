@@ -24,6 +24,9 @@ RUN cd /opt && git clone https://github.com/gcfntnu/microbiome.git && cd /opt/mi
 ADD https://api.github.com/repos/gcfntnu/single-cell/git/refs/heads/master single-cell_version
 RUN cd /opt && git clone https://github.com/gcfntnu/single-cell.git && cd /opt/single-cell && git checkout master
 
+ADD https://api.github.com/repos/gcfntnu/small-rna/git/refs/heads/master small-rna_version
+RUN cd /opt && git clone https://github.com/gcfntnu/small-rna.git && cd /opt/small-rna && git checkout master
+
 WORKDIR /opt/bcl2fastq_pipeline
 RUN gcc splitFastq.c -o splitFastq
 RUN ./setup.py build
