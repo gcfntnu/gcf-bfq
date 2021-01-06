@@ -8,26 +8,9 @@ ARG MULTIQC_BRANCH=bfq-dev
 ADD https://api.github.com/repos/gcfntnu/MultiQC/git/refs/heads/$MULTIQC_BRANCH multiqc_version
 RUN pip install https://github.com/gcfntnu/MultiQC/archive/$MULTIQC_BRANCH.zip 
 
-ARG GCFDB_BRANCH=bfq-dev
-ADD https://api.github.com/repos/gcfntnu/gcfdb/git/refs/heads/$GCFDB_BRANCH gcfdb_version
-RUN cd /opt && git clone https://github.com/gcfntnu/gcfdb.git && cd /opt/gcfdb && git checkout $GCFDB_BRANCH
-ENV GCF_DB=/opt/gcfdb
-
-ARG RNA_SEQ_BRANCH=bfq-dev
-ADD https://api.github.com/repos/gcfntnu/rna-seq/git/refs/heads/$RNA_SEQ_BRANCH rnaseq_version
-RUN cd /opt && git clone https://github.com/gcfntnu/rna-seq.git && cd /opt/rna-seq && git checkout $RNA_SEQ_BRANCH
-
-ARG MICROBIOME_BRANCH=bfq-dev
-ADD https://api.github.com/repos/gcfntnu/microbiome/git/refs/heads/$MICROBIOME_BRANCH microbiome_version
-RUN cd /opt && git clone https://github.com/gcfntnu/microbiome.git && cd /opt/microbiome && git checkout $MICROBIOME_BRANCH
-
-ARG SINGLE_CELL_BRANCH=bfq-dev
-ADD https://api.github.com/repos/gcfntnu/single-cell/git/refs/heads/$SINGLE_CELL_BRANCH single-cell_version
-RUN cd /opt && git clone https://github.com/gcfntnu/single-cell.git && cd /opt/single-cell && git checkout $SINGLE_CELL_BRANCH
-
-ARG SMALL_RNA_BRANCH=bfq-dev
-ADD https://api.github.com/repos/gcfntnu/small-rna/git/refs/heads/$SMALL_RNA_BRANCH small-rna_version
-RUN cd /opt && git clone https://github.com/gcfntnu/small-rna.git && cd /opt/small-rna && git checkout $SMALL_RNA_BRANCH
+ARG GCF_WORKFLOWS_BRANCH=bfq-dev
+ADD https://api.github.com/repos/gcfntnu/gcf-workflows/git/refs/heads/$GCF_WORKFLOWS_BRANCH gcf-workflows_version
+RUN cd /opt && git clone https://github.com/gcfntnu/gcf-workflows.git && cd /opt/gcf-workflows && git checkout $GCF_WORKFLOWS_BRANCH
 
 COPY ./bcl2fastq_pipeline /opt/bcl2fastq_pipeline
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline/flowcell_manager

@@ -4,7 +4,7 @@ configfile:
     'config.yaml'
 
 include:
-    'src/single-cell/single-cell.sm'
+    'src/gcf-workflows/single-cell/single-cell.sm'
 include:
-    'src/single-cell/rules/bfq.rules'
+    'src/gcf-workflows/single-cell/rules/bfq.rules'
 
