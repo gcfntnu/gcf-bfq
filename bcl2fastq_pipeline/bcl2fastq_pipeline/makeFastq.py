@@ -228,13 +228,19 @@ def demultiplex_16s_its(config):
         os.chdir(tmp_dir)
 
 def get_16s_its_primers(config):
-    with open("/opt/gcfdb/libprep.config","r") as libprepconf:
-        libconf = yaml.load(libprepconf)
-
-    l_conf = libconf.get(config.get("Options","Libprep"), {})
+    with open("/opt/gcf-workflows/libprep.config","r") as libprepconf:
+        libconf = yaml.load(libprepconf, Loader=yaml.Loader)
+    print(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID")))
+    conf_libprep = config.get("Options", "Libprep") + (" PE" if bfq_afq.is_paired_end(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))) else " SE")
+    l_conf = libconf.get(conf_libprep, {})
+    """
+    print(config.get("Options", "runID"))
+    l_conf = libconf[config.get("Options","Libprep")]
+    print(config.get("Options", "Libprep"))
+    """
     forward_primers = {}
     reverse_primers = {}
-    for region, primers in l_conf.get('primers', {}).items():
+    for region, primers in l_conf['db']['primers'].items():
         forward_primers[region] = primers.split('-')[0]
         reverse_primers[region] = primers.split('-')[1]
 

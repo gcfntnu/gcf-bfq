@@ -60,7 +60,7 @@ COPY files/logo_ntnu.png /opt/images/
 ENV TMPDIR=/bfq-tmp
 ENV EXT_DIR=/bfq-ext
 ENV GCF_EXT=$EXT_DIR
-ENV SINGULARITY_BINDPATH=/mnt,/instrument-archive,/opt/gcfdb,/bfq-tmp,/bfq-ext
+ENV SINGULARITY_BINDPATH=/mnt,/instrument-archive,/opt/gcf-workflows,/bfq-tmp,/bfq-ext
 ENV SINGULARITY_CACHEDIR=$TMPDIR/singularity/
 ENV SINGULARITY_TMPDIR=$SINGULARITY_CACHEDIR/tmp
 ENV SINGULARITY_LOCALCACHEDIR=$SINGULARITY_CACHEDIR/tmp/
