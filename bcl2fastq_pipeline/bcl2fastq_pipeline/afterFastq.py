@@ -347,28 +347,21 @@ def fastp_worker(fname):
     tmpdir = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options","runID")))
     os.makedirs(tmpdir, exist_ok=True)
 
-    with open("/opt/gcfdb/libprep.config","r") as libprepconf:
+    with open("/opt/gcf-workflows/libprep.config","r") as libprepconf:
         libconf = yaml.load(libprepconf)
 
-    l_conf = libconf.get(config.get("Options","Libprep"), {})
+    conf_libprep = config.get("Options", "Libprep") + (" PE" if is_paired_end(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))) else " SE")
+    l_conf = libconf.get(conf_libprep, {})
+    #l_conf = libconf.get(config.get("Options","Libprep"), {})
     if l_conf:
         if in2:
             #Paired End
-            if 'paired_end' in l_conf.keys():
-                adapter1 = l_conf.get('paired_end').get('adapter','auto')
-                adapter2 = l_conf.get('paired_end').get('adapter2','auto')
-            else:
-                adapter1 = 'auto'
-                adapter2 = 'auto'
+            adapter1 = l_conf.get('adapter','auto')
+            adapter2 = l_conf.get('adapter2','auto')
         else:
             #Single End
             adapter2 = ''
-            if 'single_end' in l_conf.keys():
-                adapter1 = l_conf.get('single_end').get('adapter','auto')
-            elif 'adapter' in l_conf.keys():
-                adapter1 = l_conf.get('adapter','auto')
-            else:
-                adapter1 = 'auto'
+            adapter1 = l_conf.get('adapter','auto')
     else:
         adapter1 = 'auto'
         adapter2 = 'auto' if in2 else ''
@@ -405,6 +398,22 @@ def toDirs(files) :
             s.add(d[:d.rfind('/')])
     return s
 
+def is_paired_end(run_dir):
+    stats_file = open('{}/Stats/Stats.json'.format(run_dir),'r')
+    stats_json = json.load(stats_file)
+    lane_info = stats_json['ReadInfosForLanes'][0].get('ReadInfos', None)
+    if not lane_info:
+        return 'Read geometry could not be automatically determined.'
+    R1 = None
+    R2 = None
+    for read in lane_info:
+        if read['IsIndexedRead'] == True:
+            continue
+        elif read['Number'] == 1:
+            R1 = int(read['NumCycles'])
+        elif read['Number'] == 2:
+            R2 = int(read['NumCycles'])
+    return R1 and R2
 
 def get_read_geometry(run_dir):
     stats_file = open('{}/Stats/Stats.json'.format(run_dir),'r')
@@ -543,15 +552,6 @@ def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
             pconfig[col]['max'] = MAX.get(col,None)
             pconfig[col]['scale'] = COL_SCALE.get(col,False)
 
-        """
-        data = {}
-        if read_geometry.startswith('Paired end') and not seq_stats and not PIPELINE_MAP.get(config.get("Options","Libprep"),'') == 'rna-seq':
-            for k,v in s_dict.items():
-                data['{}_R1'.format(k)] = v
-                data['{}_R2'.format(k)] = v
-        else:
-            data = s_dict
-        """
         data = s_dict
 
         general_statistics = {
@@ -795,19 +795,12 @@ def get_software_versions(config):
     versions["fastp"] = subprocess.check_output("fastp --version",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
     versions['fastq_screen'] = subprocess.check_output("fastq_screen --version",shell=True).split(b' ')[-1].rstrip()
     versions['FastQC'] = subprocess.check_output("fastqc --version",shell=True).split(b' ')[-1].rstrip()
-    #versions['clumpify/bbmap'] = subprocess.check_output("clumpify.sh --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[-1].rstrip()
-    #versions['multiqc'] = subprocess.check_output("multiqc --version",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
     if config.get("Options","Organism") in PIPELINE_ORGANISMS.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),[]):
         pipeline = PIPELINE_MAP.get(config.get("Options","Libprep"),None)
-        branch = subprocess.check_output(f"cd /opt/{pipeline} && git branch",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
-        commit = subprocess.check_output(f"cd /opt/{pipeline} && git log",stderr=subprocess.STDOUT,shell=True).split(b'\n')[0].split(b' ')[1]
+        branch = subprocess.check_output("cd /opt/gcf-workflows && git branch",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
+        commit = subprocess.check_output("cd /opt/gcf-workflows && git log",stderr=subprocess.STDOUT,shell=True).split(b'\n')[0].split(b' ')[1]
 
-        versions["Analysis pipeline"] = "github.com/gcfntnu/{}/tree/{} commit {}".format(pipeline, branch.decode(), commit.decode()).encode()
-
-        db_branch = subprocess.check_output(f"cd /opt/gcfdb && git branch",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
-        db_commit = subprocess.check_output(f"cd /opt/gcfdb && git log",stderr=subprocess.STDOUT,shell=True).split(b'\n')[0].split(b' ')[1].rstrip()
-
-        versions["gcfdb"] = "github.com/gcfntnu/gcfdb/tree/{} commit {}".format(db_branch.decode(), db_commit.decode()).encode()
+        versions["Analysis pipeline"] = "github.com/gcfntnu/gcf-workflows/tree/{} commit {}".format(branch.decode(), commit.decode()).encode()
 
     software = '\n'.join('{}: {}'.format(key,val.decode()) for (key,val) in versions.items())
     with open(os.path.join(config.get("Paths","outputDir"),config.get("Options","runID"),"software.versions"),'w+') as sf:
@@ -916,8 +909,8 @@ def full_align(config):
 
         #copy snakemake pipeline
         cmd = "rm -rf {dst} && cp -r {src} {dst}".format(
-            src = os.path.join("/opt",pipeline),
-            dst = os.path.join(analysis_dir,"src",pipeline)
+            src = "/opt/gcf-workflows",
+            dst = os.path.join(analysis_dir, "src", "gcf-workflows")
         )
         subprocess.check_call(cmd,shell=True)
 

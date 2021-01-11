@@ -4,7 +4,7 @@ configfile:
     'config.yaml'
 
 include:
-    'src/microbiome/microbiome-seq.sm'
+    'src/gcf-workflows/microbiome/microbiome-seq.sm'
 include:
-    'src/microbiome/rules/bfq.rules'
+    'src/gcf-workflows/microbiome/rules/bfq.rules'
     
