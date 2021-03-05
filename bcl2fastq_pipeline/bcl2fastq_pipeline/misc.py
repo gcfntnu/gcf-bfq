@@ -348,16 +348,6 @@ def finishedEmail(config, msg, runTime) :
         part['Content-Disposition'] = 'attachment; filename="multiqc_{}.html"'.format(p)
         msg.attach(part)
 
-        if config.get("Options", "Libprep").startswith("10X Genomics Chromium Single Cell"):
-            for f in glob.glob(os.path.join(odir, "QC_{}".format(p), "bfq", "summaries", "*.html")):
-                with open(f, "rb") as report:
-                    part = MIMEApplication(
-                            report.read(),
-                            report.name
-                            )
-                part['Content-Disposition'] = 'attachment; filename="{}"'.format(os.path.basename(f))
-                msg.attach(part)
-
 
     with open(os.path.join(odir,"Stats/sequencer_stats_{}.html".format("_".join(projects))),"rb") as report:
         part = MIMEApplication(
