@@ -33,17 +33,17 @@ RUN git clone https://github.com/nsc-norway/suprDUPr
 RUN cd suprDUPr && make 
 ENV PATH=$PATH:/opt/suprDUPr
 
-COPY files/cellranger-5.0.1.tar.gz /tmp/cellranger-5.0.1.tar.gz
-RUN tar -C /opt/ -zxvf /tmp/cellranger-5.0.1.tar.gz
-ENV PATH=$PATH:/opt/cellranger-5.0.1
+COPY files/cellranger-4.0.0.tar.gz /tmp/cellranger-4.0.0.tar.gz
+RUN tar -C /opt/ -zxvf /tmp/cellranger-4.0.0.tar.gz
+ENV PATH=$PATH:/opt/cellranger-4.0.0
 
 COPY files/cellranger-atac-1.2.0.tar.gz /tmp/cellranger-atac-1.2.0.tar.gz
 RUN tar -C /opt/ -xvf /tmp/cellranger-atac-1.2.0.tar.gz
 ENV PATH=$PATH:/opt/cellranger-atac-1.2.0
 
-COPY files/spaceranger-1.2.1.tar.gz /tmp/spaceranger-1.2.1.tar.gz
-RUN tar -C /opt/ -xvf /tmp/spaceranger-1.2.1.tar.gz
-ENV PATH=$PATH:/opt/spaceranger-1.2.1
+COPY files/spaceranger-1.0.0.tar.gz /tmp/spaceranger-1.0.0.tar.gz
+RUN tar -C /opt/ -xvf /tmp/spaceranger-1.0.0.tar.gz
+ENV PATH=$PATH:/opt/spaceranger-1.0.0
 
 WORKDIR /tmp
 
