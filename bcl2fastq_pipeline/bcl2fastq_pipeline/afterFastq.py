@@ -61,7 +61,7 @@ QC_PLACEMENT = {
 PIPELINE_MULTIQC_MODULES = {
     'rna-seq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"],
     'microbiome': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content", "qiime2"],
-    'single-cell': ["fastq_screen","star", "picard", "cellranger", "starsolo", "fastp","fastqc_rnaseq","custom_content"],
+    'single-cell': ["fastq_screen", "cellranger", "starsolo", "fastp","fastqc_rnaseq","custom_content", "cellranger_count"],
     'small-rna': ["fastq_screen","star","picard","fastp","fastqc_rnaseq", "unitas", "custom_content"],
 }
 
