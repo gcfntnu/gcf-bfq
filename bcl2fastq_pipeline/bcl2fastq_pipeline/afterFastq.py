@@ -986,6 +986,7 @@ def postMakeSteps(config) :
 
     if config.get("Options", "Libprep") == "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1":
         sampleFiles = glob.glob("{}/{}/GCF*/**/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")), recursive = True)
+    """
     elif config.get("Options", "Libprep") == "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3":
         sampleFiles = []
         for d in get_project_dirs(config):
@@ -1001,6 +1002,7 @@ def postMakeSteps(config) :
                 )
                 subprocess.check_call(cmd, shell=True)
                 sampleFiles.append(tmp_sample)
+    """
     elif config.get("Options", "Libprep") ==  "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit":
         sampleFiles = []
         for d in get_project_dirs(config):
@@ -1038,7 +1040,7 @@ def postMakeSteps(config) :
         p.close()
         p.join()
 
-    if not (os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done"))) and not (PIPELINE_MAP.get(config.get("Options","Libprep"),None) == 'small-rna'):
+    if not (os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done"))) and not (PIPELINE_MAP.get(config.get("Options","Libprep"),None) in ['small-rna', 'single-cell', 'rna-seq']):
         #fastp
         for d in get_project_dirs(config):
             project_name = os.path.basename(d)
