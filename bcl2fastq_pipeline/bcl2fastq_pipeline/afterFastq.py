@@ -744,9 +744,9 @@ def postMakeSteps(config) :
     with open("/opt/gcf-workflows/libprep.config", "r") as lc_f:
         libprep_config = yaml.load(lc_f)
 
-    if config.get("Options", "libprep") + " SE" in libconf_d.keys():
+    if config.get("Options", "libprep") + " SE" in libprep_config.keys():
         config["Options"]["pipeline"] = libprep_config[config.get("Options", "libprep") + ' SE']['workflow']
-    elif config.get("Options", "libprep") + " PE" in libconf_d.keys():
+    elif config.get("Options", "libprep") + " PE" in libprep_config.keys():
         config["Options"]["pipeline"] = libprep_config[config.get("Options", "libprep") + ' PE']['workflow']
     else:
         print('failed to identify pipeline from libprep name, using default workflow')

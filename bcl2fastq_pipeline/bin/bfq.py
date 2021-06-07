@@ -76,16 +76,16 @@ while True:
         if not os.path.exists("{}/{}/bcl.done".format(config["Paths"]["outputDir"], config["Options"]["runID"])):
             try:
                 bcl2fastq_pipeline.makeFastq.bcl2fq(config)
-                open("{}/{}{}/bcl.done".format(config["Paths"]["outputDir"], config["Options"]["runID"], lanes), "w").close()
+                open("{}/{}/bcl.done".format(config["Paths"]["outputDir"], config["Options"]["runID"]), "w").close()
             except :
                 syslog.syslog("Got an error in bcl2fq\n")
                 bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error in bcl2fq")
                 continue
 
-        if not os.path.exists("{}/{}{}/files.renamed".format(config["Paths"]["outputDir"], config["Options"]["runID"], lanes)):
+        if not os.path.exists("{}/{}/files.renamed".format(config["Paths"]["outputDir"], config["Options"]["runID"])):
             try:
                 bcl2fastq_pipeline.makeFastq.fixNames(config)
-                open("{}/{}{}/files.renamed".format(config["Paths"]["outputDir"], config["Options"]["runID"], lanes), "w").close()
+                open("{}/{}/files.renamed".format(config["Paths"]["outputDir"], config["Options"]["runID"]), "w").close()
             except :
                 syslog.syslog("Got an error in fixNames\n")
                 bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error in fixNames")
