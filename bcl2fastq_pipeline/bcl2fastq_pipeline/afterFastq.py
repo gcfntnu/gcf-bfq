@@ -59,10 +59,10 @@ QC_PLACEMENT = {
 }
 
 PIPELINE_MULTIQC_MODULES = {
-    'rna-seq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"],
+    'rnaseq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"],
     'microbiome': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content", "qiime2"],
     'singlecell': ["fastq_screen", "cellranger", "starsolo", "fastp","fastqc_rnaseq","custom_content", "cellranger_count"],
-    'small-rna': ["fastq_screen","star","picard","fastp","fastqc_rnaseq", "unitas", "custom_content"],
+    'smallrna': ["fastq_screen","star","picard","fastp","fastqc_rnaseq", "unitas", "custom_content"],
     'default': ["fastq_screen","fastp","fastqc_rnaseq","custom_content"],
 }
 
@@ -577,12 +577,6 @@ def post_rna_seq(var_d):
     )
     subprocess.check_call(cmd, shell=True)
 
-    #move logs
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir,"logs"),
-        os.path.join(base_dir, "QC_{}".format(p),"logs"),
-    )
-    subprocess.check_call(cmd, shell=True)
     return None
 
 def post_microbiome(var_d):
@@ -643,10 +637,10 @@ def post_default(var_d):
     return None
 
 POST_PIPELINE_MAP = {
-    'rna-seq': post_rna_seq,
+    'rnaseq': post_rna_seq,
     'microbiome': post_microbiome,
     'singlecell': post_single_cell,
-    'small-rna': post_small_rna,
+    'smallrna': post_small_rna,
     'default': post_default,
 }
 
