@@ -73,34 +73,22 @@ while True:
         startTime=datetime.datetime.now()
 
         #Make the fastq files, if not already done
-        lanes = config["Options"]["lanes"]
-        if lanes != "":
-            lanes = "_lanes{}".format(lanes)
         if not os.path.exists("{}/{}/bcl.done".format(config["Paths"]["outputDir"], config["Options"]["runID"])):
             try:
                 bcl2fastq_pipeline.makeFastq.bcl2fq(config)
-                open("{}/{}{}/bcl.done".format(config["Paths"]["outputDir"], config["Options"]["runID"], lanes), "w").close()
+                open("{}/{}/bcl.done".format(config["Paths"]["outputDir"], config["Options"]["runID"]), "w").close()
             except :
                 syslog.syslog("Got an error in bcl2fq\n")
                 bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error in bcl2fq")
                 continue
 
-        if not os.path.exists("{}/{}{}/files.renamed".format(config["Paths"]["outputDir"], config["Options"]["runID"], lanes)):
+        if not os.path.exists("{}/{}/files.renamed".format(config["Paths"]["outputDir"], config["Options"]["runID"])):
             try:
                 bcl2fastq_pipeline.makeFastq.fixNames(config)
-                open("{}/{}{}/files.renamed".format(config["Paths"]["outputDir"], config["Options"]["runID"], lanes), "w").close()
+                open("{}/{}/files.renamed".format(config["Paths"]["outputDir"], config["Options"]["runID"]), "w").close()
             except :
                 syslog.syslog("Got an error in fixNames\n")
                 bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error in fixNames")
-                continue
-
-        if bcl2fastq_pipeline.afterFastq.PIPELINE_MAP.get(config.get("Options","Libprep"),None) == "microbiome" and not os.path.exists("{}/{}/16S_demux.done".format(config["Paths"]["outputDir"], config["Options"]["runID"])):
-            try:
-                bcl2fastq_pipeline.makeFastq.demultiplex_16s_its(config)
-                open("{}/{}/16S_demux.done".format(config["Paths"]["outputDir"], config["Options"]["runID"]), "w").close()
-            except:
-                syslog.syslog("Got an error in demultiplex_qiaseq\n")
-                bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error in demultiplex_qiaseq")
                 continue
 
 
