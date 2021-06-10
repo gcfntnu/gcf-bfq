@@ -67,90 +67,11 @@ PIPELINE_MULTIQC_MODULES = {
 }
 
 
-
-def RemoveHumanReads_worker(fname):
-    global localConfig
-    config = localConfig
-
-    #We use R1 files to construct R2 filenames for paired end
-    if "R2.fastq.gz" in fname:
-        return
-
-    if os.path.exists(fname.replace(os.path.basename(fname),"contaminated/{}".format(os.path.basename(fname)))):
-        return
-
-    r2 = fname.replace("R1.fastq.gz","R2.fastq.gz") if os.path.exists(fname.replace("R1.fastq.gz","R2.fastq.gz")) else None
-
-    masked_path = config.get("MaskedGenomes","HGDir")
-    if not masked_path:
-        raise Exception("HGDir not set in config bcl2fastq.ini!\n")
-
-    if not os.path.exists(masked_path):
-        raise Exception("HGDir {} does not exist!\n".format(masked_path))
-    
-    os.makedirs("{}/contaminated/".format(os.path.dirname(fname)),exist_ok=True)
-
-    if r2:
-        cont_out = fname.replace(os.path.basename(fname),"contaminated/{}".format(os.path.basename(fname).replace("R1.fastq.gz","interleaved.fastq.gz")))
-        cmd = "{bbmap_cmd} {bbmap_opts} path={masked_path} in={infile} in2={infile2} outu={clean_out} outm={contaminated_out}".format(
-                bbmap_cmd = config.get("MaskedGenomes","bbmap_cmd"),
-                bbmap_opts = config.get("MaskedGenomes","bbmap_opts"),
-                masked_path = config.get("MaskedGenomes","HGDir"),
-                infile = fname,
-                infile2 = r2,
-                clean_out = fname.replace("R1.fastq.gz","interleaved.fastq.gz"),
-                contaminated_out = cont_out 
-                )
-    else:   
-        cmd = "{bbmap_cmd} {bbmap_opts} path={masked_path} in={infile} outu={clean_out} outm={contaminated_out}".format(
-                bbmap_cmd = config.get("MaskedGenomes","bbmap_cmd"),
-                bbmap_opts = config.get("MaskedGenomes","bbmap_opts"),
-                masked_path = config.get("MaskedGenomes","HGDir"),
-                infile = fname,
-                clean_out = fname,
-                contaminated_out = fname.replace(os.path.basename(fname),"contaminated/{}".format(os.path.basename(fname)))
-                )
-
-    syslog.syslog("[RemoveHumanReads_worker] Processing %s\n" % cmd)
-    subprocess.check_call(cmd, shell=True)
-    # clean up
-    os.remove(fname)
-    if r2:
-        os.remove(r2)
-        #If paired end, split interleaved files to R1 and R2
-        cmd = "{rename_cmd} {rename_opts} in={interleaved} out1={out_r1} out2={out_r2}".format(
-                rename_cmd = "rename.sh",
-                rename_opts = "renamebymapping=t",
-                interleaved = fname.replace("R1.fastq.gz","interleaved.fastq.gz"),
-                out_r1 = fname,
-                out_r2 = r2
-                )
-        syslog.syslog("[RemoveHumanReads_worker] De-interleaving %s\n" % cmd)
-        subprocess.check_call(cmd, shell=True)
-        os.remove(fname.replace("R1.fastq.gz","interleaved.fastq.gz"))
-        #De-interleave contaminated file
-        cmd = "{rename_cmd} {rename_opts} in={interleaved} out1={out_r1} out2={out_r2}".format(
-                rename_cmd = "rename.sh",
-                rename_opts = "renamebymapping=t",
-                interleaved = cont_out,
-                out_r1 = cont_out.replace("interleaved.fastq.gz","R1.fastq.gz"),
-                out_r2 = cont_out.replace("interleaved.fastq.gz","R2.fastq.gz")
-                )
-        syslog.syslog("[RemoveHumanReads_worker] De-interleaving %s\n" % cmd)
-        subprocess.check_call(cmd, shell=True)
-        os.remove(cont_out)
-
-
-
 def get_gcf_name(fname):
     for name in fname.split('/'):
         if re.match(r'GCF-[0-9]{4}-[0-9]{3,}',name):
             return re.search(r'GCF-[0-9]{4}-[0-9]{3,}',name)[0]
     raise Exception('Unable to determine GCF project number for filename {}\n'.format(fname))
-
-
-
-
 
 def toDirs(files) :
     s = set()
@@ -564,85 +485,16 @@ def get_software_versions(config):
         sf.write(software)
     return software
 
-def post_rna_seq(var_d):
-    p = var_d['p']
-    base_dir = var_d['base_dir']
-
-    #move expressions and bam
-    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
-    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
+def post_workflow(project_id, base_dir, pipeline):
+    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(project_id, os.path.basename(base_dir).split("_")[0]))
+    os.makedirs(os.path.join(base_dir, "QC_{}".format(project_id), "bfq"), exist_ok=True)
     cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "rnaseq", "bfq"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
+        os.path.join(analysis_dir, "data", "tmp", pipeline, "bfq"),
+        os.path.join(base_dir, "QC_{}".format(project_id), "bfq"),
     )
     subprocess.check_call(cmd, shell=True)
 
     return None
-
-def post_microbiome(var_d):
-    p = var_d['p']
-    base_dir = var_d['base_dir']
-
-    #move expressions and bam
-    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
-    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "microbiome", "bfq"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
-    )
-    subprocess.check_call(cmd, shell=True)
-
-    return None
-
-def post_single_cell(var_d):
-    p = var_d['p']
-    base_dir = var_d['base_dir']
-    #move expressions and bam
-    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
-    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "singlecell", "bfq"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
-    )
-    subprocess.check_call(cmd, shell=True)
-
-    return None
-
-def post_small_rna(var_d):
-    p = var_d['p']
-    base_dir = var_d['base_dir']
-    #move expressions and bam
-    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
-    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "smallrna", "bfq"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
-    )
-    subprocess.check_call(cmd, shell=True)
-
-    return None
-
-def post_default(var_d):
-    p = var_d['p']
-    base_dir = var_d['base_dir']
-    #move expressions and bam
-    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
-    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "default", "bfq"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
-    )
-    subprocess.check_call(cmd, shell=True)
-
-    return None
-
-POST_PIPELINE_MAP = {
-    'rnaseq': post_rna_seq,
-    'microbiome': post_microbiome,
-    'singlecell': post_single_cell,
-    'smallrna': post_small_rna,
-    'default': post_default,
-}
 
 def full_align(config):
     old_wd = os.getcwd()
@@ -683,19 +535,12 @@ def full_align(config):
         with open(os.path.join(analysis_dir,"Snakefile"), "w") as sn:
             sn.write(SNAKEFILE_TEMPLATE.format(workflow=pipeline))
 
-        if pipeline in ['microbiome', 'singlecell']:
-            os.makedirs(os.path.join(analysis_dir, "data", "tmp"), exist_ok=True)
-            cmd = "cp {} {}".format(
-                os.path.join(base_dir, "{}_samplesheet.tsv".format(p)),
-                os.path.join(analysis_dir, "data", "tmp", "sample_info.tsv")
-            )
-            subprocess.check_call(cmd,shell=True)
-
         #run snakemake pipeline
         cmd = "snakemake --reason --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR -j32 -p bfq_all"
         subprocess.check_call(cmd,shell=True)
 
-        POST_PIPELINE_MAP[pipeline]({'p': p, 'base_dir': base_dir})
+        #push workflow bfq output to project directory
+        post_workflow(p, base_dir, pipeline)
 
         #push analysis folder
         analysis_export_dir = os.path.join(config.get("Paths","analysisDir"),"{}_{}".format(p,config.get("Options","runID").split("_")[0]))
@@ -706,7 +551,7 @@ def full_align(config):
         )
         subprocess.check_call(cmd,shell=True)
 
-        #touch bfq_all
+        #touch bfq_all to avoid rerunning pipelines from scratch
         os.chdir(analysis_export_dir)
         cmd = "snakemake --touch -j1 bfq_all"
         subprocess.check_call(cmd,shell=True)
