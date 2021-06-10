@@ -24,7 +24,7 @@ import datetime as dt
 import flowcell_manager.flowcell_manager as fm
 import configmaker.configmaker as cm
 import pandas as pd
-from configmaker.configmaker import PIPELINE_MAP
+from configmaker.configmaker import SNAKEFILE_TEMPLATE
 
 localConfig = None
 
@@ -59,334 +59,19 @@ QC_PLACEMENT = {
 }
 
 PIPELINE_MULTIQC_MODULES = {
-    'rna-seq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"],
+    'rnaseq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"],
     'microbiome': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content", "qiime2"],
-    'single-cell': ["fastq_screen", "cellranger", "starsolo", "fastp","fastqc_rnaseq","custom_content", "cellranger_count"],
-    'small-rna': ["fastq_screen","star","picard","fastp","fastqc_rnaseq", "unitas", "custom_content"],
+    'singlecell': ["fastq_screen", "cellranger", "starsolo", "fastp","fastqc_rnaseq","custom_content", "cellranger_count"],
+    'smallrna': ["fastq_screen","star","picard","fastp","fastqc_rnaseq", "unitas", "custom_content"],
+    'default': ["fastq_screen","fastp","fastqc_rnaseq","custom_content"],
 }
 
-PIPELINE_ORGANISMS = {
-    'rna-seq': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus', 'salmo_salar'],
-    'microbiome': ['N/A'],
-    'single-cell': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus'],
-    'small-rna': ['homo_sapiens', 'mus_musculus', 'rattus_norvegicus'],
-}
-
-
-def bgzip_worker(fname) :
-    global localConfig
-    config = localConfig
-    cmd = "%s -r %s" % (
-        config.get("bgzip","bgzip_command"),
-        fname)
-    syslog.syslog("[bgzip_worker] Running %s\n" % cmd)
-    subprocess.check_call(cmd, shell=True)
-
-def clumpify_worker(fname):
-    global localConfig
-    config = localConfig
-
-    if "10X Genomics" in config.get("Options","Libprep"):
-        return
-
-    #We use R1 files to construct R2 filenames for paired end
-    if "R2.fastq.gz" in fname:
-        return
-
-    if os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"clumpify.done")):
-        return
-
-    r1 = fname
-    r2 = fname.replace("R1.fastq.gz","R2.fastq.gz") if os.path.exists(fname.replace("R1.fastq.gz","R2.fastq.gz")) else None
-
-    if r2:
-        out_r1 = r1.replace(".fastq.gz","_clumped.fastq.gz") 
-        out_r2 = r2.replace(".fastq.gz","_clumped.fastq.gz")
-        cmd = "{clump_cmd} {clump_opts} in1={in1} in2={in2} out1={out1} out2={out2} rcomp=f rename=f overwrite=true".format(
-                clump_cmd = config.get("clumpify","clumpify_cmd"),
-                clump_opts = config.get("clumpify", "clumpify_opts"),
-                in1 = r1,
-                in2 = r2,
-                out1 = out_r1, #yes, we want to overwrite the files
-                out2 = out_r2
-                )
-    else:
-        out_r1 = r1.replace(".fastq.gz","_clumped.fastq.gz") 
-        cmd = "{clump_cmd} {clump_opts} in={in1} out={out1} rename=f overwrite=true".format(
-                clump_cmd = config.get("clumpify","clumpify_cmd"),
-                clump_opts = config.get("clumpify", "clumpify_opts"),
-                in1 = r1,
-                out1 = out_r1 
-                )
-    syslog.syslog("[clumpify_worker] Processing %s\n" % cmd)
-    subprocess.check_call(cmd, shell=True)
-    os.rename(out_r1,r1)
-    if r2:
-        os.rename(out_r2,r2)
-
-def RemoveHumanReads_worker(fname):
-    global localConfig
-    config = localConfig
-
-    #We use R1 files to construct R2 filenames for paired end
-    if "R2.fastq.gz" in fname:
-        return
-
-    if os.path.exists(fname.replace(os.path.basename(fname),"contaminated/{}".format(os.path.basename(fname)))):
-        return
-
-    r2 = fname.replace("R1.fastq.gz","R2.fastq.gz") if os.path.exists(fname.replace("R1.fastq.gz","R2.fastq.gz")) else None
-
-    masked_path = config.get("MaskedGenomes","HGDir")
-    if not masked_path:
-        raise Exception("HGDir not set in config bcl2fastq.ini!\n")
-
-    if not os.path.exists(masked_path):
-        raise Exception("HGDir {} does not exist!\n".format(masked_path))
-    
-    os.makedirs("{}/contaminated/".format(os.path.dirname(fname)),exist_ok=True)
-
-    if r2:
-        cont_out = fname.replace(os.path.basename(fname),"contaminated/{}".format(os.path.basename(fname).replace("R1.fastq.gz","interleaved.fastq.gz")))
-        cmd = "{bbmap_cmd} {bbmap_opts} path={masked_path} in={infile} in2={infile2} outu={clean_out} outm={contaminated_out}".format(
-                bbmap_cmd = config.get("MaskedGenomes","bbmap_cmd"),
-                bbmap_opts = config.get("MaskedGenomes","bbmap_opts"),
-                masked_path = config.get("MaskedGenomes","HGDir"),
-                infile = fname,
-                infile2 = r2,
-                clean_out = fname.replace("R1.fastq.gz","interleaved.fastq.gz"),
-                contaminated_out = cont_out 
-                )
-    else:   
-        cmd = "{bbmap_cmd} {bbmap_opts} path={masked_path} in={infile} outu={clean_out} outm={contaminated_out}".format(
-                bbmap_cmd = config.get("MaskedGenomes","bbmap_cmd"),
-                bbmap_opts = config.get("MaskedGenomes","bbmap_opts"),
-                masked_path = config.get("MaskedGenomes","HGDir"),
-                infile = fname,
-                clean_out = fname,
-                contaminated_out = fname.replace(os.path.basename(fname),"contaminated/{}".format(os.path.basename(fname)))
-                )
-
-    syslog.syslog("[RemoveHumanReads_worker] Processing %s\n" % cmd)
-    subprocess.check_call(cmd, shell=True)
-    # clean up
-    os.remove(fname)
-    if r2:
-        os.remove(r2)
-        #If paired end, split interleaved files to R1 and R2
-        cmd = "{rename_cmd} {rename_opts} in={interleaved} out1={out_r1} out2={out_r2}".format(
-                rename_cmd = "rename.sh",
-                rename_opts = "renamebymapping=t",
-                interleaved = fname.replace("R1.fastq.gz","interleaved.fastq.gz"),
-                out_r1 = fname,
-                out_r2 = r2
-                )
-        syslog.syslog("[RemoveHumanReads_worker] De-interleaving %s\n" % cmd)
-        subprocess.check_call(cmd, shell=True)
-        os.remove(fname.replace("R1.fastq.gz","interleaved.fastq.gz"))
-        #De-interleave contaminated file
-        cmd = "{rename_cmd} {rename_opts} in={interleaved} out1={out_r1} out2={out_r2}".format(
-                rename_cmd = "rename.sh",
-                rename_opts = "renamebymapping=t",
-                interleaved = cont_out,
-                out_r1 = cont_out.replace("interleaved.fastq.gz","R1.fastq.gz"),
-                out_r2 = cont_out.replace("interleaved.fastq.gz","R2.fastq.gz")
-                )
-        syslog.syslog("[RemoveHumanReads_worker] De-interleaving %s\n" % cmd)
-        subprocess.check_call(cmd, shell=True)
-        os.remove(cont_out)
-
-
-def fastq_screen_worker(fname) :
-    global localConfig
-    config = localConfig
-
-    os.chdir(os.path.dirname(fname))
-
-    project_nr = get_gcf_name(fname)
-
-    #Skip read 1 when single cell
-    if "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3" == config.get("Options","Libprep") and ("R1.fastq" in fname or "R1_001.fastq" in fname):
-        return
-
-    ofile="{}/{}/QC_{}/fastq_screen/{}".format(
-            os.path.join(config.get("Paths","outputDir")),
-            config.get("Options","runID"),
-            project_nr,
-            os.path.basename(fname)
-            )
-
-    if os.path.exists(ofile.replace(".fastq.gz","_screen.html")) :
-        return
-
-    os.makedirs(os.path.dirname(ofile), exist_ok=True)
-
-    #fastq_screen
-    cmd = "%s %s --outdir '%s' '%s'" % (
-        config.get("fastq_screen", "fastq_screen_command"),
-        config.get("fastq_screen", "fastq_screen_options"),
-        os.path.dirname(ofile),
-        fname)
-    syslog.syslog("[fastq_screen_worker] Running %s\n" % cmd)
-    subprocess.check_call(cmd, shell=True)
-
-    #Unlink/rename
-    #os.unlink(ofile)
-    #os.rename(ofile.replace(".fastq","_screen.png"), fname.replace("_R1_001.fastq.gz", "_R1_001_screen.png"))
-
-
-def suprDUPr_worker(fname) :
-    global localConfig
-    config = localConfig
-
-    if "10X Genomics" in config.get("Options","Libprep"):
-        return
-
-    ofname = "{}/filtered/{}".format(os.path.dirname(fname),os.path.basename(fname).replace(".fastq.gz","_filtered.fastq.gz"))
-
-    # WHEN ./filterfq is working cmd will be 
-    #  "{cmd} {opts} {infile} | filterfq {infile} | tee {ofile}"
-    cmd = "{cmd} {opts} {infile} > {ofile}".format(
-          cmd = config.get("suprDUPr","suprdupr_command"),
-          opts = config.get("suprDUPr","suprdupr_options"),
-          infile = fname,
-          ofile = ofname
-          )
-
-    # Skip if the output exists
-    if os.path.exists(ofname):
-        return
-
-    os.makedirs(os.path.dirname(ofname), exist_ok=True)
-
-    syslog.syslog("[suprDUPr_worker] Running %s\n" % cmd)
-    subprocess.check_call(cmd, shell=True)
 
 def get_gcf_name(fname):
     for name in fname.split('/'):
         if re.match(r'GCF-[0-9]{4}-[0-9]{3,}',name):
             return re.search(r'GCF-[0-9]{4}-[0-9]{3,}',name)[0]
     raise Exception('Unable to determine GCF project number for filename {}\n'.format(fname))
-
-
-
-def FastQC_worker(fname) :
-    global localConfig
-    config = localConfig
-    lanes = config.get("Options", "lanes")
-
-    #projectName = fname.split("/")[-3]
-    projectName = get_gcf_name(fname)
-
-    # Skip if the output exists
-    fastqc_fname = glob.glob("{}/{}/QC_{}/FASTQC/*/{}".format(
-          config.get("Paths","outputDir"),
-          config.get("Options","runID"),
-          projectName,
-          os.path.basename(fname).replace(".fastq.gz","_fastqc.zip")
-          ))
-
-    fastqc_fname.extend(glob.glob("{}/{}/QC_{}/FASTQC/{}".format(
-          config.get("Paths","outputDir"),
-          config.get("Options","runID"),
-          projectName,
-          os.path.basename(fname).replace(".fastq.gz","_fastqc.zip")
-          )))
-
-    if fastqc_fname:
-        return
-
-    os.makedirs("%s/%s/QC_%s/FASTQC" % (
-            config.get("Paths","outputDir"),
-            config.get("Options","runID"),
-            projectName), exist_ok=True
-            )
-
-    cmd = "%s %s -o %s/%s/QC_%s/FASTQC %s" % (
-          config.get("FastQC","fastqc_command"),
-          config.get("FastQC","fastqc_options"),
-          config.get("Paths","outputDir"),
-          config.get("Options","runID"),
-          projectName,
-          fname
-          )
-
-    syslog.syslog("[FastQC_worker] Running %s\n" % cmd)
-    subprocess.check_call(cmd, shell=True)
-
-def fastp_worker(fname):
-    global localConfig
-    config = localConfig
-
-    if config.get("Options","Libprep") in ["10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3", "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit"]:
-        in2 = ""
-    elif config.get("Options","Libprep") == "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1":
-        if "R3_001.fastq.gz" in fname:
-            return
-        in2 = ("--in2=" + fname.replace("R1_001.fastq.gz","R3_001.fastq.gz")) if os.path.exists(fname.replace("R1_001.fastq.gz","R3_001.fastq.gz")) else ""
-    else:
-        #We use R1 files to construct R2 filenames for paired end
-        if "R2.fastq.gz" in fname:
-            return
-        in2 = ("--in2=" + fname.replace("R1.fastq.gz","R2.fastq.gz")) if os.path.exists(fname.replace("R1.fastq.gz","R2.fastq.gz")) else ""
-
-    project_name = get_gcf_name(fname)
-    if os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}.fastp.json".format(os.path.basename(fname).replace("_R1.fastq.gz","")))):
-        return
-    elif os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}.fastp.json".format(os.path.basename(fname).replace("_R1_001.fastq.gz","")))):
-        return
-
-    if "10X Genomics" in config.get("Options","Libprep"):
-        json_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}.fastp.json".format(os.path.basename(fname).replace("_R1_001.fastq.gz","")))
-        html_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}.fastp.html".format(os.path.basename(fname).replace("_R1_001.fastq.gz","")))
-    else:
-        json_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}.fastp.json".format(os.path.basename(fname).replace("_R1.fastq.gz","")))
-        html_out = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp","{}.fastp.html".format(os.path.basename(fname).replace("_R1.fastq.gz","")))
-
-
-    tmpdir = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options","runID")))
-    os.makedirs(tmpdir, exist_ok=True)
-
-    with open("/opt/gcf-workflows/libprep.config","r") as libprepconf:
-        libconf = yaml.load(libprepconf)
-
-    conf_libprep = config.get("Options", "Libprep") + (" PE" if is_paired_end(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))) else " SE")
-    l_conf = libconf.get(conf_libprep, {})
-    #l_conf = libconf.get(config.get("Options","Libprep"), {})
-    if l_conf:
-        if in2:
-            #Paired End
-            adapter1 = l_conf.get('adapter','auto')
-            adapter2 = l_conf.get('adapter2','auto')
-        else:
-            #Single End
-            adapter2 = ''
-            adapter1 = l_conf.get('adapter','auto')
-    else:
-        adapter1 = 'auto'
-        adapter2 = 'auto' if in2 else ''
-
-    adapter = "--adapter_sequence=" + adapter1
-    if adapter2:
-        adapter += " --adapter_sequence_r2=" + adapter2 + (" --detect_adapter_for_pe " if adapter2 == 'auto' else '')
-
-    out1 = os.path.join(tmpdir ,os.path.basename(fname))
-    out2 = ("--out2=" + os.path.join(tmpdir, os.path.basename(in2))) if in2 else ""
-
-    cmd = "{fastp} --in1={in1} {in2} --out1={out1} {out2} --json={json} --html={html} {adapter} --thread={thread}".format(
-            fastp = config.get("fastp","command"),
-            in1 = fname,
-            in2 = in2,
-            out1 = out1,
-            out2 = out2,
-            json = json_out,
-            html = html_out,
-            adapter = adapter,
-            thread = config.get("fastp","threads")
-            )
-    syslog.syslog("[fastp_worker] Processing %s\n" % cmd)
-    subprocess.check_call(cmd, shell=True)
-
 
 def toDirs(files) :
     s = set()
@@ -499,7 +184,7 @@ def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
     organism = config.get('Options','Organism')
 
     if not seq_stats:
-        pipeline = PIPELINE_MAP.get(config.get("Options","Libprep"),"default")
+        pipeline = config.get("Options","pipeline")
         with open("/opt/mqc_headers/{}_mqc_header.txt".format(pipeline),"r") as header_file:
             header_text = header_file.read()
         mqc_conf['intro_text'] = header_text.format(pname=mqc_conf['title'])
@@ -568,7 +253,7 @@ def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
     return mqc_conf
 
 def get_pipeline_multiqc_modules(config):
-    modules = PIPELINE_MULTIQC_MODULES.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),None)
+    modules = PIPELINE_MULTIQC_MODULES.get(config.get("Options","pipeline"),None)
     return ('-m ' + ' -m '.join(modules)) if modules else '-e fastqc -e qiime2'
 
 def multiqc_worker(d) :
@@ -581,7 +266,7 @@ def multiqc_worker(d) :
     pname = dname[-1]
 
     conf_name = "{}/{}/QC_{}/.multiqc_config.yaml".format(config.get('Paths','outputDir'), config.get('Options','runID'),pname)
-    pipeline = PIPELINE_MAP.get(config.get("Options","Libprep"),None)
+    pipeline = config.get("Options","pipeline")
     in_conf = open("/config/multiqc_config" + ("-" + pipeline if pipeline else "") + ".yaml","r")
     out_conf = open(conf_name,"w+")
     mqc_conf = yaml.load(in_conf,Loader=yaml.FullLoader)
@@ -682,13 +367,11 @@ def archive_worker(config):
             with open(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),"encryption.{}".format(p)),'w') as pwfile:
                 pwfile.write('{}\n'.format(pw))
         opts = "-p{}".format(pw) if pw else ""
-        raw_fastq = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'), "raw_fastq_{}".format(p)) if PIPELINE_MAP.get(config.get("Options","Libprep")) == 'microbiome' else ''
 
-        cmd = "7za a {opts} {flowdir}/{pnr}.7za {flowdir}/{pnr}/ {flowdir}/QC_{pnr} {flowdir}/Stats {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt {flowdir}/software.versions {raw_fastq}".format(
+        cmd = "7za a {opts} {flowdir}/{pnr}.7za {flowdir}/{pnr}/ {flowdir}/QC_{pnr} {flowdir}/Stats {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt {flowdir}/software.versions ".format(
                 opts = opts,
                 flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
                 pnr = p,
-                raw_fastq = raw_fastq
             )
         if "10X Genomics" in config.get("Options","Libprep"):
             cmd += " {}".format(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),config.get("Options","runID").split("_")[-1][1:]))
@@ -762,10 +445,6 @@ def samplesheet_worker(config,project_dirs):
             )
 
 
-def clumpify_mark_done(config):
-    global localConfig
-    config = localConfig
-    open(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"clumpify.done"),"w+").close()
 
 def get_project_names(dirs):
     gcf = set()
@@ -795,95 +474,33 @@ def get_software_versions(config):
     versions["fastp"] = subprocess.check_output("fastp --version",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
     versions['fastq_screen'] = subprocess.check_output("fastq_screen --version",shell=True).split(b' ')[-1].rstrip()
     versions['FastQC'] = subprocess.check_output("fastqc --version",shell=True).split(b' ')[-1].rstrip()
-    if config.get("Options","Organism") in PIPELINE_ORGANISMS.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),[]):
-        pipeline = PIPELINE_MAP.get(config.get("Options","Libprep"),None)
-        branch = subprocess.check_output("cd /opt/gcf-workflows && git branch",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
-        commit = subprocess.check_output("cd /opt/gcf-workflows && git log",stderr=subprocess.STDOUT,shell=True).split(b'\n')[0].split(b' ')[1]
+    pipeline = config.get("Options","pipeline")
+    branch = subprocess.check_output("cd /opt/gcf-workflows && git branch",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
+    commit = subprocess.check_output("cd /opt/gcf-workflows && git log",stderr=subprocess.STDOUT,shell=True).split(b'\n')[0].split(b' ')[1]
 
-        versions["Analysis pipeline"] = "github.com/gcfntnu/gcf-workflows/tree/{} commit {}".format(branch.decode(), commit.decode()).encode()
+    versions["Analysis pipeline"] = "github.com/gcfntnu/gcf-workflows/tree/{} commit {}".format(branch.decode(), commit.decode()).encode()
 
     software = '\n'.join('{}: {}'.format(key,val.decode()) for (key,val) in versions.items())
     with open(os.path.join(config.get("Paths","outputDir"),config.get("Options","runID"),"software.versions"),'w+') as sf:
         sf.write(software)
     return software
 
-def post_rna_seq(var_d):
-    p = var_d['p']
-    base_dir = var_d['base_dir']
-
-    #move expressions and bam
-    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
-    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
+def post_workflow(project_id, base_dir, pipeline):
+    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(project_id, os.path.basename(base_dir).split("_")[0]))
+    os.makedirs(os.path.join(base_dir, "QC_{}".format(project_id), "bfq"), exist_ok=True)
     cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "rnaseq", "bfq"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
-    )
-    subprocess.check_call(cmd, shell=True)
-
-    #move logs
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir,"logs"),
-        os.path.join(base_dir, "QC_{}".format(p),"logs"),
-    )
-    subprocess.check_call(cmd, shell=True)
-    return None
-
-def post_microbiome(var_d):
-    p = var_d['p']
-    base_dir = var_d['base_dir']
-
-    #move expressions and bam
-    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
-    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "microbiome", "bfq"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
+        os.path.join(analysis_dir, "data", "tmp", pipeline, "bfq"),
+        os.path.join(base_dir, "QC_{}".format(project_id), "bfq"),
     )
     subprocess.check_call(cmd, shell=True)
 
     return None
-
-def post_single_cell(var_d):
-    p = var_d['p']
-    base_dir = var_d['base_dir']
-    #move expressions and bam
-    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
-    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "singlecell", "bfq"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
-    )
-    subprocess.check_call(cmd, shell=True)
-
-    return None
-
-def post_small_rna(var_d):
-    p = var_d['p']
-    base_dir = var_d['base_dir']
-    #move expressions and bam
-    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
-    os.makedirs(os.path.join(base_dir, "QC_{}".format(p), "bfq"), exist_ok=True)
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "smallrna", "bfq"),
-        os.path.join(base_dir, "QC_{}".format(p), "bfq"),
-    )
-    subprocess.check_call(cmd, shell=True)
-
-    return None
-
-POST_PIPELINE_MAP = {
-    'rna-seq': post_rna_seq,
-    'microbiome': post_microbiome,
-    'single-cell': post_single_cell,
-    'small-rna': post_small_rna,
-}
 
 def full_align(config):
     old_wd = os.getcwd()
     libprep = config.get("Options","Libprep")
-    pipeline = PIPELINE_MAP.get(libprep,None)
-    if not pipeline:
-        return False
+    pipeline = config.get("Options","pipeline")
+
     base_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))
     os.chdir(os.environ["TMPDIR"])
     project_names = get_project_names(get_project_dirs(config))
@@ -914,25 +531,16 @@ def full_align(config):
         )
         subprocess.check_call(cmd,shell=True)
 
-        #copy template Snakefile for pipeline
-        shutil.copyfile(
-            os.path.join("/opt","snakefiles","Snakefile-{}".format(pipeline)),
-            os.path.join(analysis_dir,"Snakefile"),
-            )
-
-        if pipeline in ['microbiome', 'single-cell']:
-            os.makedirs(os.path.join(analysis_dir, "data", "tmp"), exist_ok=True)
-            cmd = "cp {} {}".format(
-                os.path.join(base_dir, "{}_samplesheet.tsv".format(p)),
-                os.path.join(analysis_dir, "data", "tmp", "sample_info.tsv")
-            )
-            subprocess.check_call(cmd,shell=True)
+        #write template Snakefile for pipeline
+        with open(os.path.join(analysis_dir,"Snakefile"), "w") as sn:
+            sn.write(SNAKEFILE_TEMPLATE.format(workflow=pipeline))
 
         #run snakemake pipeline
         cmd = "snakemake --reason --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR -j32 -p bfq_all"
         subprocess.check_call(cmd,shell=True)
 
-        POST_PIPELINE_MAP[pipeline]({'p': p, 'base_dir': base_dir})
+        #push workflow bfq output to project directory
+        post_workflow(p, base_dir, pipeline)
 
         #push analysis folder
         analysis_export_dir = os.path.join(config.get("Paths","analysisDir"),"{}_{}".format(p,config.get("Options","runID").split("_")[0]))
@@ -943,7 +551,7 @@ def full_align(config):
         )
         subprocess.check_call(cmd,shell=True)
 
-        #touch bfq_all
+        #touch bfq_all to avoid rerunning pipelines from scratch
         os.chdir(analysis_export_dir)
         cmd = "snakemake --touch -j1 bfq_all"
         subprocess.check_call(cmd,shell=True)
@@ -956,21 +564,6 @@ def full_align(config):
     open(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made"), "w").close()
     return True
 
-def get_tmp(config, fname):
-    project_name = get_gcf_name(fname)
-    tmpdir = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options","runID")))
-    if os.path.exists(os.path.join(tmpdir, os.path.basename(fname))):
-        return os.path.join(tmpdir, os.path.basename(fname))
-
-def get_tmp_sample_files(config, sample_files):
-    return [get_tmp(config, x) for x in sample_files]
-
-def clean_up_tmp_sample_files(tmp_sample_files):
-    for x in tmp_sample_files:
-        os.unlink(x)
-
-def concat_sc_rna_seq_input_files(config):
-    return None
 
 #All steps that should be run after `make` go here
 def postMakeSteps(config) :
@@ -984,94 +577,30 @@ def postMakeSteps(config) :
 
     projectDirs = get_project_dirs(config)
 
-    if config.get("Options", "Libprep") == "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1":
-        sampleFiles = glob.glob("{}/{}/GCF*/**/*R[13]_001.fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")), recursive = True)
-    elif config.get("Options", "Libprep") == "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3":
-        sampleFiles = []
-        for d in get_project_dirs(config):
-            project_name = os.path.basename(d)
-            tmp_raw = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options", "runID")), "raw")
-            os.makedirs(tmp_raw, exist_ok=True)
-            for sample in os.listdir(d):
-                s_files = sorted(glob.glob(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), project_name, sample, "{}_*_R2_001.fastq.gz".format(sample))))
-                tmp_sample = os.path.join(tmp_raw, "{}.fastq.gz".format(sample))
-                cmd = "cat {infiles} > {tmp_sample}".format(
-                    infiles = " ".join(s_files),
-                    tmp_sample = tmp_sample,
-                )
-                subprocess.check_call(cmd, shell=True)
-                sampleFiles.append(tmp_sample)
-    elif config.get("Options", "Libprep") ==  "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit":
-        sampleFiles = []
-        for d in get_project_dirs(config):
-            project_name = os.path.basename(d)
-            tmp_raw = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options", "runID")), "raw")
-            os.makedirs(tmp_raw, exist_ok=True)
-            sample_names = set()
-            dna_reads = glob.glob(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), project_name, "*_R2_001.fastq.gz"))
-            for sample in dna_reads:
-                fn_format = re.search("_S[0-9]+_L[0-9]{3}_[RI][123]_001.fastq.gz", sample)
-                sample = sample.replace(fn_format.group(0),"")
-                sample_names.add(os.path.basename(sample))
-            for sample in sample_names:
-                s_files = sorted(glob.glob(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), project_name, "{}_*_R2_001.fastq.gz".format(sample))))
-                tmp_sample = os.path.join(tmp_raw, "{}.fastq.gz".format(sample))
-                cmd = "cat {infiles} > {tmp_sample}".format(
-                    infiles = " ".join(s_files),
-                    tmp_sample = tmp_sample,
-                )
-                subprocess.check_call(cmd, shell=True)
-                sampleFiles.append(tmp_sample)
-
-    else:
-        sampleFiles = glob.glob("{}/{}/GCF*/**/*R[12].fastq.gz".format(config.get("Paths","outputDir"),config.get("Options","runID")), recursive = True)
-
-    sampleFiles = [sf for sf in sampleFiles if not 'raw_fastq' in sf]
-
     global localConfig
     localConfig = config
 
-    #Decontaminate with masked genome
-    if config.get("Options","RemoveHumanReads") == "1":
-        p = mp.Pool(int(1))
-        p.map(RemoveHumanReads_worker, sampleFiles)
-        p.close()
-        p.join()
+    with open("/opt/gcf-workflows/libprep.config", "r") as lc_f:
+        libprep_config = yaml.load(lc_f)
 
-    if not (os.path.exists(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done"))) and not (PIPELINE_MAP.get(config.get("Options","Libprep"),None) == 'small-rna'):
-        #fastp
-        for d in get_project_dirs(config):
-            project_name = os.path.basename(d)
-            os.makedirs(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"QC_{}".format(project_name),"fastp"), exist_ok=True)
+    if config.get("Options", "libprep") + " SE" in libprep_config.keys():
+        config["Options"]["pipeline"] = libprep_config[config.get("Options", "libprep") + ' SE']['workflow']
+    elif config.get("Options", "libprep") + " PE" in libprep_config.keys():
+        config["Options"]["pipeline"] = libprep_config[config.get("Options", "libprep") + ' PE']['workflow']
+    else:
+        print('failed to identify pipeline from libprep name, using default workflow')
+        config["Options"]["pipeline"] = "default"
 
-        p = mp.Pool(int(int(config.get("system","threads"))/int(config.get("fastp","threads"))))
-        p.map(fastp_worker, sampleFiles)
-        p.close()
-        p.join()
-        tmp_sample_files = get_tmp_sample_files(config, sampleFiles)
 
-        if config.get("Options", "Libprep") in ["10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3", "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit"]:
-            for d in get_project_dirs(config):
-                project_name = os.path.basename(d)
-                tmp_raw = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_name, config.get("Options", "runID")), "raw")
-                cmd = "rm -rf {}".format(tmp_raw)
-                subprocess.check_call(cmd, shell=True)
-        #FastQC
-        p = mp.Pool(int(config.get("Options","fastqcThreads")))
-        p.map(FastQC_worker, tmp_sample_files)
-        p.close()
-        p.join()
-        #fastq_screen
-        p = mp.Pool(int(config.get("Options", "fastqScreenThreads")))
-        p.map(fastq_screen_worker, tmp_sample_files)
-        p.close()
-        p.join()
-        if tmp_sample_files:
-            clean_up_tmp_sample_files(tmp_sample_files)
-        open(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),"qc.done"),"w").close()
+
     #customer_samplesheet
     samplesheet_worker(config,projectDirs)
-    if config.get("Options","Organism") in PIPELINE_ORGANISMS.get(PIPELINE_MAP.get(config.get("Options","Libprep"),None),[]) and not os.path.exists(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made")):
+
+    for d in get_project_dirs(config):
+        project_name = os.path.basename(d)
+        os.makedirs(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), "QC_{}".format(project_name)), exist_ok=True)
+
+    if not os.path.exists(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made")):
         full_align(config)
 
     # multiqc
