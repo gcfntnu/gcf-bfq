@@ -471,9 +471,6 @@ def get_software_versions(config):
         versions["spaceranger"] = subprocess.check_output("spaceranger mkfastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[-1].rstrip().strip(b'(').strip(b')').split(b'-')[-1]
     else:
         versions['bcl2fastq'] = subprocess.check_output("bcl2fastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[1].rstrip()
-    versions["fastp"] = subprocess.check_output("fastp --version",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
-    versions['fastq_screen'] = subprocess.check_output("fastq_screen --version",shell=True).split(b' ')[-1].rstrip()
-    versions['FastQC'] = subprocess.check_output("fastqc --version",shell=True).split(b' ')[-1].rstrip()
     pipeline = config.get("Options","pipeline")
     branch = subprocess.check_output("cd /opt/gcf-workflows && git branch",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
     commit = subprocess.check_output("cd /opt/gcf-workflows && git log",stderr=subprocess.STDOUT,shell=True).split(b'\n')[0].split(b' ')[1]
@@ -557,8 +554,8 @@ def full_align(config):
         subprocess.check_call(cmd,shell=True)
 
         #chmod outputdir
-        cmd = "chmod -R 775 {}".format(analysis_export_dir)
-        subprocess.check_call(cmd,shell=True)
+        #cmd = "chmod -R 775 {}".format(analysis_export_dir)
+        #subprocess.check_call(cmd,shell=True)
 
     os.chdir(old_wd)
     open(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made"), "w").close()
