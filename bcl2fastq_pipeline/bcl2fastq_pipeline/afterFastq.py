@@ -46,26 +46,6 @@ SEQUENCER_OUTPUTFOLDER = {
         'M05617' : 'miseq'
 }
 
-QC_PLACEMENT = {
-    'External_ID': 0,
-    'Sample_Biosource': 10,
-    'Sample_Group': 20,
-    'Customer_Comment': 30,
-    'Fragment_Length': 35,
-    '260/230': 40,
-    '260/280': 50,
-    'Concentration': 50,
-    'RIN': 60
-}
-
-PIPELINE_MULTIQC_MODULES = {
-    'rnaseq': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content"],
-    'microbiome': ["fastq_screen","star","picard","fastp","fastqc_rnaseq","custom_content", "qiime2"],
-    'singlecell': ["fastq_screen", "cellranger", "starsolo", "fastp","fastqc_rnaseq","custom_content", "cellranger_count"],
-    'smallrna': ["fastq_screen","star","picard","fastp","fastqc_rnaseq", "unitas", "custom_content"],
-    'default': ["fastq_screen","fastp","fastqc_rnaseq","custom_content"],
-}
-
 
 def get_gcf_name(fname):
     for name in fname.split('/'):
@@ -83,22 +63,11 @@ def toDirs(files) :
             s.add(d[:d.rfind('/')])
     return s
 
-def is_paired_end(run_dir):
-    stats_file = open('{}/Stats/Stats.json'.format(run_dir),'r')
-    stats_json = json.load(stats_file)
-    lane_info = stats_json['ReadInfosForLanes'][0].get('ReadInfos', None)
-    if not lane_info:
-        return 'Read geometry could not be automatically determined.'
-    R1 = None
-    R2 = None
-    for read in lane_info:
-        if read['IsIndexedRead'] == True:
-            continue
-        elif read['Number'] == 1:
-            R1 = int(read['NumCycles'])
-        elif read['Number'] == 2:
-            R2 = int(read['NumCycles'])
-    return R1 and R2
+def get_sequencer(run_id):
+    return SEQUENCERS.get(run_id.split('_')[1],'Sequencer could not be automatically determined.')
+
+def get_sequencer_outputfolder(run_id):
+    return SEQUENCER_OUTPUTFOLDER.get(run_id.split('_')[1],'Sequencer could not be automatically determined.')
 
 def get_read_geometry(run_dir):
     stats_file = open('{}/Stats/Stats.json'.format(run_dir),'r')
@@ -121,12 +90,6 @@ def get_read_geometry(run_dir):
         return 'Single end - read length (R1): {}'.format(R1)
     elif not R1 and not R2:
         return 'Read geometry could not be automatically determined.'
-
-def get_sequencer(run_id):
-    return SEQUENCERS.get(run_id.split('_')[1],'Sequencer could not be automatically determined.')
-
-def get_sequencer_outputfolder(run_id):
-    return SEQUENCER_OUTPUTFOLDER.get(run_id.split('_')[1],'Sequencer could not be automatically determined.')
 
 def md5sum_worker(config):
     global localConfig
@@ -175,121 +138,6 @@ def md5sum_instrument_worker(config):
 
     os.chdir(old_wd)
 
-def set_mqc_conf_header(config, mqc_conf, seq_stats=False):
-    odir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))
-    read_geometry = get_read_geometry(odir)
-    contact = config.get('MultiQC','report_contact')
-    sequencer = get_sequencer(config.get('Options','runID'))
-    prepkit = config.get('Options','Libprep')
-    organism = config.get('Options','Organism')
-
-    if not seq_stats:
-        pipeline = config.get("Options","pipeline")
-        with open("/opt/mqc_headers/{}_mqc_header.txt".format(pipeline),"r") as header_file:
-            header_text = header_file.read()
-        mqc_conf['intro_text'] = header_text.format(pname=mqc_conf['title'])
-        software = get_software_versions(config)
-        format_software = '<br/>'.join(["<strong>Software versions</strong>"] + software.split("\n"))
-        mqc_conf['intro_text'] = '<br/><br/>'.join([mqc_conf['intro_text'],format_software])
-
-    report_header = [
-    {'Contact E-mail': contact},
-    {'Sequencing Platform': sequencer},
-    {'Read Geometry': read_geometry},
-    ]
-    if not organism in ['N/A', 'n/a', '', ' ']:
-        report_header.append({'Organism': organism})
-    if not prepkit in ['N/A', 'n/a', '', ' ']:
-        report_header.append({'Lib prep kit': prepkit})
-
-    mqc_conf['report_header_info'] = report_header
-
-    if read_geometry.startswith('Single end'):
-        mqc_conf['extra_fn_clean_exts'].append('_R1')
-
-    if os.path.exists(os.path.join(odir,'{}_samplesheet.tsv'.format(mqc_conf['title']))) and "10X Genomics" not in config.get("Options","Libprep"):
-        s_df = pd.read_csv(os.path.join(odir,'{}_samplesheet.tsv'.format(mqc_conf['title'])),sep='\t')
-        s_df.index = s_df['Sample_ID']
-
-        max_260_230 = float(s_df['260/230'].max()) if '260/230' in s_df.columns else 3
-        max_260_280 = float(s_df['260/280'].max()) if '260/280' in s_df.columns else 3
-
-        MAX = {
-            'RIN': 10,
-            '260/230': max_260_230,
-            '260/280': max_260_280
-            }
-
-        COL_SCALE = {
-            'RIN': 'OrRd',
-            '260/230': 'PuBu',
-            '260/280': 'BuGn'
-        }
-
-        s_df.drop(['Sample_ID'], axis=1,inplace=True)
-        s_df.dropna(how='all', axis=1, inplace=True)
-        s_df = s_df.round(2)
-        s_dict = s_df.to_dict(orient='index')
-
-        pconfig = {}
-        for col in list(s_df.columns.values):
-            pconfig[col] = {'format': '{}', 'min': 0, 'placement': QC_PLACEMENT[col]}
-            pconfig[col]['max'] = MAX.get(col,None)
-            pconfig[col]['scale'] = COL_SCALE.get(col,False)
-
-        data = s_dict
-
-        general_statistics = {
-            'plot_type': 'generalstats',
-            'pconfig': [pconfig],
-            'data': data
-        }
-        custom_data = {'general_statistics': general_statistics}
-
-        mqc_conf['custom_data'] = custom_data
-
-
-
-    return mqc_conf
-
-def get_pipeline_multiqc_modules(config):
-    modules = PIPELINE_MULTIQC_MODULES.get(config.get("Options","pipeline"),None)
-    return ('-m ' + ' -m '.join(modules)) if modules else '-e fastqc -e qiime2'
-
-def multiqc_worker(d) :
-    global localConfig
-    config = localConfig
-    oldWd = os.getcwd()
-    os.chdir(d)
-    #os.chdir("{}/{}".format(config.get('Paths','outputDir'), config.get('Options','runID')))
-    dname = d.split("/")
-    pname = dname[-1]
-
-    conf_name = "{}/{}/QC_{}/.multiqc_config.yaml".format(config.get('Paths','outputDir'), config.get('Options','runID'),pname)
-    pipeline = config.get("Options","pipeline")
-    in_conf = open("/config/multiqc_config" + ("-" + pipeline if pipeline else "") + ".yaml","r")
-    out_conf = open(conf_name,"w+")
-    mqc_conf = yaml.load(in_conf,Loader=yaml.FullLoader)
-
-    mqc_conf['title'] = pname
-    mqc_conf = set_mqc_conf_header(config,mqc_conf)
-
-    yaml.dump(mqc_conf,out_conf)
-    in_conf.close()
-    out_conf.close()
-
-    cmd = "{multiqc_cmd} {multiqc_opts} --config {conf} {flow_dir}/QC_{pname} {flow_dir}/{pname} {modules} --filename {flow_dir}/QC_{pname}/multiqc_{pname}.html".format(
-            multiqc_cmd = config.get("MultiQC", "multiqc_command"),
-            multiqc_opts = config.get("MultiQC", "multiqc_options"),
-            conf = conf_name,
-            flow_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
-            pname=pname,
-            modules = get_pipeline_multiqc_modules(config)
-            )
-    syslog.syslog("[multiqc_worker] Processing %s\n" % d)
-    subprocess.check_call(cmd, shell=True)
-
-    os.chdir(oldWd)
 
 def multiqc_stats(project_dirs) :
     global localConfig
@@ -328,20 +176,27 @@ def multiqc_stats(project_dirs) :
     syslog.syslog("[multiqc_worker] Interop index summary on %s\n" % os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),'data',config.get("Options","runID")))
     subprocess.check_call(cmd,shell=True)
 
-    conf_name = "{}/{}/Stats/.multiqc_config.yaml".format(config.get('Paths','outputDir'), config.get('Options','runID'))
-    in_conf = open("/config/multiqc_config.yaml","r")
-    out_conf = open(conf_name,"w+")
-    mqc_conf = yaml.load(in_conf,Loader=yaml.FullLoader)
+    run_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))
 
+    in_confs = glob.glob(os.path.join(run_dir, "QC_GCF*", "bfq", ".multiqc_config.yaml"))
+    samples_custom_data = dict()
+    for c in in_confs:
+        with open(c, 'r') as c_fh:
+            mqc_conf = yaml.load(c_fh,Loader=yaml.FullLoader)
+        samples_custom_data.update(mqc_conf["custom_data"]["general_statistics"]["data"])
+
+    #use one of the existing multiqc_config.yaml as template
+    with open(in_confs[0], 'r') as in_conf_fh:
+        mqc_conf = yaml.load(in_conf_fh,Loader=yaml.FullLoader)
     pnames = get_project_names(project_dirs)
     pnames = ', '.join(pnames)
     mqc_conf['title'] = pnames
+    mqc_conf['intro_text'] = "This report is generated for projects run at Genomics Core Facility, NTNU, Trondheim. The results are reported per sample."
+    mqc_conf["custom_data"]["general_statistics"]["data"] = samples_custom_data
 
-    mqc_conf = set_mqc_conf_header(config,mqc_conf,seq_stats=True)
-
-    yaml.dump(mqc_conf,out_conf)
-    in_conf.close()
-    out_conf.close()
+    conf_name = os.path.join(run_dir, "Stats", ".multiqc_config.yaml")
+    with open(conf_name, "w+") as out_conf_fh:
+        yaml.dump(mqc_conf,out_conf_fh)
 
     cmd = "{multiqc_cmd} {multiqc_opts} --config {conf} {flow_dir}/Stats --filename {flow_dir}/Stats/sequencer_stats_{pname}.html -e qiime2".format(
             multiqc_cmd = config.get("MultiQC", "multiqc_command"),
@@ -398,52 +253,6 @@ def instrument_archive_worker(config):
         )
     syslog.syslog("[instrument_archive_worker] Zipping instruments." )
     subprocess.check_call(cmd, shell=True)
-    
-
-def samplesheet_worker(config,project_dirs):
-    """
-    TODO:
-    Import configmaker
-    Get samplesheet data as dict from 'get_data_from_samplesheet(fh)'
-    If sample submission form - use 'merge_samples_with_submission_form(ssub,sample_dict)'
-    Keep selected columns and write customer samplesheet
-    Use data structure to add data to general statistics in multiqc config
-
-    """
-    #TODO: Account for multiple projects
-    project_names = get_project_names(project_dirs)
-    for pid in project_names:
-        with open(config.get("Options","sampleSheet"),'r') as ss:
-            #sample_df, _ = cm.get_data_from_samplesheet(ss)
-            sample_df, _ = cm.get_project_samples_from_samplesheet(ss,[os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))] , [pid])
-        sample_ids = sample_df['Sample_ID']
-        #project_dirs = cm.inspect_dirs([os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))])
-        sample_dict = cm.find_samples(sample_df,[os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'), pid)])
-
-        keep_cols = ['Sample_ID']
-        try:
-            if not config.get("Options","sampleSubForm") == "":
-                ssub_d = {config.get("Options","sampleSubForm"): open(config.get("Options","sampleSubForm"),'rb')}
-                #TODO: get message from merge (check intersection between sample sheet and sample-sub-form and attach message to email
-                sample_dict = cm.merge_samples_with_submission_form(ssub_d, sample_dict)
-                keep_cols.extend(['External_ID', 'Sample_Group','Sample_Biosource','Customer_Comment', 'Fragment_Length','RIN', '260/280', '260/230', 'Concentration'])
-                try:
-                    sample_df = pd.DataFrame.from_dict(sample_dict,orient='index')[keep_cols]
-                except Exception as e:
-                    #TODO: attach message to error email
-                    sample_df = pd.DataFrame.from_dict(sample_dict,orient='index')[['Sample_ID']]
-            else:
-                sample_df = pd.DataFrame.from_dict(sample_dict,orient='index')[keep_cols]
-        except Exception as e:
-            #TODO: attach message to error email
-            sample_df = sample_ids
-        sample_df.to_csv(
-            os.path.join(config.get("Paths","outputDir"),config.get("Options","runID"),"{}_samplesheet.tsv".format(pid)),
-            index=False,
-            sep='\t',
-            header=True
-            )
-
 
 
 def get_project_names(dirs):
@@ -457,33 +266,7 @@ def get_project_names(dirs):
 def get_project_dirs(config):
     projectDirs = glob.glob("%s/%s/*/*.fastq.gz" % (config.get("Paths","outputDir"), config.get("Options","runID")))
     projectDirs.extend(glob.glob("%s/%s/*/*/*.fastq.gz" % (config.get("Paths","outputDir"), config.get("Options","runID"))))
-    projectDirs = [x for x in projectDirs if "raw_fastq_GCF" not in x]
     return toDirs(projectDirs)
-
-def get_software_versions(config):
-    versions = {}
-    versions['GCF-NTNU bcl2fastq pipeline'] = subprocess.check_output("cat /bfq_version/bfq.version",shell=True).rstrip()
-    if "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit" in config.get("Options","Libprep"):
-        versions["cellranger"] = subprocess.check_output("cellranger mkfastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[-1].rstrip().strip(b'(').strip(b')').split(b'-')[-1]
-    elif "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit" in config.get("Options","Libprep"):
-        versions["cellranger-atac"] = subprocess.check_output("cellranger-atac mkfastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[0].split(b' ')[-1].rstrip().strip(b'(').strip(b')')
-    elif "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit" in config.get("Options","Libprep"):
-        versions["spaceranger"] = subprocess.check_output("spaceranger mkfastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[-1].rstrip().strip(b'(').strip(b')').split(b'-')[-1]
-    else:
-        versions['bcl2fastq'] = subprocess.check_output("bcl2fastq --version",stderr=subprocess.STDOUT,shell=True).split(b'\n')[1].split(b' ')[1].rstrip()
-    versions["fastp"] = subprocess.check_output("fastp --version",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
-    versions['fastq_screen'] = subprocess.check_output("fastq_screen --version",shell=True).split(b' ')[-1].rstrip()
-    versions['FastQC'] = subprocess.check_output("fastqc --version",shell=True).split(b' ')[-1].rstrip()
-    pipeline = config.get("Options","pipeline")
-    branch = subprocess.check_output("cd /opt/gcf-workflows && git branch",stderr=subprocess.STDOUT,shell=True).split(b' ')[-1].rstrip()
-    commit = subprocess.check_output("cd /opt/gcf-workflows && git log",stderr=subprocess.STDOUT,shell=True).split(b'\n')[0].split(b' ')[1]
-
-    versions["Analysis pipeline"] = "github.com/gcfntnu/gcf-workflows/tree/{} commit {}".format(branch.decode(), commit.decode()).encode()
-
-    software = '\n'.join('{}: {}'.format(key,val.decode()) for (key,val) in versions.items())
-    with open(os.path.join(config.get("Paths","outputDir"),config.get("Options","runID"),"software.versions"),'w+') as sf:
-        sf.write(software)
-    return software
 
 def post_workflow(project_id, base_dir, pipeline):
     analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(project_id, os.path.basename(base_dir).split("_")[0]))
@@ -494,7 +277,14 @@ def post_workflow(project_id, base_dir, pipeline):
     )
     subprocess.check_call(cmd, shell=True)
 
-    return None
+    #Copy sample info
+    cmd = "cp {} {}".format(
+        os.path.join(analysis_dir, "data", "tmp", "sample_info.tsv"),
+        os.path.join(base_dir, "{}_samplesheet.tsv".format(project_id))
+    )
+    subprocess.check_call(cmd, shell=True)
+
+    return True
 
 def full_align(config):
     old_wd = os.getcwd()
@@ -536,7 +326,7 @@ def full_align(config):
             sn.write(SNAKEFILE_TEMPLATE.format(workflow=pipeline))
 
         #run snakemake pipeline
-        cmd = "snakemake --reason --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR -j32 -p bfq_all"
+        cmd = "snakemake --reason --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR -j32 -p multiqc_report"
         subprocess.check_call(cmd,shell=True)
 
         #push workflow bfq output to project directory
@@ -556,9 +346,6 @@ def full_align(config):
         cmd = "snakemake --touch -j1 bfq_all"
         subprocess.check_call(cmd,shell=True)
 
-        #chmod outputdir
-        cmd = "chmod -R 775 {}".format(analysis_export_dir)
-        subprocess.check_call(cmd,shell=True)
 
     os.chdir(old_wd)
     open(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made"), "w").close()
@@ -593,21 +380,12 @@ def postMakeSteps(config) :
 
 
 
-    #customer_samplesheet
-    samplesheet_worker(config,projectDirs)
-
     for d in get_project_dirs(config):
         project_name = os.path.basename(d)
         os.makedirs(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), "QC_{}".format(project_name)), exist_ok=True)
 
     if not os.path.exists(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made")):
         full_align(config)
-
-    # multiqc
-    p = mp.Pool(int(config.get("Options","postMakeThreads")))
-    p.map(multiqc_worker, projectDirs)
-    p.close()
-    p.join()
 
     # multiqc_stats
     multiqc_stats(projectDirs)
@@ -617,9 +395,6 @@ def postMakeSteps(config) :
     tot /= 1024*1024*1024 #Convert to gigs
     used /= 1024*1024*1024
     free /= 1024*1024*1024
-
-    #Undetermined indices
-    #undeter = parserDemultiplexStats(config)
 
     message = "Current free space for output: %i of %i GiB (%5.2f%%)\n<br>" % (
         free,tot,100*free/tot)
@@ -632,8 +407,6 @@ def postMakeSteps(config) :
 
     message += "Current free space for instruments: %i of %i GiB (%5.2f%%)\n<br>\n<br>" % (
         free,tot,100*free/tot)
-
-    #message += undeter
 
     #save configfile to flowcell
     with open(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"),'bcl2fastq.ini'), 'w+') as configfile:

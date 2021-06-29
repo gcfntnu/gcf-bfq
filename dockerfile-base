@@ -6,18 +6,15 @@ RUN apt update && apt install -y -q git alien tabix pigz gzip zlibc zlib1g-dev z
 RUN conda config --add channels conda-forge
 RUN conda config --add channels bioconda
 RUN conda install -y pip mamba
-RUN mamba install -y fastq-screen bowtie2 fastqc bbmap pandas bioblend reportlab xlrd ea-utils configparser matplotlib requests illumina-interop fastp cutadapt biopython
+RUN mamba install -y pandas xlrd ea-utils configparser requests illumina-interop 
 RUN mamba install -y snakemake=5.18
-RUN pip install cycler
 RUN mamba update numpy
 
 WORKDIR /opt
 
-RUN mkdir fastq_screen
-COPY files/fastq_screen.conf fastq_screen/
-
 RUN mkdir images
 COPY files/ntnu.png images/
+COPY files/logo_ntnu.png /opt/images/
 
 COPY files/bcl2fastq2-v2.20.0.422-Linux-x86_64.rpm /tmp
 RUN alien -i /tmp/bcl2fastq2-v2.20.0.422-Linux-x86_64.rpm
@@ -27,11 +24,6 @@ WORKDIR /bfq
 RUN mkdir output seq_share data log
 
 WORKDIR /opt
-
-RUN apt update && apt install -y make g++ libboost-iostreams-dev libboost-program-options-dev libz-dev
-RUN git clone https://github.com/nsc-norway/suprDUPr
-RUN cd suprDUPr && make 
-ENV PATH=$PATH:/opt/suprDUPr
 
 ENV CR_VERSION=6.0.0
 COPY files/cellranger-$CR_VERSION.tar.gz /tmp/cellranger-$CR_VERSION.tar.gz
@@ -53,10 +45,10 @@ RUN wget -O- http://neuro.debian.net/lists/stretch.de-md.full | tee /etc/apt/sou
 RUN ["/bin/bash", "-c", "set -o pipefail && apt-key adv --recv-keys --keyserver hkp://pool.sks-keyservers.net:80 0xA5D32F012649A5A9"]
 RUN apt-get update --yes && apt install -y singularity-container 
 RUN apt update && apt install -y curl
-RUN ["/bin/bash", "-c", "set -o pipefail && curl -fsSL get.nextflow.io | /bin/bash"]
-RUN mv nextflow /usr/local/bin
 
-COPY files/logo_ntnu.png /opt/images/
+#Skip nextflow
+#RUN ["/bin/bash", "-c", "set -o pipefail && curl -fsSL get.nextflow.io | /bin/bash"]
+#RUN mv nextflow /usr/local/bin
 
 ENV TMPDIR=/bfq-tmp
 ENV EXT_DIR=/bfq-ext

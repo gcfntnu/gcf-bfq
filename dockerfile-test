@@ -21,9 +21,5 @@ RUN ./setup.py install
 
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline
 
-ADD ./files/snakefiles /opt/snakefiles
-ADD ./files/qiaseq /opt/qiaseq
-ADD ./files/mqc_headers /opt/mqc_headers
-
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline
 CMD bin/bfq.py
