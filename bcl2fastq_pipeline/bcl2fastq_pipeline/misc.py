@@ -340,7 +340,7 @@ def finishedEmail(config, msg, runTime) :
     msg.attach(MIMEText(message,'html'))
 
     for p in projects:
-        with open(os.path.join(odir,"QC_{pnr}/multiqc_{pnr}.html".format(pnr=p)),"rb") as report:
+        with open(os.path.join(odir,"QC_{pnr}/bfq/multiqc_{pnr}.html".format(pnr=p)),"rb") as report:
             part = MIMEApplication(
                     report.read(),
                     report.name
