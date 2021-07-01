@@ -223,7 +223,7 @@ def archive_worker(config):
                 pwfile.write('{}\n'.format(pw))
         opts = "-p{}".format(pw) if pw else ""
 
-        cmd = "7za a {opts} {flowdir}/{pnr}.7za {flowdir}/{pnr}/ {flowdir}/QC_{pnr} {flowdir}/Stats {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt {flowdir}/software.versions ".format(
+        cmd = "7za a {opts} {flowdir}/{pnr}.7za {flowdir}/{pnr}/ {flowdir}/QC_{pnr} {flowdir}/Stats {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt ".format(
                 opts = opts,
                 flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
                 pnr = p,
