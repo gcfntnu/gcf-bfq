@@ -350,7 +350,7 @@ def finishedEmail(config, msg, runTime) :
 
         if config.get("Options", "Libprep").startswith("10X Genomics Chromium Single Cell"):
             f =os.path.join(odir, "QC_{}".format(p), "bfq", "summaries", "all_samples_web_summary.html")
-            is os.path.exists(f):
+            if os.path.exists(f):
                 with open(f, "rb") as report:
                     part = MIMEApplication(
                             report.read(),
