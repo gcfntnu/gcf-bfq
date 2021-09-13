@@ -1,4 +1,4 @@
-FROM continuumio/miniconda3:4.7.12
+FROM continuumio/miniconda3:4.10.3
 
 RUN conda update conda -y
 
@@ -6,7 +6,7 @@ RUN apt update && apt install -y -q git alien tabix pigz gzip zlibc zlib1g-dev z
 RUN conda config --add channels conda-forge
 RUN conda config --add channels bioconda
 RUN conda install -y pip mamba
-RUN mamba install -y pandas xlrd ea-utils configparser requests illumina-interop 
+RUN mamba install -y pandas xlrd ea-utils configparser requests illumina-interop gh openpyxl 
 RUN mamba install -y snakemake=5.18
 RUN mamba update numpy
 
@@ -41,9 +41,9 @@ ENV PATH=$PATH:/opt/spaceranger-1.2.1
 WORKDIR /tmp
 
 ENV DEBIAN_FRONTEND="noninteractive"
-RUN wget -O- http://neuro.debian.net/lists/stretch.de-md.full | tee /etc/apt/sources.list.d/neurodebian.sources.list
-RUN ["/bin/bash", "-c", "set -o pipefail && apt-key adv --recv-keys --keyserver hkp://pool.sks-keyservers.net:80 0xA5D32F012649A5A9"]
-RUN apt-get update --yes && apt install -y singularity-container 
+RUN wget -O- http://neuro.debian.net/lists/xenial.us-ca.full | tee /etc/apt/sources.list.d/neurodebian.sources.list
+RUN ["/bin/bash", "-c", "set -o pipefail && apt-key adv --recv-keys --keyserver keyserver.ubuntu.com 0xA5D32F012649A5A9"]
+RUN apt-get update && apt install -y singularity-container 
 RUN apt update && apt install -y curl
 
 #Skip nextflow
