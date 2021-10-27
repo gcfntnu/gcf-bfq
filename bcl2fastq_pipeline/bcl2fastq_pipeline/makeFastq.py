@@ -113,18 +113,6 @@ def bcl2fq(config) :
                 with open("%s/%s%s.log" % (config.get("Paths","logDir"), config.get("Options","runID"), lanes), "w") as logOut:
                     syslog.syslog("[bcl2fq] Retrying with --barcode-mismatches 0 : %s\n" % cmd)
                     subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
-    #retrieve mkfastq logs
-    if "10X Genomics" in config.get("Options","Libprep"):
-        project_dirs = bfq_afq.get_project_dirs(config)
-        pnames = bfq_afq.get_project_names(project_dirs)
-        for p in pnames:
-            os.makedirs(os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), "QC_{}".format(p), "10X_mkfastq"), exist_ok=True)
-            cmd = "cp {} {}".format(
-                os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), config.get("Options","runID").split("_")[-1][1:], "outs", "qc_summary.json"),
-                os.path.join(config.get("Paths", "outputDir"), config.get("Options","runID"), "QC_{}".format(p), "10X_mkfastq", "qc_summary.json")
-
-            )
-            subprocess.check_call(cmd, shell=True)
 
     logOut.close()
     os.chdir(old_wd)
