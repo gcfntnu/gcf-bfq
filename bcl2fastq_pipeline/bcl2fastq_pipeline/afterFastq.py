@@ -343,7 +343,7 @@ def full_align(config):
 
         #touch bfq_all to avoid rerunning pipelines from scratch
         os.chdir(analysis_export_dir)
-        cmd = "snakemake --touch -j1 bfq_all"
+        cmd = "snakemake --touch -j1 bfq_all && chmod -R 775 ."
         subprocess.check_call(cmd,shell=True)
 
 
