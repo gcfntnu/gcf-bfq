@@ -368,7 +368,7 @@ def postMakeSteps(config) :
     localConfig = config
 
     with open("/opt/gcf-workflows/libprep.config", "r") as lc_f:
-        libprep_config = yaml.load(lc_f)
+        libprep_config = yaml.load(lc_f,Loader=yaml.FullLoader)
 
     if config.get("Options", "libprep") + " SE" in libprep_config.keys():
         config["Options"]["pipeline"] = libprep_config[config.get("Options", "libprep") + ' SE']['workflow']
