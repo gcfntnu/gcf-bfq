@@ -7,8 +7,11 @@ RUN conda config --add channels conda-forge
 RUN conda config --add channels bioconda
 RUN conda install -y pip mamba
 RUN mamba install -y pandas xlrd ea-utils configparser requests illumina-interop gh openpyxl 
-RUN mamba install -y snakemake=5.18
+RUN mamba install -y snakemake=6.15.3 singularity=3.8.5
 RUN mamba update numpy
+
+#Allow shared loop devices for singularity
+RUN sed -i -e 's/shared loop devices = no/shared loop devices = yes/g' /opt/conda/etc/singularity/singularity.conf
 
 WORKDIR /opt
 
@@ -29,31 +32,25 @@ ENV CR_VERSION=6.1.2
 COPY files/cellranger-$CR_VERSION.tar.gz /tmp/cellranger-$CR_VERSION.tar.gz
 RUN tar -C /opt/ -zxvf /tmp/cellranger-$CR_VERSION.tar.gz
 ENV PATH=$PATH:/opt/cellranger-$CR_VERSION
+RUN rm /tmp/cellranger-$CR_VERSION.tar.gz
 
 COPY files/cellranger-atac-1.2.0.tar.gz /tmp/cellranger-atac-1.2.0.tar.gz
 RUN tar -C /opt/ -xvf /tmp/cellranger-atac-1.2.0.tar.gz
 ENV PATH=$PATH:/opt/cellranger-atac-1.2.0
+RUN rm /tmp/cellranger-atac-1.2.0.tar.gz
 
 COPY files/spaceranger-1.2.1.tar.gz /tmp/spaceranger-1.2.1.tar.gz
 RUN tar -C /opt/ -xvf /tmp/spaceranger-1.2.1.tar.gz
 ENV PATH=$PATH:/opt/spaceranger-1.2.1
+RUN rm /tmp/spaceranger-1.2.1.tar.gz
 
-WORKDIR /tmp
-
-ENV DEBIAN_FRONTEND="noninteractive"
-RUN wget -O- http://neuro.debian.net/lists/xenial.us-ca.full | tee /etc/apt/sources.list.d/neurodebian.sources.list
-RUN ["/bin/bash", "-c", "set -o pipefail && apt-key adv --recv-keys --keyserver keyserver.ubuntu.com 0xA5D32F012649A5A9"]
-RUN apt-get update && apt install -y singularity-container 
-RUN apt update && apt install -y curl
-
-#Skip nextflow
-#RUN ["/bin/bash", "-c", "set -o pipefail && curl -fsSL get.nextflow.io | /bin/bash"]
-#RUN mv nextflow /usr/local/bin
+#FIX for qiime2 cli: need access to cache files in /home of q2 image
+RUN chmod -R a+w /home
 
 ENV TMPDIR=/bfq-tmp
 ENV EXT_DIR=/bfq-ext
 ENV GCF_EXT=$EXT_DIR
-ENV SINGULARITY_BINDPATH=/mnt,/instrument-archive,/opt/gcf-workflows,/bfq-tmp,/bfq-ext
+ENV SINGULARITY_BINDPATH=/mnt,/instrument-archive,/opt/gcf-workflows,/bfq-tmp,/bfq-ext,/home
 ENV SINGULARITY_CACHEDIR=$TMPDIR/singularity/
 ENV SINGULARITY_TMPDIR=$SINGULARITY_CACHEDIR/tmp
 ENV SINGULARITY_LOCALCACHEDIR=$SINGULARITY_CACHEDIR/tmp/
