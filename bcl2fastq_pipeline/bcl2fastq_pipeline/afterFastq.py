@@ -284,6 +284,13 @@ def post_workflow(project_id, base_dir, pipeline):
     )
     subprocess.check_call(cmd, shell=True)
 
+    #copy pep project
+    pep_dir = os.path.join(analysis_dir, "pep")
+    if os.path.exists(pep_dir):
+        pep_dst = os.path.join(base_dir, "pep")
+        cmd = "cp -r {} {}".format(pep_dir, pep_dst)
+        subprocess.check_call(cmd, shell=True)
+    
     return True
 
 def full_align(config):
