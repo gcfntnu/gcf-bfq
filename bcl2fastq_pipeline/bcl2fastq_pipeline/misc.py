@@ -30,6 +30,7 @@ import requests
 import json
 import configmaker.configmaker as cm
 from bcl2fastq_pipeline.afterFastq import get_project_dirs, get_project_names, get_sequencer, get_read_geometry
+from argparse import Namespace
 
 style = """
 <style>
@@ -180,8 +181,8 @@ def parseSampleSheetMetrics(config):
     msg = "<strong>Sample sheet info</strong>\n"
     for pid in project_names:
         with open(config.get("Options","sampleSheet"),'r') as ss:
-            sample_df, _ = cm.get_project_samples_from_samplesheet(ss,[os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))] , [pid])
-            sample_dict = cm.find_samples(sample_df,[os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'), pid)])
+            args = Namespace(samplesheet = [config.get("Options", "sampleSheet")], project_id = pid, )
+            sample_df, _ = cm.get_project_samples_from_samplesheet(args)
         msg += "<strong>{}</strong>: Found {} samples in samplesheet.\n".format(pid, len(sample_df))
 
     sample_sub_form_d = cm.sample_submission_form_parser(config.get("Options","sampleSubForm"))
