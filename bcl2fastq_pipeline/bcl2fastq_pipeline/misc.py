@@ -181,7 +181,7 @@ def parseSampleSheetMetrics(config):
     msg = "<strong>Sample sheet info</strong>\n"
     for pid in project_names:
         with open(config.get("Options","sampleSheet"),'r') as ss:
-            args = Namespace(samplesheet = [config.get("Options", "sampleSheet")], project_id = pid, )
+            args = Namespace(samplesheet = [config.get("Options", "sampleSheet")], project_id = [pid], )
             sample_df, _ = cm.get_project_samples_from_samplesheet(args)
         msg += "<strong>{}</strong>: Found {} samples in samplesheet.\n".format(pid, len(sample_df))
 
