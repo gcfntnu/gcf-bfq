@@ -182,12 +182,11 @@ def parseSampleSheetMetrics(config):
     for pid in project_names:
         with open(config.get("Options","sampleSheet"),'r') as ss:
             args = Namespace(samplesheet = [config.get("Options", "sampleSheet")], project_id = [pid], )
-            sample_df, _ = cm.get_project_samples_from_samplesheet(args)
+            sample_df, _, _ = cm.get_project_samples_from_samplesheet(args)
         msg += "<strong>{}</strong>: Found {} samples in samplesheet.\n".format(pid, len(sample_df))
 
-    sample_sub_form_d = cm.sample_submission_form_parser(config.get("Options","sampleSubForm"))
-    msg += "\nFound {} samples in sample submission form.\n".format(len(sample_sub_form_d))
-    ssub_df = pd.DataFrame.from_dict(sample_sub_form_d, orient="index")
+    ssub_df, _ = cm.sample_submission_form_parser(config.get("Options","sampleSubForm"))
+    msg += "\nFound {} samples in sample submission form.\n".format(len(ssub_df.index))
     if "Sample_Group" in ssub_df:
         if ssub_df["Sample_Group"].notnull().all():
             msg += "Sample_Group has {} unique values: {}.\n".format(len(ssub_df["Sample_Group"].unique()), ", ".join(ssub_df["Sample_Group"].unique().astype(str)))
