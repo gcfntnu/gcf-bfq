@@ -11,12 +11,7 @@ from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.utils import COMMASPACE, formatdate
 import xml.etree.ElementTree as ET
-from reportlab.lib import colors, utils
-from reportlab.platypus import BaseDocTemplate, Table, Preformatted, Paragraph, Spacer, Image, Frame, NextPageTemplate, PageTemplate, TableStyle, PageBreak, ListFlowable, ListItem
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.pagesizes import A4, landscape
 from time import strftime
-from reportlab.pdfgen import canvas
 import csv
 import sys
 import glob
