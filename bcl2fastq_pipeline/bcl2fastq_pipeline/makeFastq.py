@@ -14,11 +14,6 @@ import tempfile
 import xml.etree.ElementTree as ET
 import re
 from distutils.dir_util import copy_tree
-from reportlab.lib import colors, utils
-from reportlab.platypus import BaseDocTemplate, Table, Preformatted, Paragraph, Spacer, Image, Frame, NextPageTemplate, PageTemplate, TableStyle
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
 import bcl2fastq_pipeline.afterFastq as bfq_afq
 import pandas as pd
 import yaml
