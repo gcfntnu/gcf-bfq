@@ -64,9 +64,9 @@ def bcl2fq(config) :
         )
     old_wd = os.getcwd()
     os.chdir(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')))
+    force_bcl2fastq = os.environ.get("FORCE_BCL2FASTQ", None)
 
     if "10X Genomics" in config.get("Options","Libprep"):
-        #TODO: --interop-dir not supported for cellranger
         cmd = "{cellranger_cmd} --output-dir={output_dir} --sample-sheet={sample_sheet} --run={run_dir} {cellranger_options}".format(
                 cellranger_cmd = config.get("cellranger",MKFASTQ_10X[config.get("Options","Libprep")]),
                 output_dir = "{}/{}".format(
@@ -81,7 +81,7 @@ def bcl2fq(config) :
                     ),
                 cellranger_options = config.get("cellranger","cellranger_mkfastq_options")
                 )
-    else:
+    elif force_bcl2fastq:
         cmd = "%s %s --sample-sheet %s -o %s/%s%s -R %s/%s/data/%s --interop-dir %s/%s/InterOp" % (
             config.get("bcl2fastq","bcl2fastq"),
             config.get("bcl2fastq","bcl2fastq_options"),
@@ -95,12 +95,18 @@ def bcl2fq(config) :
             config.get("Paths","outputDir"),
             config.get("Options","runID"),
         )
+    else:
+        cmd = "bcl-convert --force --bcl-input-directory {in_dir} --output-directory {out_dir} --sample-sheet {samplesheet} --bcl-sampleproject-subdirectories true --no-lane-splitting true --output-legacy-stats true".format(
+            in_dir = os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),"data",config.get("Options","runID")),
+            out_dir = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID")),
+            samplesheet = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), "SampleSheet.csv")
+            )
     try:
-        syslog.syslog("[bcl2fq] Running: %s\n" % cmd)
+        syslog.syslog("[convert bcl] Running: %s\n" % cmd)
         with open("%s/%s%s.log" % (config.get("Paths","logDir"), config.get("Options","runID"), lanes), "w") as logOut:
             subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
     except:
-        if "10X Genomics" not in config.get("Options", "Libprep"):
+        if "10X Genomics" not in config.get("Options", "Libprep") and force_bcl2fastq:
             with open("%s/%s%s.log" % (config.get("Paths","logDir"), config.get("Options","runID"), lanes), "r") as logOut:
                 log_content = logOut.read()
             if "<bcl2fastq::layout::BarcodeCollisionError>" in log_content:
@@ -108,6 +114,10 @@ def bcl2fq(config) :
                 with open("%s/%s%s.log" % (config.get("Paths","logDir"), config.get("Options","runID"), lanes), "w") as logOut:
                     syslog.syslog("[bcl2fq] Retrying with --barcode-mismatches 0 : %s\n" % cmd)
                     subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
+
+    if os.path.exists(os.path.join("Reports", "legacy", "Stats")):
+        cmd = "ln -sr {} {}".format(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), "Reports", "legacy", "Stats"), os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), "Stats"))
+        subprocess.check_call(cmd, shell=True)
 
     logOut.close()
     os.chdir(old_wd)
