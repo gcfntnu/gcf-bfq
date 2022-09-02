@@ -228,10 +228,13 @@ def archive_worker(config):
             with open(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),"encryption.{}".format(p)),'w') as pwfile:
                 pwfile.write('{}\n'.format(pw))
         opts = "-p{}".format(pw) if pw else ""
+        flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))
+        report_dir = os.path.join(flowdir, "Reports") if os.path.exists(os.path.join(flowdir, "Reports")) else ""
 
-        cmd = "7za a {opts} {flowdir}/{pnr}.7za {flowdir}/{pnr}/ {flowdir}/QC_{pnr} {flowdir}/Stats {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt ".format(
+        cmd = "7za a {opts} {flowdir}/{pnr}.7za {flowdir}/{pnr}/ {flowdir}/QC_{pnr} {flowdir}/Stats {report_dir} {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt ".format(
                 opts = opts,
                 flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
+                report_dir = report_dir
                 pnr = p,
             )
         if "10X Genomics" in config.get("Options","Libprep"):
