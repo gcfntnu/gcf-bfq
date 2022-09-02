@@ -43,6 +43,30 @@ def fixNames(config) :
             syslog.syslog("Moving %s to %s\n" % (fname, fnew))
             shutil.move(fname, fnew)
 
+def fix_stats_json(stats_fn):
+	stats = list()
+	barcodes = False
+
+	with open(stats_fn) as fh:
+		for l in fh.readlines():
+			if not barcodes:
+				stats.append(l)
+				if "UnknownBarcodes" in l:
+					barcodes = True
+			else:
+				if not any(s in l for s in ["{", "}", "Barcodes", "Lane"]):
+					l = l.replace("\n", ",\n")
+				elif l.startswith("  }"):
+					l = l.replace("\n", ",\n")
+					stats[-2] = stats[-2].replace(",\n", "\n")
+				stats.append(l)
+
+	stats[-2] = stats[-2].replace(",\n", "\n")
+	stats[-3] = stats[-3].replace(",\n", "\n")
+	with open(stats_fn, "w+") as fh:
+		fh.writelines(stats)
+
+
 
 def bcl2fq(config) :
     '''
@@ -118,6 +142,7 @@ def bcl2fq(config) :
     if os.path.exists(os.path.join("Reports", "legacy", "Stats")):
         cmd = "ln -sr {} {}".format(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), "Reports", "legacy", "Stats"), os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), "Stats"))
         subprocess.check_call(cmd, shell=True)
+		fix_stats_json(os.path.join("Stats", "Stats.json"))
 
     logOut.close()
     os.chdir(old_wd)
