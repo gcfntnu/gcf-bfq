@@ -142,7 +142,7 @@ def bcl2fq(config) :
     if os.path.exists(os.path.join("Reports", "legacy", "Stats")):
         cmd = "ln -sr {} {}".format(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), "Reports", "legacy", "Stats"), os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), "Stats"))
         subprocess.check_call(cmd, shell=True)
-		fix_stats_json(os.path.join("Stats", "Stats.json"))
+        fix_stats_json(os.path.join("Stats", "Stats.json"))
 
     logOut.close()
     os.chdir(old_wd)
