@@ -198,9 +198,10 @@ def multiqc_stats(project_dirs) :
     with open(conf_name, "w+") as out_conf_fh:
         yaml.dump(mqc_conf,out_conf_fh)
 
-    modules = "-m interop"
-    modules += "-m bcl-convert " if os.path.exists(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'), "Reports")) else "-m bcl2fastq"
-    stats_dir = "Reports" if os.path.exists(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'), "Reports")) else "Stats"
+    modules = "-m interop "
+    FORCE_BCL2FASTQ = os.environ.get("FORCE_BCL2FASTQ", None)
+    modules += "-m bclconvert " if not FORCE_BCL2FASTQ else "-m bcl2fastq"
+    stats_dir = "Reports" if not FORCE_BCL2FASTQ else "Stats"
 
     cmd = "{multiqc_cmd} {multiqc_opts} --config {conf} {flow_dir}/{stats_dir} --filename {flow_dir}/Stats/sequencer_stats_{pname}.html {modules}".format(
             multiqc_cmd = config.get("MultiQC", "multiqc_command"),
