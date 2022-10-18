@@ -7,7 +7,7 @@ RUN conda config --add channels conda-forge
 RUN conda config --add channels bioconda
 RUN conda install -y pip mamba
 RUN mamba install -y pandas xlrd ea-utils configparser requests illumina-interop gh openpyxl 
-RUN mamba install -y snakemake=6.15.3 singularity=3.8.5
+RUN mamba install -y snakemake=7.15.2 singularity=3.8.5
 RUN mamba update numpy
 
 #Allow shared loop devices for singularity
@@ -60,3 +60,5 @@ ENV SINGULARITY_TMPDIR=$SINGULARITY_CACHEDIR/tmp
 ENV SINGULARITY_LOCALCACHEDIR=$SINGULARITY_CACHEDIR/tmp/
 ENV SINGULARITY_PULLFOLDER=$SINGULARITY_CACHEDIR
 ENV GCF_SECRET=/secrets/gcf_secrets.yaml
+
+ENV FORCE_BCL2FASTQ=True
