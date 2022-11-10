@@ -32,7 +32,7 @@ RUN mkdir output seq_share data log
 
 WORKDIR /opt
 
-ENV CR_VERSION=7.0.0
+ENV CR_VERSION=7.0.1
 COPY files/cellranger-$CR_VERSION.tar.gz /tmp/cellranger-$CR_VERSION.tar.gz
 RUN tar -C /opt/ -zxvf /tmp/cellranger-$CR_VERSION.tar.gz
 ENV PATH=$PATH:/opt/cellranger-$CR_VERSION

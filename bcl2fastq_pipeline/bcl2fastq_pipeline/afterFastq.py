@@ -109,34 +109,23 @@ def md5sum_worker(config):
         subprocess.check_call(cmd, shell=True)
     os.chdir(old_wd)
 
+def md5sum_archive(archive):
+    a = archive.replace(".7za","")
+    if (not os.path.exists('md5sum_{}_archive.txt'.format(a))) or (os.path.exists('md5sum_{}_archive.txt'.format(a)) and (os.path.getmtime('{}.7za'.format(a)) > os.path.getmtime('md5sum_{}_archive.txt'.format(a)))) :
+        cmd = "md5sum {a}.7za > md5sum_{a}_archive.txt".format(a=a)
+        subprocess.check_call(cmd, shell=True)
+
 def md5sum_archive_worker(config):
     global localConfig
     config = localConfig
     old_wd = os.getcwd()
     os.chdir(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')))
-    project_dirs = get_project_dirs(config)
-    pnames = get_project_names(project_dirs)
-    for p in pnames:
-        if (not os.path.exists('md5sum_{}_archive.txt'.format(p))) or (os.path.exists('md5sum_{}_archive.txt'.format(p)) and (os.path.getmtime('{}.7za'.format(p)) > os.path.getmtime('md5sum_{}_archive.txt'.format(p)))) :
-            cmd = "md5sum {p}.7za > md5sum_{p}_archive.txt".format(p=p)
-            syslog.syslog("[md5sum_worker] Processing %s\n" % os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')))
-            subprocess.check_call(cmd, shell=True)
+    archives = glob.glob("*.7za")
+    p = mp.Pool()
+    p.map(md5sum_archive, archives)
+    p.close()
     os.chdir(old_wd)
 
-def md5sum_instrument_worker(config):
-    global localConfig
-    config = localConfig
-    old_wd = os.getcwd()
-    os.chdir(os.path.join(config.get('Paths','archiveInstr'), config.get('Options','runID')))
-
-    if os.path.exists('md5sum_{}.txt'.format(config.get('Options','runID'))):
-        os.chdir(old_wd)
-        return
-    cmd = "md5sum {r}.7za > md5sum_{r}.txt".format(r=config.get('Options','runID'))
-    syslog.syslog("[md5sum_worker] Processing %s\n" % os.path.join(config.get('Paths','archiveInstr'), config.get('Options','runID')))
-    subprocess.check_call(cmd, shell=True)
-
-    os.chdir(old_wd)
 
 
 def multiqc_stats(project_dirs) :
@@ -221,6 +210,9 @@ def archive_worker(config):
     pnames = get_project_names(project_dirs)
 
     for p in pnames:
+        """
+        Archive fastq
+        """
         if os.path.exists(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'{}.7za'.format(p))):
             os.remove(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'{}.7za'.format(p)))
         pw = None
@@ -232,7 +224,7 @@ def archive_worker(config):
         flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))
         report_dir = os.path.join(flowdir, "Reports") if os.path.exists(os.path.join(flowdir, "Reports")) else ""
 
-        cmd = "7za a {opts} {flowdir}/{pnr}.7za {flowdir}/{pnr}/ {flowdir}/QC_{pnr} {flowdir}/Stats {report_dir} {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt ".format(
+        cmd = "7za a {opts} {flowdir}/{pnr}.7za {flowdir}/{pnr}/ {flowdir}/Stats {report_dir} {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt ".format(
                 opts = opts,
                 flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
                 report_dir = report_dir,
@@ -242,27 +234,25 @@ def archive_worker(config):
             cmd += " {}".format(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),config.get("Options","runID").split("_")[-1][1:]))
         syslog.syslog("[archive_worker] Zipping %s\n" % os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'{}.7za'.format(p)))
         subprocess.check_call(cmd, shell=True)
+        """
+        Archive pipeline output
+        """
+        if os.path.exists(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'QC_{}.7za'.format(p))):
+            os.remove(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'QC_{}.7za'.format(p)))
+        pw = None
+        if config.get("Options","SensitiveData") == "1":
+            pw = subprocess.check_output("xkcdpass -n 5 -d '-' -v '[a-z]'",shell=True).decode().strip('\n')
+            with open(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),"encryption.QC_{}".format(p)),'w') as pwfile:
+                pwfile.write('{}\n'.format(pw))
+        opts = "-p{}".format(pw) if pw else ""
+        flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))
 
-def instrument_archive_worker(config):
-    if not os.path.exists(os.path.join(config.get('Paths','archiveInstr'), config.get('Options','runID'))):
-        os.makedirs(os.path.join(config.get('Paths','archiveInstr'), config.get('Options','runID')),exist_ok=True)
-    if os.path.exists(os.path.join(config.get('Paths','archiveInstr'), config.get('Options','runID'), '{}.7za'.format(config.get('Options','runID')))):
-        return
-    pw = None
-    if config.get("Options","SensitiveData") == "1":
-        pw = subprocess.check_output("xkcdpass -n 5 -d '-' -v '[a-z]'",shell=True).decode().strip('\n')
-        with open(os.path.join(config.get('Paths','archiveInstr'), config.get('Options','runID'),"encryption.{}".format(config.get('Options','runID'))),'w') as pwfile:
-            pwfile.write('{}\n'.format(pw))
-    opts = "-p{}".format(pw) if pw else ""
-    seq_out = get_sequencer_outputfolder(config.get('Options','runID'))
-    cmd = "7za a {opts} {arch_dir}/{fnm}.7za {instr}".format(
-            opts = opts,
-            arch_dir = os.path.join(config.get('Paths','archiveInstr'), config.get('Options','runID')),
-            fnm = config.get('Options','runID'),
-            instr = os.path.join(config.get('Paths','baseDir'), seq_out,"data",config.get('Options','runID'))
-        )
-    syslog.syslog("[instrument_archive_worker] Zipping instruments." )
-    subprocess.check_call(cmd, shell=True)
+        cmd = "7za a {opts} {flowdir}/QC_{pnr}.7za {flowdir}/QC_{pnr} ".format(
+                opts = opts,
+                flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
+                pnr = p,
+            )
+        subprocess.check_call(cmd, shell=True)
 
 
 def get_project_names(dirs):
@@ -432,9 +422,5 @@ def finalize(config):
     archive_worker(config)
     #md5sum archive
     md5sum_archive_worker(config)
-    #archive instruments
-    instrument_archive_worker(config)
-    #md5sum instrument
-    md5sum_instrument_worker(config)
 
     return None
