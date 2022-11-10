@@ -34,7 +34,8 @@ SEQUENCERS = {
         'K00251' : 'HiSeq 4000',
         'M02675' : 'MiSeq NTNU',
         'M03942' : 'MiSeq StOlav',
-        'M05617' : 'MiSeq SINTEF'
+        'M05617' : 'MiSeq SINTEF',
+        'A01990' : 'NovaSeq NTNU'
         }
 
 SEQUENCER_OUTPUTFOLDER = {
@@ -43,7 +44,8 @@ SEQUENCER_OUTPUTFOLDER = {
         'K00251' : 'hiseq',
         'M02675' : 'miseq',
         'M03942' : 'miseq',
-        'M05617' : 'miseq'
+        'M05617' : 'miseq',
+        'A01990' : 'novaseq'
 }
 
 
