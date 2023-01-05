@@ -369,9 +369,6 @@ def postMakeSteps(config) :
     global localConfig
     localConfig = config
 
-    # multiqc_stats
-    multiqc_stats(projectDirs)
-
     with open("/opt/gcf-workflows/libprep.config", "r") as lc_f:
         libprep_config = yaml.load(lc_f,Loader=yaml.FullLoader)
 
@@ -391,6 +388,9 @@ def postMakeSteps(config) :
 
     if not os.path.exists(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made")):
         full_align(config)
+
+    # multiqc_stats
+    multiqc_stats(projectDirs)
 
     #disk usage
     (tot,used,free) = shutil.disk_usage(config.get("Paths","outputDir"))
