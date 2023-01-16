@@ -2,7 +2,7 @@ FROM continuumio/miniconda3:4.10.3
 
 RUN conda update conda -y
 
-RUN apt update && apt install -y -q git alien tabix pigz gzip zlibc zlib1g-dev zlib1g xkcdpass vim p7zip-full parallel rsync
+RUN apt update && apt install -y -q git alien tabix pigz gzip zlibc zlib1g-dev zlib1g xkcdpass vim p7zip-full parallel rsync curl
 RUN conda config --add channels conda-forge
 RUN conda config --add channels bioconda
 RUN conda install -y pip mamba
