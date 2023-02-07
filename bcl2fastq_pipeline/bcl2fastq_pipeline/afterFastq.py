@@ -344,9 +344,10 @@ def full_align(config):
         subprocess.check_call(cmd,shell=True)
 
         #touch bfq_all to avoid rerunning pipelines from scratch
-        os.chdir(analysis_export_dir)
-        cmd = "snakemake --touch -j1 bfq_all && find . -type d -exec chmod a+rwx {} \; && find . -type f -exec chmod a+rw {} \; "
-        subprocess.check_call(cmd,shell=True)
+        if not config.get("Options", "libprep").startswith("QIAseq 16S ITS Region Panels"):
+            os.chdir(analysis_export_dir)
+            cmd = "snakemake --touch -j1 bfq_all && find . -type d -exec chmod a+rwx {} \; && find . -type f -exec chmod a+rw {} \; "
+            subprocess.check_call(cmd,shell=True)
 
 
     os.chdir(old_wd)
@@ -388,9 +389,10 @@ def postMakeSteps(config) :
 
     if not os.path.exists(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made")):
         full_align(config)
-
+    
     # multiqc_stats
     multiqc_stats(projectDirs)
+
 
     #disk usage
     (tot,used,free) = shutil.disk_usage(config.get("Paths","outputDir"))
