@@ -54,7 +54,7 @@ RUN chmod -R a+w /home
 ENV TMPDIR=/bfq-tmp
 ENV EXT_DIR=/bfq-ext
 ENV GCF_EXT=$EXT_DIR
-ENV SINGULARITY_BINDPATH=/mnt,/instrument-archive,/opt/gcf-workflows,/bfq-tmp,/bfq-ext,/home
+ENV SINGULARITY_BINDPATH=/mnt,/opt/gcf-workflows,/bfq-tmp,/bfq-ext,/home
 ENV SINGULARITY_CACHEDIR=$TMPDIR/singularity/
 ENV SINGULARITY_TMPDIR=$SINGULARITY_CACHEDIR/tmp
 ENV SINGULARITY_LOCALCACHEDIR=$SINGULARITY_CACHEDIR/tmp/
