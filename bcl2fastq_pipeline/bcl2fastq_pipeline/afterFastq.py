@@ -346,7 +346,7 @@ def full_align(config):
         #touch bfq_all to avoid rerunning pipelines from scratch
         if not config.get("Options", "libprep").startswith("QIAseq 16S ITS Region Panels"):
             os.chdir(analysis_export_dir)
-            cmd = "snakemake --touch -j1 bfq_all && find . -type d -exec chmod a+rwx {} \; && find . -type f -exec chmod a+rw {} \; "
+            cmd = "find . -type d -exec chmod a+rwx {} \; && find . -type f -exec chmod a+rw {} \; && snakemake --touch -j1 bfq_all "
             subprocess.check_call(cmd,shell=True)
 
 
