@@ -381,7 +381,8 @@ def postMakeSteps(config) :
         print('failed to identify pipeline from libprep name, using default workflow')
         config["Options"]["pipeline"] = "default"
 
-
+    #md5sum fastqs
+    md5sum_worker(config)
 
     for d in get_project_dirs(config):
         project_name = os.path.basename(d)
@@ -420,8 +421,6 @@ def postMakeSteps(config) :
     return(message)
 
 def finalize(config):
-    #md5sum fastqs
-    md5sum_worker(config)
     #zip arhive
     archive_worker(config)
     #md5sum archive

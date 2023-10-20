@@ -25,7 +25,7 @@ def add_flowcell(**args):
             ]
     df = pd.DataFrame(row_list)
     flowcells_processed = pd.read_csv(os.path.join(config.get("FlowCellManager","managerDir"),'flowcells.processed'))
-    flowcells_processed = flowcells_processed.append(df,sort=True)
+    flowcells_processed = pd.concat([flowcells_processed, df], sort=True)
     flowcells_processed.to_csv(
             os.path.join(config.get("FlowCellManager","managerDir"),'flowcells.processed'),
             index=False,
