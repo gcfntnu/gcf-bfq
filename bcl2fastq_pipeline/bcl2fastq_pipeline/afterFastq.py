@@ -304,6 +304,13 @@ def full_align(config):
 
         os.chdir(analysis_dir)
 
+        #copy snakemake pipeline
+        cmd = "rm -rf {dst} && cp -r {src} {dst}".format(
+            src = "/opt/gcf-workflows",
+            dst = os.path.join(analysis_dir, "src", "gcf-workflows")
+        )
+        subprocess.check_call(cmd,shell=True)
+
         #create config.yaml
         cmd = "/opt/conda/bin/python /opt/conda/bin/configmaker.py {runfolder} -p {project} --libkit '{lib}' --machine '{machine}' {create_fastq}".format(
             runfolder = base_dir,
@@ -312,20 +319,13 @@ def full_align(config):
             samplesheet = os.path.join(base_dir,"SampleSheet.csv"),
             sample_sub = os.path.join(base_dir,"Sample-Submission-Form.xlsx"),
             machine = get_sequencer(config.get("Options","runID")),
-            create_fastq = " --create-fastq-dir" if not os.path.exists("data/raw/fastq") else ""
-        )
-        subprocess.check_call(cmd,shell=True)
-
-        #copy snakemake pipeline
-        cmd = "rm -rf {dst} && cp -r {src} {dst}".format(
-            src = "/opt/gcf-workflows",
-            dst = os.path.join(analysis_dir, "src", "gcf-workflows")
+            create_fastq = " --skip-create-fastq-dir" if os.path.exists("data/raw/fastq") else ""
         )
         subprocess.check_call(cmd,shell=True)
 
         #write template Snakefile for pipeline
-        with open(os.path.join(analysis_dir,"Snakefile"), "w") as sn:
-            sn.write(SNAKEFILE_TEMPLATE.format(workflow=pipeline))
+        #with open(os.path.join(analysis_dir,"Snakefile"), "w") as sn:
+        #    sn.write(SNAKEFILE_TEMPLATE.format(workflow=pipeline))
 
         #run snakemake pipeline
         cmd = "snakemake --reason --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR -j32 -p multiqc_report"

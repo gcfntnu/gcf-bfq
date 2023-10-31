@@ -77,8 +77,9 @@ while True:
         #Make the fastq files, if not already done
         if not os.path.exists("{}/{}/bcl.done".format(config["Paths"]["outputDir"], config["Options"]["runID"])):
             try:
-                bcl2fastq_pipeline.makeFastq.bcl2fq(config)
-                open("{}/{}/bcl.done".format(config["Paths"]["outputDir"], config["Options"]["runID"]), "w").close()
+                bcl_done = bcl2fastq_pipeline.makeFastq.bcl2fq(config)
+                with open("{}/{}/bcl.done".format(config["Paths"]["outputDir"], config["Options"]["runID"]), "w") as fh:
+                    fh.write("\t".join(bcl_done))
             except :
                 syslog.syslog("Got an error in bcl2fq\n")
                 bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error in bcl2fq")
