@@ -105,6 +105,7 @@ def bcl2fq(config) :
                     ),
                 cellranger_options = config.get("cellranger","cellranger_mkfastq_options")
                 )
+        bcl_done = ["cellranger mkfastq", os.environ.get("CR_VERSION")]
     elif force_bcl2fastq:
         cmd = "%s %s --sample-sheet %s -o %s/%s%s -R %s/%s/data/%s --interop-dir %s/%s/InterOp" % (
             config.get("bcl2fastq","bcl2fastq"),
@@ -119,12 +120,14 @@ def bcl2fq(config) :
             config.get("Paths","outputDir"),
             config.get("Options","runID"),
         )
+        bcl_done = ["bcl2fastq", os.environ.get("BCL2FASTQ_VERSION")]
     else:
         cmd = "bcl-convert --force --bcl-input-directory {in_dir} --output-directory {out_dir} --sample-sheet {samplesheet} --bcl-sampleproject-subdirectories true --no-lane-splitting true --output-legacy-stats true".format(
             in_dir = os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),"data",config.get("Options","runID")),
             out_dir = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID")),
             samplesheet = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), "SampleSheet.csv")
             )
+        bcl_done = ["bcl-convert", os.environ.get("BCL_CONVERT_VERSION")]
     try:
         syslog.syslog("[convert bcl] Running: %s\n" % cmd)
         with open("%s/%s%s.log" % (config.get("Paths","logDir"), config.get("Options","runID"), lanes), "w") as logOut:
@@ -146,5 +149,6 @@ def bcl2fq(config) :
 
     logOut.close()
     os.chdir(old_wd)
+    return bcl_done
 
 
