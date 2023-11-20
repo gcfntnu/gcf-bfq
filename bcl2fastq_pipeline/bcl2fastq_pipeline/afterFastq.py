@@ -25,9 +25,11 @@ import flowcell_manager.flowcell_manager as fm
 import configmaker.configmaker as cm
 import pandas as pd
 from configmaker.configmaker import SNAKEFILE_TEMPLATE
+from configmaker.configmaker import SEQUENCERS
 
 localConfig = None
 
+"""
 SEQUENCERS = {
         'NB501038' : 'NextSeq 500',
         'SN7001334' : 'HiSeq 2500',
@@ -37,7 +39,7 @@ SEQUENCERS = {
         'M05617' : 'MiSeq SINTEF',
         'A01990' : 'NovaSeq NTNU'
         }
-
+"""
 SEQUENCER_OUTPUTFOLDER = {
         'NB501038' : 'nextseq',
         'SN7001334' : 'hiseq2500',
@@ -45,6 +47,7 @@ SEQUENCER_OUTPUTFOLDER = {
         'M02675' : 'miseq',
         'M03942' : 'miseq',
         'M05617' : 'miseq',
+        'M71102' : 'miseq',
         'A01990' : 'novaseq'
 }
 
