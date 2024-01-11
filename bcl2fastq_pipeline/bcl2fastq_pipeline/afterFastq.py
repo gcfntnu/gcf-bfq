@@ -207,7 +207,16 @@ def multiqc_stats(project_dirs) :
             modules = modules
             )
     syslog.syslog("[multiqc_worker] Processing %s\n" % os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'Stats'))
+ 
+    if os.environ.get("BFQ_TEST", None) and not FORCE_BCL2FASTQ:
+        if not os.path.exists(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'), stats_dir)):
+            print("BFQ-TEST: Testflowcell was generated with bcl2fastq but environment is configured for bcl-convert. Using bcl2fastq paths and mqc modules.")
+            cmd = cmd.replace("Reports", "Stats")
+            cmd = cmd.replace("-m bclconvert", "-m bcl2fastq")
+            print(cmd)
+
     subprocess.check_call(cmd, shell=True)
+
     os.chdir(oldWd)
 
 def archive_worker(config):
@@ -331,7 +340,7 @@ def full_align(config):
         #    sn.write(SNAKEFILE_TEMPLATE.format(workflow=pipeline))
 
         #run snakemake pipeline
-        cmd = "snakemake --reason --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR -j32 -p multiqc_report"
+        cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR --cores 32 --verbose -p multiqc_report"
         subprocess.check_call(cmd,shell=True)
 
         #push workflow bfq output to project directory
@@ -349,7 +358,8 @@ def full_align(config):
         #touch bfq_all to avoid rerunning pipelines from scratch
         if not config.get("Options", "libprep").startswith("QIAseq 16S ITS Region Panels"):
             os.chdir(analysis_export_dir)
-            cmd = "find . -type d -exec chmod a+rwx {} \; && find . -type f -exec chmod a+rw {} \; && snakemake --touch -j1 multiqc_report "
+            #cmd = "find . -type d -exec chmod a+rwx {} \; && find . -type f -exec chmod a+rw {} \; && snakemake --touch -j1 multiqc_report "
+            cmd = "snakemake --touch --cores 1 multiqc_report "
             subprocess.check_call(cmd,shell=True)
 
 
