@@ -209,7 +209,7 @@ def multiqc_stats(project_dirs) :
     syslog.syslog("[multiqc_worker] Processing %s\n" % os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'Stats'))
  
     if os.environ.get("BFQ_TEST", None) and not FORCE_BCL2FASTQ:
-        if not os.path.exists(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'), stats_dir)):
+        if not os.path.exists(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'), stats_dir, "Demultiplex_Stats.csv")):
             print("BFQ-TEST: Testflowcell was generated with bcl2fastq but environment is configured for bcl-convert. Using bcl2fastq paths and mqc modules.")
             cmd = cmd.replace("Reports", "Stats")
             cmd = cmd.replace("-m bclconvert", "-m bcl2fastq")
