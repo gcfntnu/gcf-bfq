@@ -15,9 +15,7 @@ RUN cd /opt && git clone https://github.com/gcfntnu/gcf-workflows.git && cd /opt
 COPY ./bcl2fastq_pipeline /opt/bcl2fastq_pipeline
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline/flowcell_manager
 WORKDIR /opt/bcl2fastq_pipeline
-RUN gcc splitFastq.c -o splitFastq
-RUN ./setup.py build
-RUN ./setup.py install
+RUN pip install /opt/bcl2fastq_pipeline
 
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline
 

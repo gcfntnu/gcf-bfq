@@ -14,9 +14,7 @@ ADD https://api.github.com/repos/gcfntnu/gcf-workflows/git/refs/heads/main gcf-w
 RUN cd /opt && git clone https://github.com/gcfntnu/gcf-workflows.git && cd /opt/gcf-workflows && git checkout main
 
 WORKDIR /opt/bcl2fastq_pipeline
-RUN gcc splitFastq.c -o splitFastq
-RUN ./setup.py build
-RUN ./setup.py install
+RUN pip install /opt/bcl2fastq_pipeline
 
 ENV PATH=$PATH:/opt/bcl2fastq_pipeline
 
