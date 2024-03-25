@@ -2,12 +2,12 @@ FROM continuumio/miniconda3:4.10.3
 
 RUN conda update conda -y
 
-RUN apt update && apt install -y -q git alien tabix pigz gzip zlibc zlib1g-dev zlib1g xkcdpass vim p7zip-full parallel rsync curl
+RUN apt update && apt install -y -q git alien tabix pigz gzip xkcdpass vim p7zip-full parallel rsync curl zlib1g-dev zlib1g libbz2-dev 
 RUN conda config --add channels conda-forge
 RUN conda config --add channels bioconda
 RUN conda install -y pip mamba
+RUN mamba install -y python=3.11 snakemake=8.1.1 singularity=3.8.5
 RUN mamba install -y pandas xlrd ea-utils configparser requests illumina-interop gh openpyxl 
-RUN mamba install -y snakemake=7.15.2 singularity=3.8.5
 RUN mamba update numpy
 
 #Allow shared loop devices for singularity
@@ -55,7 +55,7 @@ RUN chmod -R a+w /home
 ENV TMPDIR=/bfq-tmp
 ENV EXT_DIR=/bfq-ext
 ENV GCF_EXT=$EXT_DIR
-ENV SINGULARITY_BINDPATH=/mnt,/opt/gcf-workflows,/bfq-tmp,/bfq-ext,/home
+ENV SINGULARITY_BINDPATH=/mnt,/opt/gcf-workflows,/bfq-tmp,/bfq-ext,/home,/root
 ENV SINGULARITY_CACHEDIR=$TMPDIR/singularity/
 ENV SINGULARITY_TMPDIR=$SINGULARITY_CACHEDIR/tmp
 ENV SINGULARITY_LOCALCACHEDIR=$SINGULARITY_CACHEDIR/tmp/
