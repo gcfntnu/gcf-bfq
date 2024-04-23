@@ -195,7 +195,8 @@ def multiqc_stats(project_dirs) :
     modules = "-m interop "
     FORCE_BCL2FASTQ = os.environ.get("FORCE_BCL2FASTQ", None)
     modules += "-m bclconvert " if not FORCE_BCL2FASTQ else "-m bcl2fastq"
-    stats_dir = "Reports" if not FORCE_BCL2FASTQ else "Stats"
+    #stats_dir = "Reports" if not FORCE_BCL2FASTQ else "Stats"
+    stats_dir = "Stats"
 
     cmd = "{multiqc_cmd} {multiqc_opts} --config {conf} {flow_dir}/{stats_dir} --filename {flow_dir}/Stats/sequencer_stats_{pname}.html {modules}".format(
             multiqc_cmd = config.get("MultiQC", "multiqc_command"),
