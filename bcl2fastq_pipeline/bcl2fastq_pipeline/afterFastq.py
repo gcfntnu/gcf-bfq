@@ -140,34 +140,34 @@ def multiqc_stats(project_dirs) :
     os.chdir(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'Stats'))
 
     shutil.copyfile(
-        os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),'data',config.get('Options','runID'),'RunInfo.xml'),
+        os.path.join(config.get("Paths","baseDir"),config.get('Options','runID'),'RunInfo.xml'),
         os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'RunInfo.xml'),
         )
     #Illumina sequencer update - RunParameters.xml -> runParameters.xml
-    if os.path.isfile(os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),'data',config.get('Options','runID'),'RunParameters.xml')):
+    if os.path.isfile(os.path.join(config.get("Paths","baseDir"),config.get('Options','runID'),'RunParameters.xml')):
         shutil.copyfile(
-            os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),'data',config.get('Options','runID'),'RunParameters.xml'),
+            os.path.join(config.get("Paths","baseDir"),config.get('Options','runID'),'RunParameters.xml'),
             os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'RunParameters.xml'),
             )
     else:
         shutil.copyfile(
-            os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),'data',config.get('Options','runID'),'runParameters.xml'),
+            os.path.join(config.get("Paths","baseDir"),config.get('Options','runID'),'runParameters.xml'),
             os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'RunParameters.xml'),
             )
 
     #Illumina interop
     cmd = "interop_summary {} --csv=1 > {}".format(
-            os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),'data',config.get("Options","runID")),
+            os.path.join(config.get("Paths","baseDir"),config.get("Options","runID")),
             os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'Stats','interop_summary.csv'),
         )
-    syslog.syslog("[multiqc_worker] Interop summary on %s\n" % os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),'data',config.get("Options","runID")))
+    syslog.syslog("[multiqc_worker] Interop summary on %s\n" % os.path.join(config.get("Paths","baseDir"),config.get("Options","runID")))
     subprocess.check_call(cmd,shell=True)
     
     cmd = "interop_index-summary {} --csv=1 > {}".format(
             os.path.join(config.get("Paths","outputDir"),config.get("Options","runID")),
             os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'Stats','interop_index-summary.csv'),
         )
-    syslog.syslog("[multiqc_worker] Interop index summary on %s\n" % os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),'data',config.get("Options","runID")))
+    syslog.syslog("[multiqc_worker] Interop index summary on %s\n" % os.path.join(config.get("Paths","baseDir"),config.get("Options","runID")))
     subprocess.check_call(cmd,shell=True)
 
     run_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))

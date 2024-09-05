@@ -83,7 +83,7 @@ def bcl2fq(config) :
     os.makedirs("%s" % (os.path.join(config.get("Paths","logDir"),os.path.dirname(config.get("Options","runID")))), exist_ok=True)
     os.makedirs(os.path.join(config.get("Paths","outputDir"),config.get("Options","runID"),'InterOp'),exist_ok=True)
     copy_tree(
-        os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),'data',config.get("Options","runID"),'InterOp'),
+        os.path.join(config.get("Paths","baseDir"),config.get("Options","runID"),'InterOp'),
         os.path.join(config.get("Paths","outputDir"),config.get("Options","runID"),'InterOp')
         )
     old_wd = os.getcwd()
@@ -107,7 +107,7 @@ def bcl2fq(config) :
                 )
         bcl_done = ["cellranger mkfastq", os.environ.get("CR_VERSION")]
     elif force_bcl2fastq:
-        cmd = "%s %s --sample-sheet %s -o %s/%s%s -R %s/%s/data/%s --interop-dir %s/%s/InterOp" % (
+        cmd = "%s %s --sample-sheet %s -o %s/%s%s -R %s/%s --interop-dir %s/%s/InterOp" % (
             config.get("bcl2fastq","bcl2fastq"),
             config.get("bcl2fastq","bcl2fastq_options"),
             config.get("Options","sampleSheet"),
@@ -115,7 +115,6 @@ def bcl2fq(config) :
             config.get("Options","runID"),
             lanes,
             config.get("Paths","baseDir"),
-            config.get("Options","sequencer"),
             config.get("Options","runID"),
             config.get("Paths","outputDir"),
             config.get("Options","runID"),
@@ -123,7 +122,7 @@ def bcl2fq(config) :
         bcl_done = ["bcl2fastq", os.environ.get("BCL2FASTQ_VERSION")]
     else:
         cmd = "bcl-convert --force --bcl-input-directory {in_dir} --output-directory {out_dir} --sample-sheet {samplesheet} --bcl-sampleproject-subdirectories true --no-lane-splitting true --output-legacy-stats true".format(
-            in_dir = os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),"data",config.get("Options","runID")),
+            in_dir = os.path.join(config.get("Paths","baseDir"),config.get("Options","runID")),
             out_dir = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID")),
             samplesheet = os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), "SampleSheet.csv")
             )
