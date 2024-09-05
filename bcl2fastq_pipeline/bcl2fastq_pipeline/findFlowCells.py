@@ -124,7 +124,8 @@ process, then the runID is filled in. Otherwise, that's set to None.
 '''
 def newFlowCell(config) :
     #instrument_dir = os.path.dirname(d)
-    instrument_dir = os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),"data",config.get("Options","runID"))
+    #instrument_dir = os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),"data",config.get("Options","runID"))
+    instrument_dir = os.path.join(config.get("Paths","baseDir"),config.get("Options","runID"))
     odir = os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
 
     #ss, opts = getSampleSheets(os.path.dirname(d))
