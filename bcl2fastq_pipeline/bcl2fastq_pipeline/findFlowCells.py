@@ -128,9 +128,17 @@ def newFlowCell(config) :
     instrument_dir = os.path.join(config.get("Paths","baseDir"),config.get("Options","runID"))
     odir = os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
 
-    #ss, opts = getSampleSheets(os.path.dirname(d))
-    ss, opts = getSampleSheets(instrument_dir)
-    sample_sub_f = glob.glob(os.path.join(instrument_dir,"*Sample-Submission-Form*.xlsx"))
+    #EMERGENCY FINNMARK FIX 
+    if os.path.exists(odir):
+        #ss, opts = getSampleSheets(os.path.dirname(d))
+        ss, opts = getSampleSheets(odir)
+        sample_sub_f = glob.glob(os.path.join(odir,"*Sample-Submission-Form*.xlsx"))
+        use_bfq_output_ss = True
+    else:
+        #ss, opts = getSampleSheets(os.path.dirname(d))
+        ss, opts = getSampleSheets(instrument_dir)
+        sample_sub_f = glob.glob(os.path.join(instrument_dir,"*Sample-Submission-Form*.xlsx"))
+        use_bfq_output_ss = False
 
     if not opts or not sample_sub_f:
         config.set("Options","runID","")
@@ -141,8 +149,15 @@ def newFlowCell(config) :
     if not os.path.exists(odir):
         os.makedirs(odir)
 
-    sample_sub_f = copy_sample_sub_form(instrument_dir,odir)
-    if ss is not None :
+    if not use_bfq_output_ss:
+        sample_sub_f = copy_sample_sub_form(instrument_dir,odir)
+
+    if ss is not None and use_bfq_output:
+        ss = "{}/SampleSheet.csv".format(odir)
+        config.set("Options","sampleSheet",ss)
+        config.set("Options","sampleSubForm",sample_sub_f if sample_sub_f else "")
+        config = setConfFromOpts(config,opts)
+    elif ss is not None and not use_bfq_output:
         copyfile(ss,"{}/SampleSheet.csv".format(odir))
         ss = "{}/SampleSheet.csv".format(odir)
         config.set("Options","sampleSheet",ss)
