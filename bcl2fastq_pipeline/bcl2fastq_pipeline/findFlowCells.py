@@ -151,13 +151,16 @@ def newFlowCell(config) :
 
     if not use_bfq_output_ss:
         sample_sub_f = copy_sample_sub_form(instrument_dir,odir)
+    else:
+        sample_sub_f = "{}/Sample-Submission-Form.xlsx".format(odir)
 
-    if ss is not None and use_bfq_output:
+
+    if ss is not None and use_bfq_output_ss:
         ss = "{}/SampleSheet.csv".format(odir)
         config.set("Options","sampleSheet",ss)
         config.set("Options","sampleSubForm",sample_sub_f if sample_sub_f else "")
         config = setConfFromOpts(config,opts)
-    elif ss is not None and not use_bfq_output:
+    elif ss is not None and not use_bfq_output_ss:
         copyfile(ss,"{}/SampleSheet.csv".format(odir))
         ss = "{}/SampleSheet.csv".format(odir)
         config.set("Options","sampleSheet",ss)
