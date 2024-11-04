@@ -79,6 +79,8 @@ while True:
     dirs.extend(glob.glob("%s/*_K00251*_*/SequencingComplete.txt" % config.get("Paths","baseDir")))
     #NovaSeq 6000
     dirs.extend(glob.glob("%s/*_A01990*_*/CopyComplete.txt" % config.get("Paths","baseDir")))
+    #MiniSeq
+    dirs.extend(glob.glob("%s/*_MN00686*_*/CopyComplete.txt" % config.get("Paths","baseDir")))
     for d in dirs :
         config.set('Options','runID',d.split("/")[-2])
         config.set('Options', 'sequencer',d.split("/")[-4])
