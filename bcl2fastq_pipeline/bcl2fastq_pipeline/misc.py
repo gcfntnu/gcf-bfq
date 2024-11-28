@@ -334,17 +334,19 @@ def finishedEmail(config, msg, runTime) :
 
     msg.attach(MIMEText(message,'html'))
 
+    date = config.get("Options", "runID").split("_")[0]
+
     for p in projects:
-        with open(os.path.join(odir,"QC_{pnr}/bfq/multiqc_{pnr}.html".format(pnr=p)),"rb") as report:
+        with open(os.path.join(odir,f"multiqc_{p}_{date}.html"),"rb") as report:
             part = MIMEApplication(
                     report.read(),
                     report.name
                     )
-        part['Content-Disposition'] = 'attachment; filename="multiqc_{}.html"'.format(p)
+        part['Content-Disposition'] = f'attachment; filename="multiqc_{p}_{date}.html"'
         msg.attach(part)
 
-        if config.get("Options", "Libprep").startswith("10X Genomics Chromium Single Cell"):
-            f =os.path.join(odir, "QC_{}".format(p), "bfq", "summaries", "all_samples_web_summary.html")
+        if config.get("Options", "Libprep").startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences")):
+            f =os.path.join(odir, f"all_samples_web_summary_{p}_{run_date}.html")
             if os.path.exists(f):
                 with open(f, "rb") as report:
                     part = MIMEApplication(
