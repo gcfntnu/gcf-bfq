@@ -48,6 +48,7 @@ SEQUENCER_OUTPUTFOLDER = {
         'M03942' : 'miseq',
         'M05617' : 'miseq',
         'M71102' : 'miseq',
+        'MN00686' : 'miniseq',
         'A01990' : 'novaseq'
 }
 
@@ -172,7 +173,7 @@ def multiqc_stats(project_dirs) :
 
     run_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))
 
-    in_confs = glob.glob(os.path.join(run_dir, "QC_GCF*", "bfq", ".multiqc_config.yaml"))
+    in_confs = glob.glob(os.path.join(run_dir, ".multiqc_config*.yaml"))
     samples_custom_data = dict()
     for c in in_confs:
         with open(c, 'r') as c_fh:
@@ -223,6 +224,7 @@ def multiqc_stats(project_dirs) :
 def archive_worker(config):
     project_dirs = get_project_dirs(config)
     pnames = get_project_names(project_dirs)
+    run_date = config.get('Options','runID').split("_")[0]
 
     for p in pnames:
         """
@@ -239,15 +241,16 @@ def archive_worker(config):
         flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))
         report_dir = os.path.join(flowdir, "Reports") if os.path.exists(os.path.join(flowdir, "Reports")) else ""
 
-        cmd = "7za a {opts} {flowdir}/{pnr}.7za {flowdir}/{pnr}/ {flowdir}/Stats {report_dir} {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt ".format(
+        cmd = "7za a {opts} {flowdir}/{pnr}_{date}.7za {flowdir}/{pnr}/ {flowdir}/Stats {report_dir} {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt ".format(
                 opts = opts,
+                date = run_date,
                 flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
                 report_dir = report_dir,
                 pnr = p,
             )
         if "10X Genomics" in config.get("Options","Libprep"):
             cmd += " {}".format(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),config.get("Options","runID").split("_")[-1][1:]))
-        syslog.syslog("[archive_worker] Zipping %s\n" % os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'{}.7za'.format(p)))
+        syslog.syslog("[archive_worker] Zipping %s\n" % os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),'{}_{}.7za'.format(p, run_date)))
         subprocess.check_call(cmd, shell=True)
         """
         Archive pipeline output
@@ -259,14 +262,23 @@ def archive_worker(config):
             pw = subprocess.check_output("xkcdpass -n 5 -d '-' -v '[a-z]'",shell=True).decode().strip('\n')
             with open(os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'),"encryption.QC_{}".format(p)),'w') as pwfile:
                 pwfile.write('{}\n'.format(pw))
+
         opts = "-p{}".format(pw) if pw else ""
         flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))
+        pipeline = config.get("Options","pipeline")
+        qc_dir = os.path.join(os.environ["TMPDIR"], "{}_{}".format(p, run_date), "data", "tmp", pipeline, "bfq" )
 
-        cmd = "7za a {opts} {flowdir}/QC_{pnr}.7za {flowdir}/QC_{pnr} ".format(
+        cmd = f"7z a -l {opts} {flowdir}/QC_{p}_{run_date}.7za {qc_dir} "
+
+        """
+        cmd = "7z a -l {opts} {flowdir}/QC_{pnr}_{date}.7za {qc_dir} ".format(
                 opts = opts,
                 flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
                 pnr = p,
+                date = run_date,
+                qc_dir = qc_dir
             )
+        """
         subprocess.check_call(cmd, shell=True)
 
 
@@ -284,7 +296,7 @@ def get_project_dirs(config):
     return toDirs(projectDirs)
 
 def post_workflow(project_id, base_dir, pipeline):
-    analysis_dir = os.path.join(os.environ["TMPDIR"], "analysis_{}_{}".format(project_id, os.path.basename(base_dir).split("_")[0]))
+    analysis_dir = os.path.join(os.environ["TMPDIR"], "{}_{}".format(project_id, os.path.basename(base_dir).split("_")[0]))
     os.makedirs(os.path.join(base_dir, "QC_{}".format(project_id), "bfq"), exist_ok=True)
     cmd = "rsync -rvLp {}/ {}".format(
         os.path.join(analysis_dir, "data", "tmp", pipeline, "bfq"),
@@ -309,8 +321,9 @@ def full_align(config):
     base_dir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID'))
     os.chdir(os.environ["TMPDIR"])
     project_names = get_project_names(get_project_dirs(config))
+    run_date = os.path.basename(base_dir).split("_")[0]
     for p in project_names:
-        analysis_dir = os.path.join(os.environ["TMPDIR"],"analysis_{}_{}".format(p,os.path.basename(base_dir).split("_")[0]))
+        analysis_dir = os.path.join(os.environ["TMPDIR"],"{}_{}".format(p, run_date))
         os.makedirs(analysis_dir, exist_ok=True)
         os.makedirs(os.path.join(analysis_dir,"src"), exist_ok=True)
         os.makedirs(os.path.join(analysis_dir,"data"), exist_ok=True)
@@ -344,9 +357,34 @@ def full_align(config):
         cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR --cores 32 --verbose -p multiqc_report"
         subprocess.check_call(cmd,shell=True)
 
+        #copy report
+        cmd = "cp {src} {dst}".format(
+            src = os.path.join("data", "tmp", pipeline, "bfq", "multiqc_{}.html".format(p)),
+            dst = os.path.join(base_dir, "multiqc_{}_{}.html".format(p, run_date))
+            )
+        subprocess.check_call(cmd,shell=True)
+
+        #if additional html reports exists (single cell), copy
+        extra_html = glob.glob(os.path.join(analysis_dir, "data", "tmp", pipeline, "bfq", "summaries", "all_samples*.html"))
+        if extra_html:
+            src = extra_html[0]
+            dst = os.path.join(base_dir, f"all_samples_web_summary_{p}_{run_date}.html")
+            cmd = f"cp {src} {dst}"
+            subprocess.check_call(cmd,shell=True)
+
+        #copy mqc_config
+        cmd = "cp {src} {dst}".format(
+            src = os.path.join("data", "tmp", pipeline, "bfq", ".multiqc_config.yaml"),
+            dst = os.path.join(base_dir, ".multiqc_config_{}.yaml".format(p))
+            )
+        subprocess.check_call(cmd,shell=True)
+
+
+        """
         #push workflow bfq output to project directory
         post_workflow(p, base_dir, pipeline)
-
+        """
+        """
         #push analysis folder
         analysis_export_dir = os.path.join(config.get("Paths","analysisDir"),"{}_{}".format(p,config.get("Options","runID").split("_")[0]))
 
@@ -362,7 +400,7 @@ def full_align(config):
             #cmd = "find . -type d -exec chmod a+rwx {} \; && find . -type f -exec chmod a+rw {} \; && snakemake --touch -j1 multiqc_report "
             cmd = "snakemake --touch --cores 1 multiqc_report "
             subprocess.check_call(cmd,shell=True)
-
+        """
 
     os.chdir(old_wd)
     open(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made"), "w").close()
@@ -397,10 +435,6 @@ def postMakeSteps(config) :
 
     #md5sum fastqs
     md5sum_worker(config)
-
-    for d in get_project_dirs(config):
-        project_name = os.path.basename(d)
-        os.makedirs(os.path.join(config.get("Paths","outputDir"), config.get("Options","runID"), "QC_{}".format(project_name)), exist_ok=True)
 
     if not os.path.exists(os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"],"analysis.made")):
         full_align(config)

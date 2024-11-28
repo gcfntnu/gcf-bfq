@@ -39,8 +39,8 @@ def flowCellProcessed(config) :
 
 #Determine if the flowcell should be rerun
 def rerunFlowcell(config):
-    seq_data_path = af.SEQUENCER_OUTPUTFOLDER[config.get("Options","runID").split("_")[-3]]
-    ss, opts = getSampleSheets(os.path.join(config.get("Paths","baseDir"),seq_data_path,"data",config.get("Options","runID")))
+    #seq_data_path = af.SEQUENCER_OUTPUTFOLDER[config.get("Options","runID").split("_")[-3]]
+    ss, opts = getSampleSheets(os.path.join(config.get("Paths","baseDir"),config.get("Options","runID")))
     if not opts:
         return False
     if opts.get("Rerun",False) == True:
