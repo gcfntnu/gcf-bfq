@@ -372,6 +372,13 @@ def full_align(config):
             cmd = f"cp {src} {dst}"
             subprocess.check_call(cmd,shell=True)
 
+        #Copy sample info
+        cmd = "cp {} {}".format(
+            os.path.join("data", "tmp", "sample_info.tsv"),
+            os.path.join(base_dir, "{}_samplesheet.tsv".format(project_id))
+        )
+        subprocess.check_call(cmd, shell=True)
+
         #copy mqc_config
         cmd = "cp {src} {dst}".format(
             src = os.path.join("data", "tmp", pipeline, "bfq", ".multiqc_config.yaml"),
