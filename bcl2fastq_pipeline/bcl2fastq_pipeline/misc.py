@@ -346,7 +346,7 @@ def finishedEmail(config, msg, runTime) :
         msg.attach(part)
 
         if config.get("Options", "Libprep").startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences")):
-            f =os.path.join(odir, f"all_samples_web_summary_{p}_{run_date}.html")
+            f =os.path.join(odir, f"all_samples_web_summary_{p}_{date}.html")
             if os.path.exists(f):
                 with open(f, "rb") as report:
                     part = MIMEApplication(
