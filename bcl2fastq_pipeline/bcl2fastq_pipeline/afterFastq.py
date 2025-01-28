@@ -375,7 +375,7 @@ def full_align(config):
         #Copy sample info
         cmd = "cp {} {}".format(
             os.path.join("data", "tmp", "sample_info.tsv"),
-            os.path.join(base_dir, "{}_samplesheet.tsv".format(project_id))
+            os.path.join(base_dir, "{}_samplesheet.tsv".format(p))
         )
         subprocess.check_call(cmd, shell=True)
 
