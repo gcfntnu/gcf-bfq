@@ -41,46 +41,27 @@ while True:
     if(config is None) :
         #There's no recovering from this!
         sys.exit("Error: couldn't read the config file!")
-    
-    """
-    #Get the next flow cell to process, or sleep
-    #HiSeq2500
-    dirs = glob.glob("%s/*/data/*_SN7001334_*/ImageAnalysis_Netcopy_complete.txt" % config.get("Paths","baseDir"))
-    #NextSeq 500
-    dirs.extend(glob.glob("%s/*/data/*_NB501038_*/RunCompletionStatus.xml" % config.get("Paths","baseDir")))
-    #MiSeq NTNU
-    dirs.extend(glob.glob("%s/*/data/*_M026575*_*/ImageAnalysis_Netcopy_complete.txt" % config.get("Paths","baseDir")))
-    #MiSeq St. Olav
-    dirs.extend(glob.glob("%s/*/data/*_M03942*_*/ImageAnalysis_Netcopy_complete.txt" % config.get("Paths","baseDir")))
-    #MiSeq SINTEF
-    dirs.extend(glob.glob("%s/*/data/*_M05617*_*/ImageAnalysis_Netcopy_complete.txt" % config.get("Paths","baseDir")))
-    #MiSeq MolPat
-    dirs.extend(glob.glob("%s/*/data/*_M71102*_*/ImageAnalysis_Netcopy_complete.txt" % config.get("Paths","baseDir")))
-    #HiSeq4000
-    dirs.extend(glob.glob("%s/*/data/*_K00251*_*/SequencingComplete.txt" % config.get("Paths","baseDir")))
-    #NovaSeq 6000
-    dirs.extend(glob.glob("%s/*/data/*_A01990*_*/CopyComplete.txt" % config.get("Paths","baseDir")))
-    """
 
+
+    in_pths = [config.get("Paths","baseDir"), config.get("Paths","ekista_baseDir")]
+    completion_files = {
+        'SN7001334': 'ImageAnalysis_Netcopy_complete.txt',
+        'NB501038': 'RunCompletionStatus.xml',
+        'M026575': 'ImageAnalysis_Netcopy_complete.txt',
+        'M026575': 'ImageAnalysis_Netcopy_complete.txt',
+        'M03942': 'ImageAnalysis_Netcopy_complete.txt',
+        'M05617': 'ImageAnalysis_Netcopy_complete.txt',
+        'M71102': 'ImageAnalysis_Netcopy_complete.txt',
+        'K00251': 'SequencingComplete.txt',
+        'A01990': 'CopyComplete.txt',
+        'MN00686': 'CopyComplete.txt',
+    }
+    dirs = list()
     #Get the next flow cell to process, or sleep
-    #HiSeq2500
-    dirs = glob.glob("%s/*_SN7001334_*/ImageAnalysis_Netcopy_complete.txt" % config.get("Paths","baseDir"))
-    #NextSeq 500
-    dirs.extend(glob.glob("%s/*_NB501038_*/RunCompletionStatus.xml" % config.get("Paths","baseDir")))
-    #MiSeq NTNU
-    dirs.extend(glob.glob("%s/*_M026575*_*/ImageAnalysis_Netcopy_complete.txt" % config.get("Paths","baseDir")))
-    #MiSeq St. Olav
-    dirs.extend(glob.glob("%s/*_M03942*_*/ImageAnalysis_Netcopy_complete.txt" % config.get("Paths","baseDir")))
-    #MiSeq SINTEF
-    dirs.extend(glob.glob("%s/*_M05617*_*/ImageAnalysis_Netcopy_complete.txt" % config.get("Paths","baseDir")))
-    #MiSeq MolPat
-    dirs.extend(glob.glob("%s/*_M71102*_*/ImageAnalysis_Netcopy_complete.txt" % config.get("Paths","baseDir")))
-    #HiSeq4000
-    dirs.extend(glob.glob("%s/*_K00251*_*/SequencingComplete.txt" % config.get("Paths","baseDir")))
-    #NovaSeq 6000
-    dirs.extend(glob.glob("%s/*_A01990*_*/CopyComplete.txt" % config.get("Paths","baseDir")))
-    #MiniSeq
-    dirs.extend(glob.glob("%s/*_MN00686*_*/CopyComplete.txt" % config.get("Paths","baseDir")))
+    for pth in in_pths:
+        for machine, fin_file in completion_files.items():
+            dirs.extend(glob.glob(f"{pth}/*_{machine}_*/{fin_file}"))
+
     for d in dirs :
         config.set('Options','runID',d.split("/")[-2])
         config.set('Options', 'sequencer',d.split("/")[-4])
