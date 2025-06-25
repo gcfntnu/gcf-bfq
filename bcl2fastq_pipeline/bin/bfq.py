@@ -43,7 +43,7 @@ while True:
         sys.exit("Error: couldn't read the config file!")
 
 
-    in_pths = [config.get("Paths","baseDir"), config.get("Paths","ekista_baseDir")]
+    in_pths = [config.get("Paths","nova_baseDir"), config.get("Paths","ekista_baseDir")]
     completion_files = {
         'SN7001334': 'ImageAnalysis_Netcopy_complete.txt',
         'NB501038': 'RunCompletionStatus.xml',
@@ -63,8 +63,10 @@ while True:
             dirs.extend(glob.glob(f"{pth}/*_{machine}_*/{fin_file}"))
 
     for d in dirs :
-        config.set('Options','runID',d.split("/")[-2])
-        config.set('Options', 'sequencer',d.split("/")[-4])
+        flow_path = os.path.dirname(d)
+        config.set('Options','runID', os.path.basename(flow_path))
+        config.set('Paths', 'baseDir', os.path.dirname(flow_path))
+
         if bcl2fastq_pipeline.findFlowCells.flowCellProcessed(config):
             continue
 
