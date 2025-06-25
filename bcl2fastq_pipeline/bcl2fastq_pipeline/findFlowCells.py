@@ -142,7 +142,7 @@ def newFlowCell(config) :
 
     if not opts or not sample_sub_f:
         config.set("Options","runID","")
-        config.set("Options","sequencer","")
+        config.set("Paths","baseDir","")
         return config
 
     syslog.syslog("Found a new flow cell: %s\n" % config.get("Options","runID"))
@@ -168,7 +168,7 @@ def newFlowCell(config) :
         config = setConfFromOpts(config,opts)
     else :
         config.set("Options","runID","")
-        config.set("Options","sequencer","")
+        config.set("Paths","baseDir","")
         config = setConfFromOpts(config,opts,use_dict_values=False)
 
     return config
