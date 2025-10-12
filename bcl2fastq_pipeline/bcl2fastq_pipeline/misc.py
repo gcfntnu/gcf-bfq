@@ -83,29 +83,29 @@ def getFCmetrics(root):
                 f"{clusterCount:,}".replace(",", " "),
                 100 * clusterCountPass / clusterCount,
             )
-        except:
+        except Exception:
             message += "\t{} (NA)".format(f"{clusterCount:,}".replace(",", " "))
         # %bases above Q30
         if baseYield[1] > 0:
             try:
                 message += f"\t{100 * (baseYieldQ30[0] / baseYield[0]):5.2f}%/{100 * (baseYieldQ30[1] / baseYield[1]):5.2f}%"
-            except:
+            except Exception:
                 message += "\tNA/NA"
         else:
             try:
                 message += "\t%5.2f%%" % (100 * (baseYieldQ30[0] / baseYield[0]))
-            except:
+            except Exception:
                 message += "\tNA"
         # Average base quality
         if baseYield[1] > 0:
             try:
                 message += f"\t{QualSum[0] / float(baseYield[0]):4.1f}/{QualSum[1] / float(baseYield[1]):4.1f}\n"
-            except:
+            except Exception:
                 message += "\tNA/NA\n"
         else:
             try:
                 message += "\t%4.1f\n" % (QualSum[0] / float(baseYield[0]))
-            except:
+            except Exception:
                 message += "\tNA\n"
 
     return message
@@ -133,10 +133,10 @@ def getFCmetricsImproved(config):
         return "Not able to generate table for flowcell metrics."
 
     read_start = []
-    for i, l in enumerate(lines):
-        if l.startswith("Read"):
+    for i, line in enumerate(lines):
+        if line.startswith("Read"):
             read_start.append(i)
-        elif l.startswith("Extracted"):
+        elif line.startswith("Extracted"):
             read_start.append(i)
             break
     dfs = []
@@ -285,7 +285,7 @@ def parseConversionStats(config):
             "{}/{}{}/Stats/ConversionStats.xml".format(config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes)
         )
         root = tree.getroot()[0]  # We only ever have a single flow cell
-    except:
+    except Exception:
         return None
     metrics = None
     # Per-project PDF files

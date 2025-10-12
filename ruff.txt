@@ -1,0 +1,53 @@
+N999 Invalid module name: 'afterFastq'
+--> bcl2fastq_pipeline/bcl2fastq_pipeline/afterFastq.py:1:1
+
+PLW0602 Using global for `localConfig` but no assignment is done
+   --> bcl2fastq_pipeline/bcl2fastq_pipeline/afterFastq.py:101:12
+    |
+100 | def md5sum_worker(config):
+101 |     global localConfig
+    |            ^^^^^^^^^^^
+102 |     config = localConfig
+103 |     old_wd = os.getcwd()
+    |
+
+PLW0602 Using global for `localConfig` but no assignment is done
+   --> bcl2fastq_pipeline/bcl2fastq_pipeline/afterFastq.py:131:12
+    |
+130 | def md5sum_archive_worker(config):
+131 |     global localConfig
+    |            ^^^^^^^^^^^
+132 |     config = localConfig
+133 |     old_wd = os.getcwd()
+    |
+
+PLW0602 Using global for `localConfig` but no assignment is done
+   --> bcl2fastq_pipeline/bcl2fastq_pipeline/afterFastq.py:143:12
+    |
+142 | def multiqc_stats(project_dirs):
+143 |     global localConfig
+    |            ^^^^^^^^^^^
+144 |     config = localConfig
+145 |     oldWd = os.getcwd()
+    |
+
+PLW0603 Using the global statement to update `localConfig` is discouraged
+   --> bcl2fastq_pipeline/bcl2fastq_pipeline/afterFastq.py:551:12
+    |
+549 |     projectDirs = get_project_dirs(config)
+550 |
+551 |     global localConfig
+    |            ^^^^^^^^^^^
+552 |     localConfig = config
+    |
+
+N999 Invalid module name: 'findFlowCells'
+--> bcl2fastq_pipeline/bcl2fastq_pipeline/findFlowCells.py:1:1
+
+N999 Invalid module name: 'getConfig'
+--> bcl2fastq_pipeline/bcl2fastq_pipeline/getConfig.py:1:1
+
+N999 Invalid module name: 'makeFastq'
+--> bcl2fastq_pipeline/bcl2fastq_pipeline/makeFastq.py:1:1
+
+Found 8 errors.

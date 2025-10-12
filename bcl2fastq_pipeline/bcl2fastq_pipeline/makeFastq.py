@@ -47,18 +47,16 @@ def fix_stats_json(stats_fn):
     barcodes = False
 
     with open(stats_fn) as fh:
-        for l in fh.readlines():
+        for line in fh.readlines():
             if not barcodes:
-                stats.append(l)
-                if "UnknownBarcodes" in l:
+                stats.append(line)
+                if "UnknownBarcodes" in line:
                     barcodes = True
-            else:
-                if not any(s in l for s in ["{", "}", "Barcodes", "Lane"]):
-                    l = l.replace("\n", ",\n")
-                elif l.startswith("  }"):
-                    l = l.replace("\n", ",\n")
-                    stats[-2] = stats[-2].replace(",\n", "\n")
-                stats.append(l)
+            elif not any(s in line for s in ["{", "}", "Barcodes", "Lane"]):
+                stats.append(line.replace("\n", ",\n"))
+            elif line.startswith("  }"):
+                stats.append(line.replace("\n", ",\n"))
+                stats[-2] = stats[-2].replace(",\n", "\n")
 
     stats[-2] = stats[-2].replace(",\n", "\n")
     stats[-3] = stats[-3].replace(",\n", "\n")
@@ -144,7 +142,7 @@ def bcl2fq(config):
             "w",
         ) as logOut:
             subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
-    except:
+    except Exception:
         if "10X Genomics" not in config.get("Options", "Libprep") and force_bcl2fastq:
             with open(
                 "{}/{}{}.log".format(config.get("Paths", "logDir"), config.get("Options", "runID"), lanes)

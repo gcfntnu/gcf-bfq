@@ -15,6 +15,7 @@ ignore = [
     "PLR0912",  # too many branches
     "PLR0915",  # too many statements
     "PLR2004",  # magic numbers
+    "N8", #Naming styles, too much that cant be fixed ruff
 ]
 
 # Exclude generated or data-heavy dirs

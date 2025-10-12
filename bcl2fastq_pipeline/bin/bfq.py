@@ -98,7 +98,7 @@ while True:
                     "w",
                 ) as fh:
                     fh.write("\t".join(bcl_done))
-            except:
+            except Exception:
                 syslog.syslog("Got an error in bcl2fq\n")
                 bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error in bcl2fq")
                 continue
@@ -114,7 +114,7 @@ while True:
                     ),
                     "w",
                 ).close()
-            except:
+            except Exception:
                 syslog.syslog("Got an error in fixNames\n")
                 bcl2fastq_pipeline.misc.errorEmail(
                     config, sys.exc_info(), "Got an error in fixNames"
@@ -135,7 +135,7 @@ while True:
         try:
             # message += "\n\n"+bcl2fastq_pipeline.misc.parseConversionStats(config)
             message += bcl2fastq_pipeline.misc.getFCmetricsImproved(config)
-        except:
+        except Exception:
             syslog.syslog("Got an error during parseConversionStats\n")
             bcl2fastq_pipeline.misc.errorEmail(
                 config, sys.exc_info(), "Got an error during parseConversionStats"
@@ -147,7 +147,7 @@ while True:
         # Email finished message
         try:
             bcl2fastq_pipeline.misc.finishedEmail(config, message, runTime)
-        except:
+        except Exception:
             # Unrecoverable error
             syslog.syslog("Couldn't send the finished email! Quiting")
             bcl2fastq_pipeline.misc.errorEmail(
@@ -166,7 +166,7 @@ while True:
         runTime += finalizeTime
         try:
             bcl2fastq_pipeline.misc.finalizedEmail(config, "", finalizeTime, runTime)
-        except:
+        except Exception:
             # Unrecoverable error
             syslog.syslog("Couldn't send the finalize email! Quiting")
             bcl2fastq_pipeline.misc.errorEmail(

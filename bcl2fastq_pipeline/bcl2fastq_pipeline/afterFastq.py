@@ -578,28 +578,25 @@ def postMakeSteps(config):
     multiqc_stats(projectDirs)
 
     # disk usage
-    (tot, used, free) = shutil.disk_usage(config.get("Paths", "outputDir"))
-    tot /= 1024 * 1024 * 1024  # Convert to gigs
-    used /= 1024 * 1024 * 1024
-    free /= 1024 * 1024 * 1024
+    tot, used, free = shutil.disk_usage(config.get("Paths", "outputDir"))
+    tot /= 1024 ** 3  # Convert to GiB
+    used /= 1024 ** 3
+    free /= 1024 ** 3
 
-    message = "Current free space for output: %i of %i GiB (%5.2f%%)\n<br>" % (
-        free,
-        tot,
-        100 * free / tot,
+    message = (
+        f"Current free space for output: {free:.0f} of {tot:.0f} GiB "
+        f"({100 * free / tot:5.2f}%)\n<br>"
     )
 
-    (tot, used, free) = shutil.disk_usage(config.get("Paths", "baseDir"))
-    tot /= 1024 * 1024 * 1024  # Convert to gigs
-    used /= 1024 * 1024 * 1024
-    free /= 1024 * 1024 * 1024
+    tot, used, free = shutil.disk_usage(config.get("Paths", "baseDir"))
+    tot /= 1024 ** 3  # Convert to GiB
+    used /= 1024 ** 3
+    free /= 1024 ** 3
 
-    message += "Current free space for instruments: %i of %i GiB (%5.2f%%)\n<br>\n<br>" % (
-        free,
-        tot,
-        100 * free / tot,
+    message += (
+        f"Current free space for instruments: {free:.0f} of {tot:.0f} GiB "
+        f"({100 * free / tot:5.2f}%)\n<br>\n<br>"
     )
-
     # save configfile to flowcell
     with open(
         os.path.join(

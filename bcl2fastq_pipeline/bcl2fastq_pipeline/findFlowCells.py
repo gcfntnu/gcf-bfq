@@ -96,7 +96,7 @@ def getNumLanes(d):
         root = tree.getroot()[0]
         numLanes = root.findall("FlowcellLayout")[0]
         return int(numLanes.get("LaneCount"))
-    except:
+    except Exception:
         return 1
 
 
