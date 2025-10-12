@@ -1,0 +1,65 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+indent-width = 4
+fix = true
+
+# Rule groups to enable
+select = ["E", "F", "I", "UP", "N", "W", "PL"]
+
+# Ignore overly strict or irrelevant rules
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "E203",  # whitespace before ':' (black compat)
+    "E731",  # lambda assignment
+    "PLR0912",  # too many branches
+    "PLR0915",  # too many statements
+    "PLR2004",  # magic numbers
+]
+
+# Exclude generated or data-heavy dirs
+extend-exclude = [
+    "files/",
+    "__pycache__/",
+    "*.egg-info",
+    "build/",
+    "dist/",
+    "env/",
+    "venv/",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+skip-magic-trailing-comma = false
+
+[tool.ruff.lint.isort]
+known-third-party = ["numpy", "pandas", "matplotlib", "yaml", "bioblend"]
+combine-as-imports = true
+force-single-line = false
+lines-between-types = 1
+
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true
+
+# Optional: tweak naming rules instead of allowed-names
+
+[tool.ruff.lint.pep8-naming]
+# Suppress variable-naming complaints for these known mixed-case identifiers
+ignore-names = [
+    "bfq_afq",
+    "fm",
+    "MKFASTQ_10X",
+    "SEQUENCER_OUTPUTFOLDER",
+    "CUSTOM_OPTS",
+    "SEQUENCERS",
+]
+extend-ignore-names = []
+
+# Keep defaults:
+#  • functions → snake_case
+#  • classes   → PascalCase
+#  • constants → UPPER_CASE
+#  • variables → snake_case
+
