@@ -51,7 +51,6 @@ while True:
         "SN7001334": "ImageAnalysis_Netcopy_complete.txt",
         "NB501038": "RunCompletionStatus.xml",
         "M026575": "ImageAnalysis_Netcopy_complete.txt",
-        "M026575": "ImageAnalysis_Netcopy_complete.txt",
         "M03942": "ImageAnalysis_Netcopy_complete.txt",
         "M05617": "ImageAnalysis_Netcopy_complete.txt",
         "M71102": "ImageAnalysis_Netcopy_complete.txt",
@@ -77,7 +76,7 @@ while True:
         if config.get("Options", "runID") == "":
             continue
         # Ensure we have sufficient space
-        if bcl2fastq_pipeline.misc.enoughFreeSpace(config) == False:
+        if not bcl2fastq_pipeline.misc.enoughFreeSpace(config):
             syslog.syslog("Error: insufficient free space!\n")
             bcl2fastq_pipeline.misc.errorEmail(
                 config, sys.exc_info(), "Error: insufficient free space!"

@@ -54,13 +54,14 @@ def flowCellProcessed(config):
 
 # Determine if the flowcell should be rerun
 def rerunFlowcell(config):
+    return False #deprecated for now
     # seq_data_path = af.SEQUENCER_OUTPUTFOLDER[config.get("Options","runID").split("_")[-3]]
     ss, opts = getSampleSheets(
         os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID"))
     )
     if not opts:
         return False
-    if opts.get("Rerun", False) == True:
+    if opts.get("Rerun", False):
         if os.path.exists(
             os.path.join(
                 config.get("Paths", "outputDir"), config.get("Options", "runID"), "SampleSheet.csv"
@@ -135,7 +136,7 @@ def getSampleSheets(d):
     """
     Provide a list of output directories and sample sheets
     """
-    ss = glob.glob("%s/SampleSheet*.csv" % d)
+    ss = glob.glob(f"{d}/SampleSheet*.csv")
 
     if len(ss) == 0:
         return ([None], None)
@@ -185,7 +186,7 @@ def newFlowCell(config):
         config.set("Paths", "baseDir", "")
         return config
 
-    syslog.syslog("Found a new flow cell: %s\n" % config.get("Options", "runID"))
+    syslog.syslog("Found a new flow cell: {}\n".format(config.get("Options", "runID")))
     if not os.path.exists(odir):
         os.makedirs(odir)
 
@@ -249,7 +250,7 @@ def markFinished(config):
         lanes = f"_lanes{lanes}"
 
     open(
-        "%s/%s%s/fastq.made" % (config["Paths"]["outputDir"], config["Options"]["runID"], lanes),
+        "{}/{}{}/fastq.made".format(config["Paths"]["outputDir"], config["Options"]["runID"], lanes),
         "w",
     ).close()
     project_dirs = af.get_project_dirs(config)
@@ -274,5 +275,5 @@ def MakeTargetDirs(config):
     if lanes != "":
         lanes = f"_lanes{lanes}"
 
-    assert config["Paths"]["runID"] != None
-    os.mkdirs("%s/%s%s" % (config["Paths"]["outputDir"], config["Options"]["runID"], lanes))
+    assert config["Paths"]["runID"] is not None
+    os.mkdirs("{}/{}{}".format(config["Paths"]["outputDir"], config["Options"]["runID"], lanes))

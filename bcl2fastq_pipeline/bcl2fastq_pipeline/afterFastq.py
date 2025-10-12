@@ -83,7 +83,7 @@ def get_read_geometry(run_dir):
     R1 = None
     R2 = None
     for read in lane_info:
-        if read["IsIndexedRead"] == True:
+        if read["IsIndexedRead"]:
             continue
         elif read["Number"] == 1:
             R1 = int(read["NumCycles"])
@@ -111,8 +111,7 @@ def md5sum_worker(config):
             p, f"md5sum_{p}_fastq.txt"
         )
         syslog.syslog(
-            "[md5sum_worker] Processing %s\n"
-            % os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), p)
+            "[md5sum_worker] Processing {}\n".format(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), p))
         )
         subprocess.check_call(cmd, shell=True)
     os.chdir(old_wd)
@@ -193,8 +192,7 @@ def multiqc_stats(project_dirs):
         ),
     )
     syslog.syslog(
-        "[multiqc_worker] Interop summary on %s\n"
-        % os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID"))
+        "[multiqc_worker] Interop summary on {}\n".format(os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID")))
     )
     subprocess.check_call(cmd, shell=True)
 
@@ -208,8 +206,7 @@ def multiqc_stats(project_dirs):
         ),
     )
     syslog.syslog(
-        "[multiqc_worker] Interop index summary on %s\n"
-        % os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID"))
+        "[multiqc_worker] Interop index summary on {}\n".format(os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID")))
     )
     subprocess.check_call(cmd, shell=True)
 
@@ -253,8 +250,7 @@ def multiqc_stats(project_dirs):
         modules=modules,
     )
     syslog.syslog(
-        "[multiqc_worker] Processing %s\n"
-        % os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), "Stats")
+        "[multiqc_worker] Processing {}\n".format(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), "Stats"))
     )
 
     if os.environ.get("BFQ_TEST", None) and not FORCE_BCL2FASTQ:
@@ -337,12 +333,11 @@ def archive_worker(config):
                 )
             )
         syslog.syslog(
-            "[archive_worker] Zipping %s\n"
-            % os.path.join(
+            "[archive_worker] Zipping {}\n".format(os.path.join(
                 config.get("Paths", "outputDir"),
                 config.get("Options", "runID"),
                 f"{p}_{run_date}.7za",
-            )
+            ))
         )
         subprocess.check_call(cmd, shell=True)
         """
@@ -407,12 +402,11 @@ def get_project_names(dirs):
 
 def get_project_dirs(config):
     projectDirs = glob.glob(
-        "%s/%s/*/*.fastq.gz" % (config.get("Paths", "outputDir"), config.get("Options", "runID"))
+        "{}/{}/*/*.fastq.gz".format(config.get("Paths", "outputDir"), config.get("Options", "runID"))
     )
     projectDirs.extend(
         glob.glob(
-            "%s/%s/*/*/*.fastq.gz"
-            % (config.get("Paths", "outputDir"), config.get("Options", "runID"))
+            "{}/{}/*/*/*.fastq.gz".format(config.get("Paths", "outputDir"), config.get("Options", "runID"))
         )
     )
     return toDirs(projectDirs)
@@ -467,8 +461,6 @@ def full_align(config):
             runfolder=base_dir,
             project=p,
             lib=libprep,
-            samplesheet=os.path.join(base_dir, "SampleSheet.csv"),
-            sample_sub=os.path.join(base_dir, "Sample-Submission-Form.xlsx"),
             machine=get_sequencer(config.get("Options", "runID")),
             create_fastq=" --skip-create-fastq-dir" if os.path.exists("data/raw/fastq") else "",
         )

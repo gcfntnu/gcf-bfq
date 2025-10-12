@@ -27,20 +27,18 @@ def fixNames(config):
         return
 
     names = glob.glob(
-        "%s/%s%s/*/*.fastq.gz"
-        % (config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes)
+        "{}/{}{}/*/*.fastq.gz".format(config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes)
     )
     names.extend(
         glob.glob(
-            "%s/%s%s/*/*/*.fastq.gz"
-            % (config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes)
+            "{}/{}{}/*/*/*.fastq.gz".format(config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes)
         )
     )
     for fname in names:
         if "_001.fastq.gz" in fname:
             fnew = fname.replace("_001.fastq.gz", ".fastq.gz")
             fnew = re.sub("_S[0-9]+", "", fnew)
-            syslog.syslog("Moving %s to %s\n" % (fname, fnew))
+            syslog.syslog(f"Moving {fname} to {fnew}\n")
             shutil.move(fname, fnew)
 
 
@@ -79,17 +77,14 @@ def bcl2fq(config):
 
     # Make the output directories
     os.makedirs(
-        "%s/%s%s" % (config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes),
+        "{}/{}{}".format(config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes),
         exist_ok=True,
     )
     # Make log directory
     os.makedirs(
-        "%s"
-        % (
-            os.path.join(
+        "{}".format(os.path.join(
                 config.get("Paths", "logDir"), os.path.dirname(config.get("Options", "runID"))
-            )
-        ),
+            )),
         exist_ok=True,
     )
     os.makedirs(
@@ -120,7 +115,7 @@ def bcl2fq(config):
         )
         bcl_done = ["cellranger mkfastq", os.environ.get("CR_VERSION")]
     elif force_bcl2fastq:
-        cmd = "%s %s --sample-sheet %s -o %s/%s%s -R %s/%s --interop-dir %s/%s/InterOp" % (
+        cmd = "{} {} --sample-sheet {} -o {}/{}{} -R {}/{} --interop-dir {}/{}/InterOp".format(
             config.get("bcl2fastq", "bcl2fastq"),
             config.get("bcl2fastq", "bcl2fastq_options"),
             config.get("Options", "sampleSheet"),
@@ -143,27 +138,25 @@ def bcl2fq(config):
         )
         bcl_done = ["bcl-convert", os.environ.get("BCL_CONVERT_VERSION")]
     try:
-        syslog.syslog("[convert bcl] Running: %s\n" % cmd)
+        syslog.syslog(f"[convert bcl] Running: {cmd}\n")
         with open(
-            "%s/%s%s.log" % (config.get("Paths", "logDir"), config.get("Options", "runID"), lanes),
+            "{}/{}{}.log".format(config.get("Paths", "logDir"), config.get("Options", "runID"), lanes),
             "w",
         ) as logOut:
             subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
     except:
         if "10X Genomics" not in config.get("Options", "Libprep") and force_bcl2fastq:
             with open(
-                "%s/%s%s.log"
-                % (config.get("Paths", "logDir"), config.get("Options", "runID"), lanes)
+                "{}/{}{}.log".format(config.get("Paths", "logDir"), config.get("Options", "runID"), lanes)
             ) as logOut:
                 log_content = logOut.read()
             if "<bcl2fastq::layout::BarcodeCollisionError>" in log_content:
                 cmd += " --barcode-mismatches 0 "
                 with open(
-                    "%s/%s%s.log"
-                    % (config.get("Paths", "logDir"), config.get("Options", "runID"), lanes),
+                    "{}/{}{}.log".format(config.get("Paths", "logDir"), config.get("Options", "runID"), lanes),
                     "w",
                 ) as logOut:
-                    syslog.syslog("[bcl2fq] Retrying with --barcode-mismatches 0 : %s\n" % cmd)
+                    syslog.syslog(f"[bcl2fq] Retrying with --barcode-mismatches 0 : {cmd}\n")
                     subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
 
     if os.path.exists(os.path.join("Reports", "legacy", "Stats")):

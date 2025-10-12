@@ -56,13 +56,12 @@ def getFCmetrics(root):
     barcode = root[0][0]  # Sample "all", barcode "all"
     message = "Lane\t# Clusters (% pass)\t% Bases >=Q30\tAve. base qual.\n"
     for lane in barcode.findall("Lane"):
-        message += "Lane %s" % lane.get("number")
+        message += "Lane {}".format(lane.get("number"))
         clusterCount = 0
         clusterCountPass = 0
         baseYield = [0, 0]
         baseYieldQ30 = [0, 0]
         QualSum = [0, 0]
-        rlens = [0, 0]
         for tile in lane:
             clusterCount += int(tile[0][0].text)
             clusterCountPass += int(tile[1][0].text)
@@ -80,19 +79,16 @@ def getFCmetrics(root):
                 QualSum[1] += int(tile[1][2][2].text)
         # Number of clusters (%passing filter)
         try:
-            message += "\t%s (%5.2f%%)" % (
+            message += "\t{} ({:5.2f}%)".format(
                 f"{clusterCount:,}".replace(",", " "),
                 100 * clusterCountPass / clusterCount,
             )
         except:
-            message += "\t%s (NA)" % (f"{clusterCount:,}".replace(",", " "))
+            message += "\t{} (NA)".format(f"{clusterCount:,}".replace(",", " "))
         # %bases above Q30
         if baseYield[1] > 0:
             try:
-                message += "\t%5.2f%%/%5.2f%%" % (
-                    100 * (baseYieldQ30[0] / baseYield[0]),
-                    100 * (baseYieldQ30[1] / baseYield[1]),
-                )
+                message += f"\t{100 * (baseYieldQ30[0] / baseYield[0]):5.2f}%/{100 * (baseYieldQ30[1] / baseYield[1]):5.2f}%"
             except:
                 message += "\tNA/NA"
         else:
@@ -103,10 +99,7 @@ def getFCmetrics(root):
         # Average base quality
         if baseYield[1] > 0:
             try:
-                message += "\t%4.1f/%4.1f\n" % (
-                    QualSum[0] / float(baseYield[0]),
-                    QualSum[1] / float(baseYield[1]),
-                )
+                message += f"\t{QualSum[0] / float(baseYield[0]):4.1f}/{QualSum[1] / float(baseYield[1]):4.1f}\n"
             except:
                 message += "\tNA/NA\n"
         else:
@@ -185,10 +178,9 @@ def getFCmetricsImproved(config):
 def parseSampleSheetMetrics(config):
     project_dirs = get_project_dirs(config)
     project_names = get_project_names(project_dirs)
-    sample_sheet_metrics = dict()
     msg = "<strong>Sample sheet info</strong>\n"
     for pid in project_names:
-        with open(config.get("Options", "sampleSheet")) as ss:
+        with open(config.get("Options", "sampleSheet")):
             args = Namespace(
                 samplesheet=[config.get("Options", "sampleSheet")],
                 project_id=[pid],
@@ -237,8 +229,7 @@ def parserDemultiplexStats(config):
     totals = [0, 0, 0, 0, 0, 0, 0, 0]
     undetermined = [0, 0, 0, 0, 0, 0, 0, 0]
     tree = ET.parse(
-        "%s/%s%s/Stats/DemultiplexingStats.xml"
-        % (config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes)
+        "{}/{}{}/Stats/DemultiplexingStats.xml".format(config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes)
     )
     root = tree.getroot()
     for child in root[0].findall("Project"):
@@ -263,7 +254,6 @@ def parserDemultiplexStats(config):
         lnum = int(lane.get("number"))
         totals[lnum - 1] += int(lane[0].text)
 
-    out = ""
     lanes = []
     undeter = []
     for i in range(8):
@@ -292,8 +282,7 @@ def parseConversionStats(config):
 
     try:
         tree = ET.parse(
-            "%s/%s%s/Stats/ConversionStats.xml"
-            % (config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes)
+            "{}/{}{}/Stats/ConversionStats.xml".format(config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes)
         )
         root = tree.getroot()[0]  # We only ever have a single flow cell
     except:
@@ -320,7 +309,7 @@ def enoughFreeSpace(config):
 
 
 def errorEmail(config, errTuple, msg):
-    msg = msg + "\nError type: %s\nError value: %s\n%s\n" % (errTuple[0], errTuple[1], errTuple[2])
+    msg = msg + f"\nError type: {errTuple[0]}\nError value: {errTuple[1]}\n{errTuple[2]}\n"
     """
     msg['Subject'] = "[bcl2fastq_pipeline] Error"
     msg['From'] = config.get("Email","fromAddress")
@@ -341,7 +330,7 @@ def errorEmail(config, errTuple, msg):
 
 
 def finishedEmail(config, msg, runTime):
-    lanes = config.get("Options", "lanes")
+    config.get("Options", "lanes")
 
     projects = get_project_names(get_project_dirs(config))
 
@@ -351,7 +340,7 @@ def finishedEmail(config, msg, runTime):
         if config.get("Options", "User") != "N/A"
         else ""
     )
-    message += "Flow cell: %s \n" % (config.get("Options", "runID"))
+    message += "Flow cell: {} \n".format(config.get("Options", "runID"))
     message += "Sequencer: {} \n".format(
         get_sequencer(os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID")))
     )
@@ -360,7 +349,7 @@ def finishedEmail(config, msg, runTime):
             os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
         )
     )
-    message += "bcl2fastq_pipeline run time: %s \n" % runTime
+    message += f"bcl2fastq_pipeline run time: {runTime} \n"
     # message += "Data transfer: %s\n" % transferTime
     message = message.replace("\n", "\n<br>")
     message += msg
@@ -423,19 +412,19 @@ def finishedEmail(config, msg, runTime):
 
 
 def finalizedEmail(config, msg, finalizeTime, runTime):
-    lanes = config.get("Options", "lanes")
+    config.get("Options", "lanes")
 
     projects = get_project_names(get_project_dirs(config))
 
     message = "{} has been finalized and prepared for delivery.\n\n".format(", ".join(projects))
-    message += "md5sum and 7zip runtime: %s\n" % finalizeTime
-    message += "Total runtime for bcl2fastq_pipeline: %s\n" % runTime
+    message += f"md5sum and 7zip runtime: {finalizeTime}\n"
+    message += f"Total runtime for bcl2fastq_pipeline: {runTime}\n"
     # message += "Data transfer: %s\n" % transferTime
     message += msg
 
     # message = "<html>\n<body>\n<head></head>\n" + message + "\n</body>\n</html>"
 
-    odir = os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
+    os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
 
     # with open(os.path.join(config.get("Paths", "reportDir"),'{}.report'.format(config.get("Options","runID"))),'w') as report:
     #    report.write(msg)
