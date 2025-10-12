@@ -54,7 +54,7 @@ def flowCellProcessed(config):
 
 # Determine if the flowcell should be rerun
 def rerunFlowcell(config):
-    return False #deprecated for now
+    return False  # deprecated for now
     # seq_data_path = af.SEQUENCER_OUTPUTFOLDER[config.get("Options","runID").split("_")[-3]]
     ss, opts = getSampleSheets(
         os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID"))
@@ -250,7 +250,9 @@ def markFinished(config):
         lanes = f"_lanes{lanes}"
 
     open(
-        "{}/{}{}/fastq.made".format(config["Paths"]["outputDir"], config["Options"]["runID"], lanes),
+        "{}/{}{}/fastq.made".format(
+            config["Paths"]["outputDir"], config["Options"]["runID"], lanes
+        ),
         "w",
     ).close()
     project_dirs = af.get_project_dirs(config)

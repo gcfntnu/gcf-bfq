@@ -4,6 +4,18 @@ line-length = 100
 indent-width = 4
 fix = true
 
+# Exclude generated or data-heavy dirs
+extend-exclude = [
+    "files/",
+    "__pycache__/",
+    "*.egg-info",
+    "build/",
+    "dist/",
+    "env/",
+    "venv/",
+]
+
+[tool.ruff.lint]
 # Rule groups to enable
 select = ["E", "F", "I", "UP", "N", "W", "PL"]
 
@@ -15,19 +27,8 @@ ignore = [
     "PLR0912",  # too many branches
     "PLR0915",  # too many statements
     "PLR2004",  # magic numbers
-    "N8", #Naming styles, too much that cant be fixed ruff
-    "N999",  # allow CamelCase module names
-]
-
-# Exclude generated or data-heavy dirs
-extend-exclude = [
-    "files/",
-    "__pycache__/",
-    "*.egg-info",
-    "build/",
-    "dist/",
-    "env/",
-    "venv/",
+    "N8",       # naming styles, too much to fix now
+    "N999",     # allow CamelCase module names
 ]
 
 [tool.ruff.format]
@@ -45,8 +46,6 @@ lines-between-types = 1
 [tool.ruff.lint.pyupgrade]
 keep-runtime-typing = true
 
-# Optional: tweak naming rules instead of allowed-names
-
 [tool.ruff.lint.pep8-naming]
 # Suppress variable-naming complaints for these known mixed-case identifiers
 ignore-names = [
@@ -58,10 +57,4 @@ ignore-names = [
     "SEQUENCERS",
 ]
 extend-ignore-names = []
-
-# Keep defaults:
-#  • functions → snake_case
-#  • classes   → PascalCase
-#  • constants → UPPER_CASE
-#  • variables → snake_case
 

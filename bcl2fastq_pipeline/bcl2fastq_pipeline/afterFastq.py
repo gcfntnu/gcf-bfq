@@ -22,14 +22,17 @@ from configmaker.configmaker import SEQUENCERS
 
 localConfig = None
 
+
 def set_config(config):
     """Store the configuration globally for this module."""
     global localConfig  # noqa: PLW0603
     localConfig = config
 
+
 def get_config():
     """Return the current configuration object."""
     return localConfig
+
 
 def get_gcf_name(fname):
     for name in fname.split("/"):
@@ -88,7 +91,9 @@ def md5sum_worker(config):
             p, f"md5sum_{p}_fastq.txt"
         )
         syslog.syslog(
-            "[md5sum_worker] Processing {}\n".format(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), p))
+            "[md5sum_worker] Processing {}\n".format(
+                os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), p)
+            )
         )
         subprocess.check_call(cmd, shell=True)
     os.chdir(old_wd)
@@ -166,7 +171,9 @@ def multiqc_stats(project_dirs):
         ),
     )
     syslog.syslog(
-        "[multiqc_worker] Interop summary on {}\n".format(os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID")))
+        "[multiqc_worker] Interop summary on {}\n".format(
+            os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID"))
+        )
     )
     subprocess.check_call(cmd, shell=True)
 
@@ -180,7 +187,9 @@ def multiqc_stats(project_dirs):
         ),
     )
     syslog.syslog(
-        "[multiqc_worker] Interop index summary on {}\n".format(os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID")))
+        "[multiqc_worker] Interop index summary on {}\n".format(
+            os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID"))
+        )
     )
     subprocess.check_call(cmd, shell=True)
 
@@ -224,7 +233,9 @@ def multiqc_stats(project_dirs):
         modules=modules,
     )
     syslog.syslog(
-        "[multiqc_worker] Processing {}\n".format(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), "Stats"))
+        "[multiqc_worker] Processing {}\n".format(
+            os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), "Stats")
+        )
     )
 
     if os.environ.get("BFQ_TEST", None) and not FORCE_BCL2FASTQ:
@@ -307,11 +318,13 @@ def archive_worker(config):
                 )
             )
         syslog.syslog(
-            "[archive_worker] Zipping {}\n".format(os.path.join(
-                config.get("Paths", "outputDir"),
-                config.get("Options", "runID"),
-                f"{p}_{run_date}.7za",
-            ))
+            "[archive_worker] Zipping {}\n".format(
+                os.path.join(
+                    config.get("Paths", "outputDir"),
+                    config.get("Options", "runID"),
+                    f"{p}_{run_date}.7za",
+                )
+            )
         )
         subprocess.check_call(cmd, shell=True)
         """
@@ -376,11 +389,15 @@ def get_project_names(dirs):
 
 def get_project_dirs(config):
     projectDirs = glob.glob(
-        "{}/{}/*/*.fastq.gz".format(config.get("Paths", "outputDir"), config.get("Options", "runID"))
+        "{}/{}/*/*.fastq.gz".format(
+            config.get("Paths", "outputDir"), config.get("Options", "runID")
+        )
     )
     projectDirs.extend(
         glob.glob(
-            "{}/{}/*/*/*.fastq.gz".format(config.get("Paths", "outputDir"), config.get("Options", "runID"))
+            "{}/{}/*/*/*.fastq.gz".format(
+                config.get("Paths", "outputDir"), config.get("Options", "runID")
+            )
         )
     )
     return toDirs(projectDirs)
@@ -551,9 +568,9 @@ def postMakeSteps(config):
 
     # disk usage
     tot, used, free = shutil.disk_usage(config.get("Paths", "outputDir"))
-    tot /= 1024 ** 3  # Convert to GiB
-    used /= 1024 ** 3
-    free /= 1024 ** 3
+    tot /= 1024**3  # Convert to GiB
+    used /= 1024**3
+    free /= 1024**3
 
     message = (
         f"Current free space for output: {free:.0f} of {tot:.0f} GiB "
@@ -561,9 +578,9 @@ def postMakeSteps(config):
     )
 
     tot, used, free = shutil.disk_usage(config.get("Paths", "baseDir"))
-    tot /= 1024 ** 3  # Convert to GiB
-    used /= 1024 ** 3
-    free /= 1024 ** 3
+    tot /= 1024**3  # Convert to GiB
+    used /= 1024**3
+    free /= 1024**3
 
     message += (
         f"Current free space for instruments: {free:.0f} of {tot:.0f} GiB "

@@ -27,11 +27,15 @@ def fixNames(config):
         return
 
     names = glob.glob(
-        "{}/{}{}/*/*.fastq.gz".format(config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes)
+        "{}/{}{}/*/*.fastq.gz".format(
+            config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes
+        )
     )
     names.extend(
         glob.glob(
-            "{}/{}{}/*/*/*.fastq.gz".format(config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes)
+            "{}/{}{}/*/*/*.fastq.gz".format(
+                config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes
+            )
         )
     )
     for fname in names:
@@ -80,9 +84,11 @@ def bcl2fq(config):
     )
     # Make log directory
     os.makedirs(
-        "{}".format(os.path.join(
+        "{}".format(
+            os.path.join(
                 config.get("Paths", "logDir"), os.path.dirname(config.get("Options", "runID"))
-            )),
+            )
+        ),
         exist_ok=True,
     )
     os.makedirs(
@@ -138,20 +144,26 @@ def bcl2fq(config):
     try:
         syslog.syslog(f"[convert bcl] Running: {cmd}\n")
         with open(
-            "{}/{}{}.log".format(config.get("Paths", "logDir"), config.get("Options", "runID"), lanes),
+            "{}/{}{}.log".format(
+                config.get("Paths", "logDir"), config.get("Options", "runID"), lanes
+            ),
             "w",
         ) as logOut:
             subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
     except Exception:
         if "10X Genomics" not in config.get("Options", "Libprep") and force_bcl2fastq:
             with open(
-                "{}/{}{}.log".format(config.get("Paths", "logDir"), config.get("Options", "runID"), lanes)
+                "{}/{}{}.log".format(
+                    config.get("Paths", "logDir"), config.get("Options", "runID"), lanes
+                )
             ) as logOut:
                 log_content = logOut.read()
             if "<bcl2fastq::layout::BarcodeCollisionError>" in log_content:
                 cmd += " --barcode-mismatches 0 "
                 with open(
-                    "{}/{}{}.log".format(config.get("Paths", "logDir"), config.get("Options", "runID"), lanes),
+                    "{}/{}{}.log".format(
+                        config.get("Paths", "logDir"), config.get("Options", "runID"), lanes
+                    ),
                     "w",
                 ) as logOut:
                     syslog.syslog(f"[bcl2fq] Retrying with --barcode-mismatches 0 : {cmd}\n")

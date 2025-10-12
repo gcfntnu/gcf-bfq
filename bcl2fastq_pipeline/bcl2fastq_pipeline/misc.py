@@ -229,7 +229,9 @@ def parserDemultiplexStats(config):
     totals = [0, 0, 0, 0, 0, 0, 0, 0]
     undetermined = [0, 0, 0, 0, 0, 0, 0, 0]
     tree = ET.parse(
-        "{}/{}{}/Stats/DemultiplexingStats.xml".format(config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes)
+        "{}/{}{}/Stats/DemultiplexingStats.xml".format(
+            config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes
+        )
     )
     root = tree.getroot()
     for child in root[0].findall("Project"):
@@ -282,7 +284,9 @@ def parseConversionStats(config):
 
     try:
         tree = ET.parse(
-            "{}/{}{}/Stats/ConversionStats.xml".format(config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes)
+            "{}/{}{}/Stats/ConversionStats.xml".format(
+                config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes
+            )
         )
         root = tree.getroot()[0]  # We only ever have a single flow cell
     except Exception:
