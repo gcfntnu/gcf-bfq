@@ -1,0 +1,42 @@
+name: Ruff Linting
+
+on:
+  pull_request:
+  push:
+    branches: [ master, main, bfq-dev, staging ]
+
+jobs:
+  ruff:
+    name: Ruff lint & format check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Ruff
+        run: pip install ruff==0.14.0
+
+      # Lint and annotate results on PRs
+      - name: Run Ruff lint with annotations
+        id: ruff
+        run: |
+          ruff check . --output-format=github
+
+      # Enforce formatting consistency
+      - name: Verify Ruff formatting
+        run: |
+          ruff format --check .
+
+      # Optional: summary step (visible in job summary tab)
+      - name: Summarize Ruff results
+        if: failure()
+        run: |
+          echo "⚠️ Ruff reported one or more issues. Please review inline PR comments or the CI logs for details."
+

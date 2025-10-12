@@ -1,0 +1,14 @@
+# .pre-commit-config.yaml
+# Runs Ruff linting and formatting automatically before every commit.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.0
+    hooks:
+      # Lint and auto-fix code style issues
+      - id: ruff
+        args: ["--fix"]
+
+      # Ensure consistent formatting (like black)
+      - id: ruff-format
+
