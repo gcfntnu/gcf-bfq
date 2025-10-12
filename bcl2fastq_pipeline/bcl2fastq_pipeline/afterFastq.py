@@ -22,29 +22,14 @@ from configmaker.configmaker import SEQUENCERS
 
 localConfig = None
 
-"""
-SEQUENCERS = {
-        'NB501038' : 'NextSeq 500',
-        'SN7001334' : 'HiSeq 2500',
-        'K00251' : 'HiSeq 4000',
-        'M02675' : 'MiSeq NTNU',
-        'M03942' : 'MiSeq StOlav',
-        'M05617' : 'MiSeq SINTEF',
-        'A01990' : 'NovaSeq NTNU'
-        }
-"""
-SEQUENCER_OUTPUTFOLDER = {
-    "NB501038": "nextseq",
-    "SN7001334": "hiseq2500",
-    "K00251": "hiseq",
-    "M02675": "miseq",
-    "M03942": "miseq",
-    "M05617": "miseq",
-    "M71102": "miseq",
-    "MN00686": "miniseq",
-    "A01990": "novaseq",
-}
+def set_config(config):
+    """Store the configuration globally for this module."""
+    global localConfig  # noqa: PLW0603
+    localConfig = config
 
+def get_config():
+    """Return the current configuration object."""
+    return localConfig
 
 def get_gcf_name(fname):
     for name in fname.split("/"):
@@ -66,12 +51,6 @@ def toDirs(files):
 
 def get_sequencer(run_id):
     return SEQUENCERS.get(run_id.split("_")[1], "Sequencer could not be automatically determined.")
-
-
-def get_sequencer_outputfolder(run_id):
-    return SEQUENCER_OUTPUTFOLDER.get(
-        run_id.split("_")[1], "Sequencer could not be automatically determined."
-    )
 
 
 def get_read_geometry(run_dir):
@@ -98,8 +77,6 @@ def get_read_geometry(run_dir):
 
 
 def md5sum_worker(config):
-    global localConfig
-    config = localConfig
     old_wd = os.getcwd()
     os.chdir(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID")))
     project_dirs = get_project_dirs(config)
@@ -128,8 +105,6 @@ def md5sum_archive(archive):
 
 
 def md5sum_archive_worker(config):
-    global localConfig
-    config = localConfig
     old_wd = os.getcwd()
     os.chdir(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID")))
     archives = glob.glob("*.7za")
@@ -140,8 +115,7 @@ def md5sum_archive_worker(config):
 
 
 def multiqc_stats(project_dirs):
-    global localConfig
-    config = localConfig
+    config = get_config()
     oldWd = os.getcwd()
     os.chdir(
         os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), "Stats")
@@ -547,9 +521,7 @@ def postMakeSteps(config):
     """
 
     projectDirs = get_project_dirs(config)
-
-    global localConfig
-    localConfig = config
+    set_config(config)
 
     with open("/opt/gcf-workflows/libprep.config") as lc_f:
         libprep_config = yaml.load(lc_f, Loader=yaml.FullLoader)
