@@ -35,10 +35,6 @@ CUSTOM_OPTS = [
 
 # Returns True on processed, False on unprocessed
 def flowCellProcessed(config):
-    lanes = config.get("Options", "lanes")
-    if lanes != "":
-        lanes = f"_lanes{lanes}"
-
     flowcells = fm.list_flowcell_all(
         os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
     )

@@ -16,6 +16,8 @@ import bcl2fastq_pipeline.makeFastq
 import bcl2fastq_pipeline.misc
 import urllib3
 
+from bcl2fastq_pipeline.config import PipelineConfig
+
 # Disable excess warning messages if we disable SSL checks
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 gotHUP = Event()
@@ -32,6 +34,8 @@ def sleep(config):
 
 signal.signal(signal.SIGHUP, breakSleep)
 
+PipelineConfig.load("/config/bcl2fastq.ini")
+config = None
 while True:
     # Reimport to allow reloading a new version
     importlib.reload(bcl2fastq_pipeline.getConfig)
@@ -41,12 +45,12 @@ while True:
     importlib.reload(bcl2fastq_pipeline.misc)
 
     # Read the config file
-    config = bcl2fastq_pipeline.getConfig.getConfig()
-    if config is None:
+    cfg = PipelineConfig.get()
+    if not cfg:
         # There's no recovering from this!
         sys.exit("Error: couldn't read the config file!")
 
-    in_pths = [config.get("Paths", "nova_baseDir"), config.get("Paths", "ekista_baseDir")]
+    in_pths = [cfg.static.paths.nova_baseDir, cfg.static.paths.ekista_baseDir]
     completion_files = {
         "SN7001334": "ImageAnalysis_Netcopy_complete.txt",
         "NB501038": "RunCompletionStatus.xml",
@@ -65,11 +69,9 @@ while True:
             dirs.extend(glob.glob(f"{pth}/*_{machine}_*/{fin_file}"))
 
     for d in dirs:
-        flow_path = os.path.dirname(d)
-        config.set("Options", "runID", os.path.basename(flow_path))
-        config.set("Paths", "baseDir", os.path.dirname(flow_path))
+        cfg.run.begin(d, cfg.static.paths)
 
-        if bcl2fastq_pipeline.findFlowCells.flowCellProcessed(config):
+        if bcl2fastq_pipeline.findFlowCells.flowCellProcessed():
             continue
 
         config = bcl2fastq_pipeline.findFlowCells.newFlowCell(config)

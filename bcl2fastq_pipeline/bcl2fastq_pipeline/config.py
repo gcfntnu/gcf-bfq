@@ -269,6 +269,12 @@ class PipelineConfig:
             raise RuntimeError("PipelineConfig not initialized. Call PipelineConfig.load() first.")
         return cls._instance
 
+    @property
+    def output_path(self) -> Path | None:
+        if not self.run.run_id:
+            return None
+        return self.static.paths.output_dir / self.run.run_id
+
 
 # --------------------------------------------------------------------------- #
 # SampleSheet parser
