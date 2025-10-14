@@ -24,6 +24,7 @@ from bcl2fastq_pipeline.afterFastq import (
     get_read_geometry,
     get_sequencer,
 )
+from bcl2fastq_pipeline.config import PipelineConfig
 
 style = """
 <style>
@@ -305,32 +306,22 @@ def enoughFreeSpace(config):
     """
     Ensure that outputDir has at least minSpace gigs
     """
-    (tot, used, free) = shutil.disk_usage(config.get("Paths", "outputDir"))
+    cfg = PipelineConfig.get()
+    (tot, used, free) = shutil.disk_usage(cfg.static.paths.output_dir)
     free /= 1024 * 1024 * 1024
-    if free >= float(config.get("Options", "minSpace")):
+    if free >= float(cfg.static.system["min_space"]):
         return True
     return False
 
 
-def errorEmail(config, errTuple, msg):
+def errorEmail(errTuple, msg):
+    cfg = PipelineConfig.get()
     msg = msg + f"\nError type: {errTuple[0]}\nError value: {errTuple[1]}\n{errTuple[2]}\n"
-    """
-    msg['Subject'] = "[bcl2fastq_pipeline] Error"
-    msg['From'] = config.get("Email","fromAddress")
-    msg['To'] = config.get("Email","errorTo")
-    """
     with open(
-        os.path.join(
-            config.get("Paths", "reportDir"), "{}.error".format(config.get("Options", "runID"))
-        ),
+        cfg.static.paths.report_dir / f"{cfg.run.run_id}.error",
         "w",
     ) as report:
         report.write(msg)
-    """
-    s = smtplib.SMTP(config.get("Email","host"))
-    s.send_message(msg)
-    s.quit()
-    """
 
 
 def finishedEmail(config, msg, runTime):

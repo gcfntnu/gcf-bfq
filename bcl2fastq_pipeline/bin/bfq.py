@@ -72,17 +72,16 @@ while True:
         cfg.run.begin(d, cfg.static.paths)
 
         if bcl2fastq_pipeline.findFlowCells.flowCellProcessed():
+            cfg.run.reset()
             continue
 
         config = bcl2fastq_pipeline.findFlowCells.newFlowCell(config)
-        if config.get("Options", "runID") == "":
+        if not cfg.run.run_id:
             continue
         # Ensure we have sufficient space
         if not bcl2fastq_pipeline.misc.enoughFreeSpace(config):
             syslog.syslog("Error: insufficient free space!\n")
-            bcl2fastq_pipeline.misc.errorEmail(
-                config, sys.exc_info(), "Error: insufficient free space!"
-            )
+            bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Error: insufficient free space!")
             break
 
         startTime = datetime.datetime.now()

@@ -118,7 +118,9 @@ class RunContext:
     base_dir: Path | None = None
     instrument_source: str | None = None
     sample_sheet: Path | None = None
+    sample_submission_form: Path | None = None
     libprep: str | None = None
+    user: str | None = None
     rerun: bool = False
     custom: dict[str, str] = field(default_factory=dict)
 
@@ -155,7 +157,9 @@ class RunContext:
         except Exception:
             self.instrument_source = "unknown"
 
-    def apply_custom(self, custom_opts: dict[str, str], sheet_path: Path) -> None:
+    def apply_custom(
+        self, custom_opts: dict[str, str], sheet_path: Path, sample_sub_path: Path
+    ) -> None:
         """
         Apply [CustomOptions] from a SampleSheet.
 
@@ -167,13 +171,18 @@ class RunContext:
             Parsed [CustomOptions] entries.
         sheet_path : Path
             Path to the SampleSheet.csv used.
+        sample_sub_path : Path
+            Path to the SampleSubmissionForm.xlsx used.
         """
         self.sample_sheet = Path(sheet_path)
+        self.sample_submission_form = Path(sample_sub_path)
         self.custom = {k.strip(): v.strip() for k, v in custom_opts.items() if k.strip()}
 
         # Promote well-known keys
         if "Libprep" in self.custom:
             self.libprep = self.custom["Libprep"]
+        if "User" in self.custom:
+            self.user = self.custom["User"]
         if "Rerun" in self.custom:
             val = self.custom["Rerun"].strip().lower()
             self.rerun = val in ("true", "1", "yes")
@@ -185,6 +194,8 @@ class RunContext:
         self.base_dir = None
         self.instrument_source = None
         self.sample_sheet = None
+        self.sample_submission_form = None
+        self.user = None
         self.libprep = None
         self.rerun = False
         self.custom.clear()
