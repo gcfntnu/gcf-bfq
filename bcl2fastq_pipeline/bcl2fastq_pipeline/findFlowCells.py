@@ -17,6 +17,8 @@ import flowcell_manager.flowcell_manager as fm
 
 import bcl2fastq_pipeline.afterFastq as af
 
+from bcl2fastq_pipeline.config import PipelineConfig
+
 CUSTOM_OPTS = [
     "Organism",
     "Libprep",
@@ -34,14 +36,13 @@ CUSTOM_OPTS = [
 
 
 # Returns True on processed, False on unprocessed
-def flowCellProcessed(config):
-    flowcells = fm.list_flowcell_all(
-        os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
-    )
+def flowCellProcessed():
+    cfg = PipelineConfig.get()
+    flowcells = fm.list_flowcell_all(cfg.output_path)
     # path = "%s/%s%s/fastq.made" % (config.get("Paths","outputDir"), config.get("Options","runID"), lanes)
     # if os.access(path, os.F_OK) or (not flowcells.empty):
     if not flowcells.empty:
-        if rerunFlowcell(config):
+        if rerunFlowcell(cfg):
             return False
         else:
             return True
@@ -162,34 +163,35 @@ process, then the runID is filled in. Otherwise, that's set to None.
 def newFlowCell(config):
     # instrument_dir = os.path.dirname(d)
     # instrument_dir = os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),"data",config.get("Options","runID"))
-    instrument_dir = os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID"))
+    cfg = PipelineConfig.get()
     odir = os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
 
     # EMERGENCY FINNMARK FIX
-    if os.path.exists(odir):
+    if os.path.exists(cfg.output_path):
         # ss, opts = getSampleSheets(os.path.dirname(d))
-        ss, opts = getSampleSheets(odir)
-        sample_sub_f = glob.glob(os.path.join(odir, "*Sample-Submission-Form*.xlsx"))
+        ss, opts = getSampleSheets(cfg.output_path)
+        sample_sub_f = glob.glob(os.path.join(cfg.output_path, "*Sample-Submission-Form*.xlsx"))
         use_bfq_output_ss = True
     else:
         # ss, opts = getSampleSheets(os.path.dirname(d))
-        ss, opts = getSampleSheets(instrument_dir)
-        sample_sub_f = glob.glob(os.path.join(instrument_dir, "*Sample-Submission-Form*.xlsx"))
+        ss, opts = getSampleSheets(cfg.run.flowcell_path)
+        sample_sub_f = glob.glob(
+            os.path.join(cfg.run.flowcell_path, "*Sample-Submission-Form*.xlsx")
+        )
         use_bfq_output_ss = False
 
     if not opts or not sample_sub_f:
-        config.set("Options", "runID", "")
-        config.set("Paths", "baseDir", "")
-        return config
+        cfg.run.reset()
+        return
 
     syslog.syslog("Found a new flow cell: {}\n".format(config.get("Options", "runID")))
-    if not os.path.exists(odir):
-        os.makedirs(odir)
+    if not os.path.exists(cfg.output_path):
+        os.makedirs(cfg.output_path)
 
     if not use_bfq_output_ss:
-        sample_sub_f = copy_sample_sub_form(instrument_dir, odir)
+        sample_sub_f = copy_sample_sub_form(cfg.run.flowcell_path, cfg.output_path)
     else:
-        sample_sub_f = f"{odir}/Sample-Submission-Form.xlsx"
+        sample_sub_f = f"{cfg.output_path}/Sample-Submission-Form.xlsx"
 
     if ss is not None and use_bfq_output_ss:
         ss = f"{odir}/SampleSheet.csv"
