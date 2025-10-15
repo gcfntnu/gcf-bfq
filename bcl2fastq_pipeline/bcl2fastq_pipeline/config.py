@@ -40,6 +40,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
+import yaml
+
 
 # --------------------------------------------------------------------------- #
 # Data classes
@@ -120,6 +122,7 @@ class RunContext:
     sample_sheet: Path | None = None
     sample_submission_form: Path | None = None
     libprep: str | None = None
+    pipeline: str | None = None
     user: str | None = None
     rerun: bool = False
     custom: dict[str, str] = field(default_factory=dict)
@@ -187,6 +190,64 @@ class RunContext:
             val = self.custom["Rerun"].strip().lower()
             self.rerun = val in ("true", "1", "yes")
 
+    def set_pipeline_from_yaml(self, yaml_path: Path) -> None:
+        """
+        Determine and set the pipeline workflow for this run based on libprep.config.
+
+        The YAML structure is expected to look like:
+
+            Lexogen SENSE mRNA-Seq Library Prep Kit V2 SE:
+              workflow: rnaseq
+              reads: SE
+              adapter: AAAAAAAA
+            Lexogen SENSE mRNA-Seq Library Prep Kit V2 PE:
+              workflow: rnaseq
+              reads: PE
+            QIAseq miRNA SE:
+              workflow: mirna
+
+        This method:
+          • Matches self.libprep (case-insensitive) against YAML keys
+          • If not found, also tries "<libprep> SE" and "<libprep> PE"
+          • Extracts the inner "workflow" value if present
+          • Sets self.pipeline to that workflow name or "UNKNOWN" if not found
+        """
+        if not self.libprep:
+            self.pipeline = None
+            return
+
+        yaml_file = Path(yaml_path)
+        if not yaml_file.exists():
+            print(f"[RunContext] libprep.config not found: {yaml_file}")
+            self.pipeline = "UNKNOWN"
+            return
+
+        try:
+            with open(yaml_file, encoding="utf-8") as fh:
+                data = yaml.safe_load(fh) or {}
+        except Exception as e:
+            print(f"[RunContext] Failed to parse {yaml_file}: {e}")
+            self.pipeline = "UNKNOWN"
+            return
+
+        libprep_clean = self.libprep.strip().lower()
+        candidates = [libprep_clean, f"{libprep_clean} se", f"{libprep_clean} pe"]
+
+        workflow = None
+
+        for key, value in (data or {}).items():
+            if not isinstance(value, dict):
+                continue  # skip malformed entries
+
+            key_norm = str(key).strip().lower()
+            if key_norm in candidates:
+                wf = value.get("workflow")
+                if wf:
+                    workflow = wf
+                    break
+
+        self.pipeline = str(workflow).strip() if workflow else "UNKNOWN"
+
     def reset(self) -> None:
         """Clear run-specific information."""
         self.run_id = ""
@@ -198,6 +259,7 @@ class RunContext:
         self.user = None
         self.libprep = None
         self.rerun = False
+        self.pipeline = None
         self.custom.clear()
 
 
@@ -285,6 +347,67 @@ class PipelineConfig:
         if not self.run.run_id:
             return None
         return self.static.paths.output_dir / self.run.run_id
+
+    def to_file(self, out_path: Path) -> None:
+        """
+        Write all relevant configuration information to a YAML file.
+
+        The file will include both static (environment) and run-specific
+        sections in a human-readable structure:
+
+            static:
+              paths:
+                ekista_base_dir: /mnt/seq/ekista
+                ...
+              version:
+                gcf_bfq: "1.4.0"
+            run:
+              run_id: 240415_A01295_0345_BHXXXXXX
+              instrument_source: nova
+              libprep: Lexogen SENSE mRNA-Seq Library Prep Kit V2
+              pipeline: rnaseq
+              user: vidar
+              custom:
+                TrimAdapter: "True"
+                ...
+        Parameters
+        ----------
+        out_path : Path
+            Path to the output YAML file (created or overwritten).
+        """
+        # --- convert StaticConfig to simple serializable dict ---
+        static_dict = {
+            "paths": {k: str(v) for k, v in vars(self.static.paths).items() if v is not None},
+            "system": self.static.system,
+            "email": self.static.email,
+            "version": self.static.version,
+            "commands": self.static.commands,
+        }
+
+        # --- convert RunContext to dict ---
+        run_fields = {
+            "run_id": self.run.run_id,
+            "flowcell_path": str(self.run.flowcell_path) if self.run.flowcell_path else None,
+            "base_dir": str(self.run.base_dir) if self.run.base_dir else None,
+            "instrument_source": self.run.instrument_source,
+            "sample_sheet": str(self.run.sample_sheet) if self.run.sample_sheet else None,
+            "sample_submission_form": str(self.run.sample_submission_form)
+            if self.run.sample_submission_form
+            else None,
+            "libprep": self.run.libprep,
+            "pipeline": self.run.pipeline,
+            "user": self.run.user,
+            "rerun": self.run.rerun,
+            "custom": self.run.custom or {},
+        }
+
+        cfg_dict = {"static": static_dict, "run": run_fields}
+
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(out_path, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(cfg_dict, fh, sort_keys=False, default_flow_style=False)
 
 
 # --------------------------------------------------------------------------- #
