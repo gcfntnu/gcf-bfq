@@ -11,33 +11,25 @@ import syslog
 
 from distutils.dir_util import copy_tree
 
+from bcl2fastq_pipeline.config import PipelineConfig
+
 MKFASTQ_10X = {
     "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit": "cellranger_spatial_mkfastq",
     "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1": "cellranger_atac_mkfastq",
     "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3": "cellranger_mkfastq",
 }
 
+config = None
 
-def fixNames(config):
-    lanes = config.get("Options", "lanes")
-    if lanes != "":
-        lanes = f"_lanes{lanes}"
 
-    if "10X Genomics" in config.get("Options", "Libprep"):
+def fixNames():
+    cfg = PipelineConfig.get()
+
+    if "10X Genomics" in cfg.run.libprep:
         return
 
-    names = glob.glob(
-        "{}/{}{}/*/*.fastq.gz".format(
-            config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes
-        )
-    )
-    names.extend(
-        glob.glob(
-            "{}/{}{}/*/*/*.fastq.gz".format(
-                config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes
-            )
-        )
-    )
+    names = glob.glob("{cfg.output_path}/*/*.fastq.gz")
+    names.extend(glob.glob("{cfg.output_path}/*/*/*.fastq.gz"))
     for fname in names:
         if "_001.fastq.gz" in fname:
             fnew = fname.replace("_001.fastq.gz", ".fastq.gz")
@@ -68,118 +60,53 @@ def fix_stats_json(stats_fn):
         fh.writelines(stats)
 
 
-def bcl2fq(config):
+def bcl2fq():
     """
     takes things from /dont_touch_this/solexa_runs/XXX/Data/Intensities/BaseCalls
     and writes most output into config.outputDir/XXX, where XXX is the run ID.
     """
-    lanes = config.get("Options", "lanes")
-    if lanes != "":
-        lanes = f"_lanes{lanes}"
 
+    cfg = PipelineConfig.get()
     # Make the output directories
-    os.makedirs(
-        "{}/{}{}".format(config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes),
-        exist_ok=True,
-    )
-    # Make log directory
-    os.makedirs(
-        "{}".format(
-            os.path.join(
-                config.get("Paths", "logDir"), os.path.dirname(config.get("Options", "runID"))
-            )
-        ),
-        exist_ok=True,
-    )
-    os.makedirs(
-        os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), "InterOp"),
-        exist_ok=True,
-    )
+    os.makedirs(cfg.output_path, exist_ok=True)
+    os.makedirs(cfg.output_path / "InterOp", exist_ok=True)
     copy_tree(
-        os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID"), "InterOp"),
-        os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), "InterOp"),
+        cfg.run.flowcell_path / "InterOp",
+        cfg.output_path / "InterOp",
     )
     old_wd = os.getcwd()
-    os.chdir(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID")))
+    os.chdir(cfg.output_path)
     force_bcl2fastq = os.environ.get("FORCE_BCL2FASTQ", None)
 
-    if "10X Genomics" in config.get("Options", "Libprep"):
-        cmd = "{cellranger_cmd} --output-dir={output_dir} --sample-sheet={sample_sheet} --run={run_dir} {cellranger_options}".format(
-            cellranger_cmd=config.get("cellranger", MKFASTQ_10X[config.get("Options", "Libprep")]),
-            output_dir="{}/{}".format(
-                config.get("Paths", "outputDir"), config.get("Options", "runID")
-            ),
-            sample_sheet=config.get("Options", "sampleSheet"),
-            run_dir="{}/{}/data/{}".format(
-                config.get("Paths", "baseDir"),
-                config.get("Options", "sequencer"),
-                config.get("Options", "runID"),
-            ),
-            cellranger_options=config.get("cellranger", "cellranger_mkfastq_options"),
-        )
+    if "10X Genomics" in cfg.run.libprep:
+        cellranger_cmd = cfg.static.commands[MKFASTQ_10X[cfg.run.libprep]]
+        cellranger_options = cfg.static.commands["cellranger_mkfastq_options"]
+        cmd = f"{cellranger_cmd} --output-dir={cfg.output_path} --sample-sheet={cfg.run.sample_sheet} --run={cfg.run.flowcell_path} {cellranger_options}"
         bcl_done = ["cellranger mkfastq", os.environ.get("CR_VERSION")]
     elif force_bcl2fastq:
-        cmd = "{} {} --sample-sheet {} -o {}/{}{} -R {}/{} --interop-dir {}/{}/InterOp".format(
-            config.get("bcl2fastq", "bcl2fastq"),
-            config.get("bcl2fastq", "bcl2fastq_options"),
-            config.get("Options", "sampleSheet"),
-            config.get("Paths", "outputDir"),
-            config.get("Options", "runID"),
-            lanes,
-            config.get("Paths", "baseDir"),
-            config.get("Options", "runID"),
-            config.get("Paths", "outputDir"),
-            config.get("Options", "runID"),
-        )
+        bcl2fastq_bin = cfg.static.commands["bcl2fastq"]
+        bcl2fastq_opts = cfg.static.commands["bcl2fastq_options"]
+        cmd = f"{bcl2fastq_bin} {bcl2fastq_opts} --sample-sheet {cfg.run.sample_sheet} -o {cfg.output_path} -R {cfg.run.flowcell_path} --interop-dir {cfg.output_path}/InterOp"
         bcl_done = ["bcl2fastq", os.environ.get("BCL2FASTQ_VERSION")]
     else:
-        cmd = "bcl-convert --force --bcl-input-directory {in_dir} --output-directory {out_dir} --sample-sheet {samplesheet} --bcl-sampleproject-subdirectories true --no-lane-splitting true --output-legacy-stats true".format(
-            in_dir=os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID")),
-            out_dir=os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID")),
-            samplesheet=os.path.join(
-                config.get("Paths", "outputDir"), config.get("Options", "runID"), "SampleSheet.csv"
-            ),
-        )
+        cmd = f"bcl-convert --force --bcl-input-directory {cfg.run.flowcell_path} --output-directory {cfg.output_path} --sample-sheet {cfg.run.sample_sheet} --bcl-sampleproject-subdirectories true --no-lane-splitting true --output-legacy-stats true"
         bcl_done = ["bcl-convert", os.environ.get("BCL_CONVERT_VERSION")]
     try:
         syslog.syslog(f"[convert bcl] Running: {cmd}\n")
-        with open(
-            "{}/{}{}.log".format(
-                config.get("Paths", "logDir"), config.get("Options", "runID"), lanes
-            ),
-            "w",
-        ) as logOut:
+        with open(cfg.static.paths.log / cfg.run.run_id / ".log", "w") as logOut:
             subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
     except Exception:
-        if "10X Genomics" not in config.get("Options", "Libprep") and force_bcl2fastq:
-            with open(
-                "{}/{}{}.log".format(
-                    config.get("Paths", "logDir"), config.get("Options", "runID"), lanes
-                )
-            ) as logOut:
+        if "10X Genomics" not in cfg.run.libprep and force_bcl2fastq:
+            with open(cfg.static.paths.log / cfg.run.run_id / ".log") as logOut:
                 log_content = logOut.read()
             if "<bcl2fastq::layout::BarcodeCollisionError>" in log_content:
                 cmd += " --barcode-mismatches 0 "
-                with open(
-                    "{}/{}{}.log".format(
-                        config.get("Paths", "logDir"), config.get("Options", "runID"), lanes
-                    ),
-                    "w",
-                ) as logOut:
+                with open(cfg.static.paths.log / cfg.run.run_id / ".log", "w") as logOut:
                     syslog.syslog(f"[bcl2fq] Retrying with --barcode-mismatches 0 : {cmd}\n")
                     subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
 
-    if os.path.exists(os.path.join("Reports", "legacy", "Stats")):
-        cmd = "ln -sr {} {}".format(
-            os.path.join(
-                config.get("Paths", "outputDir"),
-                config.get("Options", "runID"),
-                "Reports",
-                "legacy",
-                "Stats",
-            ),
-            os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), "Stats"),
-        )
+    if os.path.exists(cfg.output_path / "Reports" / "legacy" / "Stats"):
+        cmd = f"ln -sr {cfg.output_path}/Reports/legacy/Stats {cfg.output_path}/Stats"
         subprocess.check_call(cmd, shell=True)
         # fix_stats_json(os.path.join("Stats", "Stats.json"))
 

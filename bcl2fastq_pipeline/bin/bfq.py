@@ -75,51 +75,36 @@ while True:
             cfg.run.reset()
             continue
 
-        config = bcl2fastq_pipeline.findFlowCells.newFlowCell(config)
+        bcl2fastq_pipeline.findFlowCells.newFlowCell()
         if not cfg.run.run_id:
             continue
         # Ensure we have sufficient space
-        if not bcl2fastq_pipeline.misc.enoughFreeSpace(config):
+        if not bcl2fastq_pipeline.misc.enoughFreeSpace():
             syslog.syslog("Error: insufficient free space!\n")
             bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Error: insufficient free space!")
+            cfg.run.reset()
             break
 
         startTime = datetime.datetime.now()
 
         # Make the fastq files, if not already done
-        if not os.path.exists(
-            "{}/{}/bcl.done".format(config["Paths"]["outputDir"], config["Options"]["runID"])
-        ):
+        if not os.path.exists(f"{cfg.output_path}/bcl.done"):
             try:
-                bcl_done = bcl2fastq_pipeline.makeFastq.bcl2fq(config)
-                with open(
-                    "{}/{}/bcl.done".format(
-                        config["Paths"]["outputDir"], config["Options"]["runID"]
-                    ),
-                    "w",
-                ) as fh:
+                bcl_done = bcl2fastq_pipeline.makeFastq.bcl2fq()
+                with open(cfg.output_path / "bcl.done", "w") as fh:
                     fh.write("\t".join(bcl_done))
             except Exception:
                 syslog.syslog("Got an error in bcl2fq\n")
-                bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), "Got an error in bcl2fq")
+                bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error in bcl2fq")
                 continue
 
-        if not os.path.exists(
-            "{}/{}/files.renamed".format(config["Paths"]["outputDir"], config["Options"]["runID"])
-        ):
+        if not os.path.exists(cfg.output_path / "files.renamed"):
             try:
-                bcl2fastq_pipeline.makeFastq.fixNames(config)
-                open(
-                    "{}/{}/files.renamed".format(
-                        config["Paths"]["outputDir"], config["Options"]["runID"]
-                    ),
-                    "w",
-                ).close()
+                bcl2fastq_pipeline.makeFastq.fixNames()
+                open(cfg.output_path / "files.renamed", "w").close()
             except Exception:
                 syslog.syslog("Got an error in fixNames\n")
-                bcl2fastq_pipeline.misc.errorEmail(
-                    config, sys.exc_info(), "Got an error in fixNames"
-                )
+                bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error in fixNames")
                 continue
 
         # Run post-processing steps
