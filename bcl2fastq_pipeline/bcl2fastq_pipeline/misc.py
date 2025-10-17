@@ -201,14 +201,14 @@ def parserDemultiplexStats(cfg):
     return pd.DataFrame.from_dict({"Lane": lanes, "% Undetermined": undeter}).round(2)
 
 
-def enoughFreeSpace(config):
+def enoughFreeSpace():
     """
     Ensure that outputDir has at least minSpace gigs
     """
     cfg = PipelineConfig.get()
     (tot, used, free) = shutil.disk_usage(cfg.static.paths.output_dir)
     free /= 1024 * 1024 * 1024
-    if free >= float(cfg.static.system["min_space"]):
+    if free >= float(cfg.static.system["minspace"]):
         return True
     return False
 

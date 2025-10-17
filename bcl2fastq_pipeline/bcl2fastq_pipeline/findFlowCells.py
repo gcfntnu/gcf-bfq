@@ -129,7 +129,7 @@ def newFlowCell():
         cfg.run.reset()
         return
 
-    syslog.syslog("Found a new flow cell: {}\n".format(config.get("Options", "runID")))
+    syslog.syslog(f"Found a new flow cell: {cfg.run.run_id}\n")
     if not os.path.exists(cfg.output_path):
         os.makedirs(cfg.output_path)
 

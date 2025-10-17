@@ -7,6 +7,7 @@ import signal
 import sys
 import syslog
 
+from pathlib import Path
 from threading import Event
 
 import bcl2fastq_pipeline.afterFastq
@@ -28,7 +29,7 @@ def breakSleep(signo, _frame):
 
 
 def sleep(cfg):
-    gotHUP.wait(timeout=float(cfg.static.system["sleepTime"] * 60 * 60))
+    gotHUP.wait(timeout=float(cfg.static.system["sleeptime"] * 60 * 60))
     gotHUP.clear()
 
 
@@ -68,8 +69,9 @@ while True:
         for machine, fin_file in completion_files.items():
             dirs.extend(glob.glob(f"{pth}/*_{machine}_*/{fin_file}"))
 
+    dirs = [Path(d) for d in dirs]
     for d in dirs:
-        cfg.run.begin(d, cfg.static.paths)
+        cfg.run.begin(d.parent, cfg.static.paths)
 
         if bcl2fastq_pipeline.findFlowCells.flowCellProcessed():
             cfg.run.reset()
