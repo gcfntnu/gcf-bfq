@@ -27,8 +27,8 @@ def breakSleep(signo, _frame):
     gotHUP.set()
 
 
-def sleep(config):
-    gotHUP.wait(timeout=float(config["Options"]["sleepTime"]) * 60 * 60)
+def sleep(cfg):
+    gotHUP.wait(timeout=float(cfg.static.system["sleepTime"] * 60 * 60))
     gotHUP.clear()
 
 
@@ -130,12 +130,12 @@ while True:
 
         # Email finished message
         try:
-            bcl2fastq_pipeline.misc.finishedEmail(config, message, runTime)
+            bcl2fastq_pipeline.misc.finishedEmail(message, runTime)
         except Exception:
             cfg.run.reset()
             syslog.syslog("Couldn't send the finished email! Quiting")
             bcl2fastq_pipeline.misc.errorEmail(
-                config, sys.exc_info(), "Got an error during finishedEmail()"
+                sys.exc_info(), "Got an error during finishedEmail()"
             )
             continue
 
@@ -145,7 +145,7 @@ while True:
         except Exception as e:
             cfg.run.reset()
             syslog.syslog("Got an error during finalize!\n")
-            bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), str(e))
+            bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), str(e))
             continue
         finalizeTime = datetime.datetime.now() - endTime
         runTime += finalizeTime
@@ -155,12 +155,12 @@ while True:
             cfg.run.reset()
             syslog.syslog("Couldn't send the finalize email! Quiting")
             bcl2fastq_pipeline.misc.errorEmail(
-                config, sys.exc_info(), "Got an error during finishedEmail()"
+                sys.exc_info(), "Got an error during finishedEmail()"
             )
             continue
         # Mark the flow cell as having been processed
-        bcl2fastq_pipeline.findFlowCells.markFinished(config)
+        bcl2fastq_pipeline.findFlowCells.markFinished(cfg)
         cfg.run.reset()
 
     # done processing, no more flowcells in queue
-    sleep(config)
+    sleep(cfg)

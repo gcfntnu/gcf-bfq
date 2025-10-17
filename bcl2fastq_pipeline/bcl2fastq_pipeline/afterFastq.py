@@ -196,122 +196,87 @@ def multiqc_stats(cfg):
     os.chdir(oldWd)
 
 
+def generate_password(cfg, prefix: str) -> str:
+    """
+    Generate a one-time archive password and write it to file.
+
+    Parameters
+    ----------
+    cfg : PipelineConfig
+        Global configuration object.
+    prefix : str
+        Used to name the password file, e.g. 'encryption.<prefix>'.
+
+    Returns
+    -------
+    str
+        The generated password string.
+    """
+    pw = subprocess.check_output("xkcdpass -n 5 -d '-' -v '[a-z]'", shell=True).decode().strip("\n")
+    pw_file = cfg.output_path / f"encryption.{prefix}"
+    with pw_file.open("w", encoding="utf-8") as fh:
+        fh.write(f"{pw}\n")
+
+    return pw
+
+
 def archive_worker(cfg):
-    project_dirs = get_project_dirs(config)
+    project_dirs = get_project_dirs(cfg)
     pnames = get_project_names(project_dirs)
-    run_date = config.get("Options", "runID").split("_")[0]
+    run_date = str(cfg.run.run_id).split("_")[0]
 
     for p in pnames:
-        """
-        Archive fastq
-        """
-        if os.path.exists(
-            os.path.join(
-                config.get("Paths", "outputDir"), config.get("Options", "runID"), f"{p}.7za"
-            )
-        ):
-            os.remove(
-                os.path.join(
-                    config.get("Paths", "outputDir"), config.get("Options", "runID"), f"{p}.7za"
-                )
-            )
-        pw = None
-        if config.get("Options", "SensitiveData") == "1":
-            pw = (
-                subprocess.check_output("xkcdpass -n 5 -d '-' -v '[a-z]'", shell=True)
-                .decode()
-                .strip("\n")
-            )
-            with open(
-                os.path.join(
-                    config.get("Paths", "outputDir"),
-                    config.get("Options", "runID"),
-                    f"encryption.{p}",
-                ),
-                "w",
-            ) as pwfile:
-                pwfile.write(f"{pw}\n")
+        # ------------------------------------------------------------------ #
+        # Archive FASTQ
+        # ------------------------------------------------------------------ #
+        archive_fastq = cfg.output_path / f"{p}_{run_date}.7za"
+        if archive_fastq.exists():
+            archive_fastq.unlink()
+
+        pw = generate_password(cfg, p) if cfg.run.sensitive else None
         opts = f"-p{pw}" if pw else ""
-        flowdir = os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
-        report_dir = (
-            os.path.join(flowdir, "Reports")
-            if os.path.exists(os.path.join(flowdir, "Reports"))
-            else ""
+
+        report_dir = cfg.output_path / "Reports"
+        if not report_dir.exists():
+            report_dir = ""
+
+        cmd = (
+            f"7za a {opts} "
+            f"{cfg.output_path}/{p}_{run_date}.7za "
+            f"{cfg.output_path}/{p}/ "
+            f"{cfg.output_path}/Stats "
+            f"{report_dir} "
+            f"{cfg.output_path}/Undetermined*.fastq.gz "
+            f"{cfg.output_path}/{p}_samplesheet.tsv "
+            f"{cfg.output_path}/SampleSheet.csv "
+            f"{cfg.output_path}/Sample-Submission-Form.xlsx "
+            f"{cfg.output_path}/md5sum_{p}_fastq.txt "
         )
 
-        cmd = "7za a {opts} {flowdir}/{pnr}_{date}.7za {flowdir}/{pnr}/ {flowdir}/Stats {report_dir} {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt ".format(
-            opts=opts,
-            date=run_date,
-            flowdir=os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID")),
-            report_dir=report_dir,
-            pnr=p,
-        )
-        if "10X Genomics" in config.get("Options", "Libprep"):
-            cmd += " {}".format(
-                os.path.join(
-                    config.get("Paths", "outputDir"),
-                    config.get("Options", "runID"),
-                    config.get("Options", "runID").split("_")[-1][1:],
-                )
-            )
-        syslog.syslog(
-            "[archive_worker] Zipping {}\n".format(
-                os.path.join(
-                    config.get("Paths", "outputDir"),
-                    config.get("Options", "runID"),
-                    f"{p}_{run_date}.7za",
-                )
-            )
-        )
+        if cfg.run.libprep and "10X Genomics" in cfg.run.libprep:
+            extra = cfg.run.run_id.split("_")[-1][1:]
+            cmd += f" {cfg.output_path}/{extra}"
+
+        syslog.syslog(f"[archive_worker] Zipping {archive_fastq}\n")
         subprocess.check_call(cmd, shell=True)
-        """
-        Archive pipeline output
-        """
-        if os.path.exists(
-            os.path.join(
-                config.get("Paths", "outputDir"), config.get("Options", "runID"), f"QC_{p}.7za"
-            )
-        ):
-            os.remove(
-                os.path.join(
-                    config.get("Paths", "outputDir"), config.get("Options", "runID"), f"QC_{p}.7za"
-                )
-            )
-        pw = None
-        if config.get("Options", "SensitiveData") == "1":
-            pw = (
-                subprocess.check_output("xkcdpass -n 5 -d '-' -v '[a-z]'", shell=True)
-                .decode()
-                .strip("\n")
-            )
-            with open(
-                os.path.join(
-                    config.get("Paths", "outputDir"),
-                    config.get("Options", "runID"),
-                    f"encryption.QC_{p}",
-                ),
-                "w",
-            ) as pwfile:
-                pwfile.write(f"{pw}\n")
 
+        # ------------------------------------------------------------------ #
+        # Archive pipeline output (QC)
+        # ------------------------------------------------------------------ #
+        qc_archive = cfg.output_path / f"QC_{p}_{run_date}.7za"
+        if qc_archive.exists():
+            qc_archive.unlink()
+
+        pw = generate_password(cfg, f"QC_{p}") if cfg.run.sensitive else None
         opts = f"-p{pw}" if pw else ""
-        flowdir = os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
-        pipeline = config.get("Options", "pipeline")
-        qc_dir = os.path.join(
-            os.environ["TMPDIR"], f"{p}_{run_date}", "data", "tmp", pipeline, "bfq"
-        )
 
-        cmd = f"7z a -l {opts} {flowdir}/QC_{p}_{run_date}.7za {qc_dir} "
+        tmp_dir = Path(os.environ["TMPDIR"])
+        qc_dir = tmp_dir / f"{p}_{run_date}" / "data" / "tmp" / cfg.run.pipeline / "bfq"
+        flowdir = cfg.output_path
 
-        """
-        cmd = "7z a -l {opts} {flowdir}/QC_{pnr}_{date}.7za {qc_dir} ".format(
-                opts = opts,
-                flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
-                pnr = p,
-                date = run_date,
-                qc_dir = qc_dir
-            )
-        """
+        cmd = f"7za a -l {opts} {flowdir}/QC_{p}_{run_date}.7za {qc_dir} "
+
+        syslog.syslog(f"[archive_worker] Archiving QC output → {qc_archive}\n")
         subprocess.check_call(cmd, shell=True)
 
 

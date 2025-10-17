@@ -288,10 +288,10 @@ def finishedEmail(msg, runTime):
     s.quit()
 
 
-def finalizedEmail(config, msg, finalizeTime, runTime):
-    config.get("Options", "lanes")
+def finalizedEmail(msg, finalizeTime, runTime):
+    cfg = PipelineConfig.get()
 
-    projects = get_project_names(get_project_dirs(config))
+    projects = get_project_names(get_project_dirs(cfg))
 
     message = "{} has been finalized and prepared for delivery.\n\n".format(", ".join(projects))
     message += f"md5sum and 7zip runtime: {finalizeTime}\n"
@@ -301,18 +301,16 @@ def finalizedEmail(config, msg, finalizeTime, runTime):
 
     # message = "<html>\n<body>\n<head></head>\n" + message + "\n</body>\n</html>"
 
-    os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
-
     # with open(os.path.join(config.get("Paths", "reportDir"),'{}.report'.format(config.get("Options","runID"))),'w') as report:
     #    report.write(msg)
     msg = MIMEMultipart()
     msg["Subject"] = "[bcl2fastq_pipeline] {} finalized".format(", ".join(projects))
-    msg["From"] = config.get("Email", "fromAddress")
-    msg["To"] = config.get("Email", "errorTo")
+    msg["From"] = cfg.static.email["fromAddress"]
+    msg["To"] = cfg.static.email["errorTo"]
     msg["Date"] = formatdate(localtime=True)
 
     msg.attach(MIMEText(message))
 
-    s = smtplib.SMTP(config.get("Email", "host"))
+    s = smtplib.SMTP(cfg.static.email["host"])
     s.send_message(msg)
     s.quit()

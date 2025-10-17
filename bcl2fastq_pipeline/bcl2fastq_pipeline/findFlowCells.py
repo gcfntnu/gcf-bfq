@@ -164,16 +164,14 @@ def copy_sample_sub_form(instrument_path, output_path):
 
 
 def markFinished(config):
-    open(
-        "{}/{}/fastq.made".format(config["Paths"]["outputDir"], config["Options"]["runID"]),
-        "w",
-    ).close()
-    project_dirs = af.get_project_dirs(config)
+    cfg = PipelineConfig.get()
+    open(cfg.output_path / "fastq.made", "w").close()
+    project_dirs = af.get_project_dirs(cfg)
     project_names = af.get_project_names(project_dirs)
     now = dt.datetime.now()
     for gcf in project_names:
         fm.add_flowcell(
             project=gcf,
-            path=os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID")),
+            path=cfg.output_path,
             timestamp=now,
         )
