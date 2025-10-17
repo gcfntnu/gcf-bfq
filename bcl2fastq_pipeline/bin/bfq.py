@@ -103,29 +103,27 @@ while True:
                 bcl2fastq_pipeline.makeFastq.fixNames()
                 open(cfg.output_path / "files.renamed", "w").close()
             except Exception:
+                cfg.run.reset()
                 syslog.syslog("Got an error in fixNames\n")
                 bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error in fixNames")
                 continue
 
         # Run post-processing steps
         try:
-            message = bcl2fastq_pipeline.afterFastq.postMakeSteps(config)
+            message = bcl2fastq_pipeline.afterFastq.postMakeSteps()
         except Exception as e:
+            cfg.run.reset()
             syslog.syslog(f"Got an error during postMakeSteps:\n {e}")
-            bcl2fastq_pipeline.misc.errorEmail(
-                config, sys.exc_info(), "Got an error during postMakeSteps"
-            )
+            bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error during postMakeSteps")
             continue
 
         # Get more statistics and create PDFs
         try:
-            # message += "\n\n"+bcl2fastq_pipeline.misc.parseConversionStats(config)
-            message += bcl2fastq_pipeline.misc.getFCmetricsImproved(config)
+            message += bcl2fastq_pipeline.misc.getFCmetricsImproved()
         except Exception:
-            syslog.syslog("Got an error during parseConversionStats\n")
-            bcl2fastq_pipeline.misc.errorEmail(
-                config, sys.exc_info(), "Got an error during parseConversionStats"
-            )
+            cfg.run.reset()
+            syslog.syslog("Got an error during getFCmetrics\n")
+            bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error during getFCmetrics")
             continue
         endTime = datetime.datetime.now()
         runTime = endTime - startTime
@@ -134,7 +132,7 @@ while True:
         try:
             bcl2fastq_pipeline.misc.finishedEmail(config, message, runTime)
         except Exception:
-            # Unrecoverable error
+            cfg.run.reset()
             syslog.syslog("Couldn't send the finished email! Quiting")
             bcl2fastq_pipeline.misc.errorEmail(
                 config, sys.exc_info(), "Got an error during finishedEmail()"
@@ -143,8 +141,9 @@ while True:
 
         # Finalize
         try:
-            bcl2fastq_pipeline.afterFastq.finalize(config)
+            bcl2fastq_pipeline.afterFastq.finalize()
         except Exception as e:
+            cfg.run.reset()
             syslog.syslog("Got an error during finalize!\n")
             bcl2fastq_pipeline.misc.errorEmail(config, sys.exc_info(), str(e))
             continue
@@ -153,7 +152,7 @@ while True:
         try:
             bcl2fastq_pipeline.misc.finalizedEmail(config, "", finalizeTime, runTime)
         except Exception:
-            # Unrecoverable error
+            cfg.run.reset()
             syslog.syslog("Couldn't send the finalize email! Quiting")
             bcl2fastq_pipeline.misc.errorEmail(
                 config, sys.exc_info(), "Got an error during finishedEmail()"
@@ -161,6 +160,7 @@ while True:
             continue
         # Mark the flow cell as having been processed
         bcl2fastq_pipeline.findFlowCells.markFinished(config)
+        cfg.run.reset()
 
     # done processing, no more flowcells in queue
     sleep(config)

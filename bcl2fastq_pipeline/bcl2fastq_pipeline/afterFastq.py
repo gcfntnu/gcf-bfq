@@ -104,24 +104,21 @@ def md5sum_worker(config):
     os.chdir(old_wd)
 
 
-def md5sum_archive(archive):
-    a = archive.replace(".7za", "")
-    if (not os.path.exists(f"md5sum_{a}_archive.txt")) or (
-        os.path.exists(f"md5sum_{a}_archive.txt")
-        and (os.path.getmtime(f"{a}.7za") > os.path.getmtime(f"md5sum_{a}_archive.txt"))
-    ):
-        cmd = f"md5sum {a}.7za > md5sum_{a}_archive.txt"
+def md5sum_archive(archive_path: Path):
+    base = archive_path.with_suffix("")  # remove .7za suffix
+    md5_file = archive_path.parent / f"md5sum_{base.name}_archive.txt"
+
+    if not md5_file.exists() or archive_path.stat().st_mtime > md5_file.stat().st_mtime:
+        cmd = f"md5sum {archive_path} > {md5_file}"
         subprocess.check_call(cmd, shell=True)
 
 
-def md5sum_archive_worker(config):
-    old_wd = os.getcwd()
-    os.chdir(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID")))
-    archives = glob.glob("*.7za")
-    p = mp.Pool()
-    p.map(md5sum_archive, archives)
-    p.close()
-    os.chdir(old_wd)
+def md5sum_archive_worker(cfg):
+    output_path = Path(cfg.output_path)
+    archives = list(output_path.glob("*.7za"))
+
+    with mp.Pool() as pool:
+        pool.map(md5sum_archive, archives)
 
 
 def multiqc_stats(cfg):
@@ -199,7 +196,7 @@ def multiqc_stats(cfg):
     os.chdir(oldWd)
 
 
-def archive_worker(config):
+def archive_worker(cfg):
     project_dirs = get_project_dirs(config)
     pnames = get_project_names(project_dirs)
     run_date = config.get("Options", "runID").split("_")[0]
@@ -477,8 +474,9 @@ def postMakeSteps(config):
     return message
 
 
-def finalize(config):
+def finalize():
+    cfg = PipelineConfig.get()
     # zip arhive
-    archive_worker(config)
+    archive_worker(cfg)
     # md5sum archive
-    md5sum_archive_worker(config)
+    md5sum_archive_worker(cfg)

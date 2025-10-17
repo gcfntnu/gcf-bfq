@@ -53,76 +53,11 @@ def getSampleID(sampleTuple, project, lane, sampleName):
     return " "
 
 
-def getFCmetrics(root):
-    barcode = root[0][0]  # Sample "all", barcode "all"
-    message = "Lane\t# Clusters (% pass)\t% Bases >=Q30\tAve. base qual.\n"
-    for lane in barcode.findall("Lane"):
-        message += "Lane {}".format(lane.get("number"))
-        clusterCount = 0
-        clusterCountPass = 0
-        baseYield = [0, 0]
-        baseYieldQ30 = [0, 0]
-        QualSum = [0, 0]
-        for tile in lane:
-            clusterCount += int(tile[0][0].text)
-            clusterCountPass += int(tile[1][0].text)
-            # Yield
-            baseYield[0] += int(tile[1][1][0].text)
-            if len(tile[1]) == 3:
-                baseYield[1] += int(tile[1][2][0].text)
-            # YieldQ30
-            baseYieldQ30[0] += int(tile[1][1][1].text)
-            if len(tile[1]) == 3:
-                baseYieldQ30[1] += int(tile[1][2][1].text)
-            # QualSum
-            QualSum[0] += int(tile[1][1][2].text)
-            if len(tile[1]) == 3:
-                QualSum[1] += int(tile[1][2][2].text)
-        # Number of clusters (%passing filter)
-        try:
-            message += "\t{} ({:5.2f}%)".format(
-                f"{clusterCount:,}".replace(",", " "),
-                100 * clusterCountPass / clusterCount,
-            )
-        except Exception:
-            message += "\t{} (NA)".format(f"{clusterCount:,}".replace(",", " "))
-        # %bases above Q30
-        if baseYield[1] > 0:
-            try:
-                message += f"\t{100 * (baseYieldQ30[0] / baseYield[0]):5.2f}%/{100 * (baseYieldQ30[1] / baseYield[1]):5.2f}%"
-            except Exception:
-                message += "\tNA/NA"
-        else:
-            try:
-                message += "\t%5.2f%%" % (100 * (baseYieldQ30[0] / baseYield[0]))
-            except Exception:
-                message += "\tNA"
-        # Average base quality
-        if baseYield[1] > 0:
-            try:
-                message += f"\t{QualSum[0] / float(baseYield[0]):4.1f}/{QualSum[1] / float(baseYield[1]):4.1f}\n"
-            except Exception:
-                message += "\tNA/NA\n"
-        else:
-            try:
-                message += "\t%4.1f\n" % (QualSum[0] / float(baseYield[0]))
-            except Exception:
-                message += "\tNA\n"
-
-    return message
-
-
-def getFCmetricsImproved(config):
+def getFCmetricsImproved():
+    cfg = PipelineConfig.get()
     message = ""
     try:
-        with open(
-            os.path.join(
-                config.get("Paths", "outputDir"),
-                config.get("Options", "runID"),
-                "Stats",
-                "interop_summary.csv",
-            )
-        ) as fh:
+        with open(os.path.join(cfg.output_path / "Stats" / "interop_summary.csv")) as fh:
             header = False
             while not header:
                 line = fh.readline()
@@ -163,7 +98,7 @@ def getFCmetricsImproved(config):
         df = df.rename(columns=mapper)
         dfs.append(df)
 
-    undeter = parserDemultiplexStats(config)
+    undeter = parserDemultiplexStats(cfg)
     if len(dfs) > 1:
         dfs[0]["R2 %>=Q30"] = dfs[1]["%>=Q30"]
         dfs[0] = dfs[0].rename(columns={"%>=Q30": "R1 %>=Q30"})
@@ -176,20 +111,20 @@ def getFCmetricsImproved(config):
     return message
 
 
-def parseSampleSheetMetrics(config):
-    project_dirs = get_project_dirs(config)
+def parseSampleSheetMetrics(cfg):
+    project_dirs = get_project_dirs(cfg)
     project_names = get_project_names(project_dirs)
     msg = "<strong>Sample sheet info</strong>\n"
     for pid in project_names:
-        with open(config.get("Options", "sampleSheet")):
+        with open(cfg.run.sample_sheet):
             args = Namespace(
-                samplesheet=[config.get("Options", "sampleSheet")],
+                samplesheet=[cfg.run.sample_sheet],
                 project_id=[pid],
             )
             sample_df, _, _ = cm.get_project_samples_from_samplesheet(args)
         msg += f"<strong>{pid}</strong>: Found {len(sample_df)} samples in samplesheet.\n"
 
-    ssub_df, _ = cm.sample_submission_form_parser(config.get("Options", "sampleSubForm"))
+    ssub_df, _ = cm.sample_submission_form_parser(cfg.run.sample_submission_form)
     msg += f"\nFound {len(ssub_df.index)} samples in sample submission form.\n"
     if "Sample_Group" in ssub_df:
         if ssub_df["Sample_Group"].notnull().all():
@@ -214,7 +149,7 @@ def parseSampleSheetMetrics(config):
     return msg
 
 
-def parserDemultiplexStats(config):
+def parserDemultiplexStats(cfg):
     """
     Parse DemultiplexingStats.xml under outputDir/Stats/ to get the
     number/percent of undetermined indices.
@@ -223,17 +158,10 @@ def parserDemultiplexStats(config):
     Sample "all" and Project "all" Sample "all", as the former gives the total
     undetermined and the later simply the total clusters
     """
-    lanes = config.get("Options", "lanes")
-    if lanes != "":
-        lanes = f"_lanes{lanes}"
 
     totals = [0, 0, 0, 0, 0, 0, 0, 0]
     undetermined = [0, 0, 0, 0, 0, 0, 0, 0]
-    tree = ET.parse(
-        "{}/{}{}/Stats/DemultiplexingStats.xml".format(
-            config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes
-        )
-    )
+    tree = ET.parse(cfg.output_path / "Stats" / " DemultiplexingStats.xml")
     root = tree.getroot()
     for child in root[0].findall("Project"):
         if child.get("name") == "default":
@@ -273,35 +201,6 @@ def parserDemultiplexStats(config):
     return pd.DataFrame.from_dict({"Lane": lanes, "% Undetermined": undeter}).round(2)
 
 
-def parseConversionStats(config):
-    """
-    Parse ConversionStats.xml, producing:
-     1) A PDF file for each project
-     2) A message that will be included in the email message
-    """
-    lanes = config.get("Options", "lanes")
-    if lanes != "":
-        lanes = f"_lanes{lanes}"
-
-    try:
-        tree = ET.parse(
-            "{}/{}{}/Stats/ConversionStats.xml".format(
-                config.get("Paths", "outputDir"), config.get("Options", "runID"), lanes
-            )
-        )
-        root = tree.getroot()[0]  # We only ever have a single flow cell
-    except Exception:
-        return None
-    metrics = None
-    # Per-project PDF files
-    for project in root.findall("Project"):
-        if project.get("name") == "default":
-            continue
-        if project.get("name") == "all":
-            metrics = getFCmetrics(project)
-    return metrics
-
-
 def enoughFreeSpace(config):
     """
     Ensure that outputDir has at least minSpace gigs
@@ -324,32 +223,23 @@ def errorEmail(errTuple, msg):
         report.write(msg)
 
 
-def finishedEmail(config, msg, runTime):
-    config.get("Options", "lanes")
-
-    projects = get_project_names(get_project_dirs(config))
+def finishedEmail(msg, runTime):
+    cfg = PipelineConfig.get()
+    projects = get_project_names(get_project_dirs(cfg))
 
     message = "<strong>Short summary for {}. </strong>\n\n".format(", ".join(projects))
-    message += (
-        "<strong>User: {} </strong>\n".format(config.get("Options", "User"))
-        if config.get("Options", "User") != "N/A"
-        else ""
-    )
-    message += "Flow cell: {} \n".format(config.get("Options", "runID"))
-    message += "Sequencer: {} \n".format(
-        get_sequencer(os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID")))
-    )
-    message += "Read geometry: {} \n\n".format(
-        get_read_geometry(
-            os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
-        )
-    )
+    message += f"<strong>User: {cfg.run.user} </strong>\n" if cfg.run.user != "N/A" else ""
+    message += f"Flow cell: {cfg.run.run_id} \n"
+    seq = get_sequencer(cfg.run.run_id)
+    message += f"Sequencer: {seq} \n"
+    read_geo = get_read_geometry(cfg.output_path)
+    message += f"Read geometry: {read_geo} \n\n"
     message += f"bcl2fastq_pipeline run time: {runTime} \n"
     # message += "Data transfer: %s\n" % transferTime
     message = message.replace("\n", "\n<br>")
     message += msg
 
-    sample_sheet_metrics = parseSampleSheetMetrics(config)
+    sample_sheet_metrics = parseSampleSheetMetrics(cfg)
     sample_sheet_metrics = sample_sheet_metrics.replace("\n", "\n<br>")
 
     message = (
@@ -362,46 +252,38 @@ def finishedEmail(config, msg, runTime):
         + "\n</body>\n</html>"
     )
 
-    odir = os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
-
     # with open(os.path.join(config.get("Paths", "reportDir"),'{}.report'.format(config.get("Options","runID"))),'w') as report:
     #    report.write(msg)
     msg = MIMEMultipart()
     msg["Subject"] = "[bcl2fastq_pipeline] {} processed".format(", ".join(projects))
-    msg["From"] = config.get("Email", "fromAddress")
-    msg["To"] = config.get("Email", "finishedTo")
+    msg["From"] = cfg.static.email["from_address"]
+    msg["To"] = cfg.static.email["finished_to"]
     msg["Date"] = formatdate(localtime=True)
 
     msg.attach(MIMEText(message, "html"))
 
-    date = config.get("Options", "runID").split("_")[0]
+    date = cfg.run.run_id.split("_")[0]
 
     for p in projects:
-        with open(os.path.join(odir, f"multiqc_{p}_{date}.html"), "rb") as report:
+        with open(cfg.output_path / f"multiqc_{p}_{date}.html", "rb") as report:
             part = MIMEApplication(report.read(), report.name)
         part["Content-Disposition"] = f'attachment; filename="multiqc_{p}_{date}.html"'
         msg.attach(part)
 
-        if config.get("Options", "Libprep").startswith(
-            ("10X Genomics Chromium Single Cell", "Parse Biosciences")
-        ):
-            f = os.path.join(odir, f"all_samples_web_summary_{p}_{date}.html")
-            if os.path.exists(f):
+        if cfg.run.libprep.startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences")):
+            f = cfg.output_path / f"all_samples_web_summary_{p}_{date}.html"
+            if f.exists():
                 with open(f, "rb") as report:
                     part = MIMEApplication(report.read(), report.name)
                 part["Content-Disposition"] = f'attachment; filename="{os.path.basename(f)}"'
                 msg.attach(part)
-
-    with open(
-        os.path.join(odir, "Stats/sequencer_stats_{}.html".format("_".join(projects))), "rb"
-    ) as report:
+    project_str = "_".join(projects)
+    with open(cfg.output_path / "Stats" / f"sequencer_stats_{project_str}.html", "rb") as report:
         part = MIMEApplication(report.read(), report.name)
-    part["Content-Disposition"] = 'attachment; filename="sequencer_stats_{}.html"'.format(
-        "_".join(projects)
-    )
+    part["Content-Disposition"] = f'attachment; filename="sequencer_stats_{project_str}.html"'
     msg.attach(part)
 
-    s = smtplib.SMTP(config.get("Email", "host"))
+    s = smtplib.SMTP(cfg.static.email["host"])
     s.send_message(msg)
     s.quit()
 

@@ -125,6 +125,7 @@ class RunContext:
     pipeline: str | None = None
     user: str | None = None
     rerun: bool = False
+    sensitive: bool = False
     custom: dict[str, str] = field(default_factory=dict)
 
     # --- mutators ----------------------------------------------------------- #
@@ -189,6 +190,9 @@ class RunContext:
         if "Rerun" in self.custom:
             val = self.custom["Rerun"].strip().lower()
             self.rerun = val in ("true", "1", "yes")
+        if "SensitiveData" in self.custom:
+            val = self.custom["SensitiveData"].strip().lower()
+            self.sensitive = val in ("true", "1", "yes")
 
     def set_pipeline_from_yaml(self, yaml_path: Path) -> None:
         """
@@ -259,6 +263,7 @@ class RunContext:
         self.user = None
         self.libprep = None
         self.rerun = False
+        self.sensitive = False
         self.pipeline = None
         self.custom.clear()
 
