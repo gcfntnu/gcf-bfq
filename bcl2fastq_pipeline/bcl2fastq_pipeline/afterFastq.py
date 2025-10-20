@@ -84,22 +84,17 @@ def get_read_geometry(run_dir):
         return "Read geometry could not be automatically determined."
 
 
-def md5sum_worker(config):
+def md5sum_worker(cfg):
     old_wd = os.getcwd()
-    os.chdir(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID")))
-    project_dirs = get_project_dirs(config)
+    os.chdir(cfg.output_path)
+    project_dirs = get_project_dirs(cfg)
     pnames = get_project_names(project_dirs)
     for p in pnames:
-        if os.path.exists(f"md5sum_{p}_fastq.txt"):
+        md_path = Path(f"md5sum_{p}_fastq.txt")
+        if md_path.exists():
             continue
-        cmd = "find {} -type f -name '*.fastq.gz' | parallel -j 5 md5sum > {}".format(
-            p, f"md5sum_{p}_fastq.txt"
-        )
-        syslog.syslog(
-            "[md5sum_worker] Processing {}\n".format(
-                os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), p)
-            )
-        )
+        cmd = f"find {p} -type f -name '*.fastq.gz' | parallel -j 5 md5sum > md5sum_{p}_fastq.txt"
+        syslog.syslog(f"[md5sum_worker] Processing {cfg.output_path}/{p} \n")
         subprocess.check_call(cmd, shell=True)
     os.chdir(old_wd)
 
@@ -123,7 +118,7 @@ def md5sum_archive_worker(cfg):
 
 def multiqc_stats(cfg):
     oldWd = os.getcwd()
-    os.chdir(cfg.ouput_path / "Stats")
+    os.chdir(cfg.output_path / "Stats")
 
     shutil.copy2(cfg.run.flowcell_path / "RunInfo.xml", cfg.output_path / "RunInfo.xml")
     # Illumina sequencer update - RunParameters.xml -> runParameters.xml
@@ -143,9 +138,6 @@ def multiqc_stats(cfg):
     syslog.syslog(f"[multiqc_worker] Interop index summary on {cfg.output_path}\n")
     subprocess.check_call(cmd, shell=True)
 
-    run_dir = os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
-
-    in_confs = glob.glob(os.path.join(run_dir, ".multiqc_config*.yaml"))
     in_confs = [f for f in cfg.output_path.glob(".multiqc_config*.yaml")]
     samples_custom_data = dict()
     for c in in_confs:
@@ -361,15 +353,10 @@ def full_align(cfg):
         )
 
         # if additional html reports exists (single cell), copy
-        extra_html = glob.glob(
-            analysis_dir
-            / "data"
-            / "tmp"
-            / cfg.run.pipeline
-            / "bfq"
-            / "summaries"
-            / "all_samples*.html"
+        extra_html = (analysis_dir / "data" / "tmp" / cfg.run.pipeline / "bfq" / "summaries").glob(
+            "all_samples*.html"
         )
+        extra_html = list(extra_html)
         if extra_html:
             shutil.copy2(
                 extra_html[0], cfg.output_path / f"all_samples_web_summary_{p}_{run_date}.html"
@@ -387,12 +374,12 @@ def full_align(cfg):
         )
 
     os.chdir(old_wd)
-    open(cfg.ouput_path / "analysis.made", "w").close()
+    open(cfg.output_path / "analysis.made", "w").close()
     return True
 
 
 # All steps that should be run after `make` go here
-def postMakeSteps(config):
+def postMakeSteps():
     """
     Current steps are:
       1) Run FastQC on each fastq.gz file
@@ -424,7 +411,7 @@ def postMakeSteps(config):
         f"({100 * free / tot:5.2f}%)\n<br>"
     )
 
-    tot, used, free = shutil.disk_usage(cfg.static.paths.base_dir)
+    tot, used, free = shutil.disk_usage(cfg.run.flowcell_path.parent)
     tot /= 1024**3  # Convert to GiB
     used /= 1024**3
     free /= 1024**3

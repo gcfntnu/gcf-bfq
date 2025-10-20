@@ -95,7 +95,8 @@ while True:
                 bcl_done = bcl2fastq_pipeline.makeFastq.bcl2fq()
                 with open(cfg.output_path / "bcl.done", "w") as fh:
                     fh.write("\t".join(bcl_done))
-            except Exception:
+            except Exception as e:
+                print(e)
                 syslog.syslog("Got an error in bcl2fq\n")
                 bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error in bcl2fq")
                 continue
@@ -104,7 +105,8 @@ while True:
             try:
                 bcl2fastq_pipeline.makeFastq.fixNames()
                 open(cfg.output_path / "files.renamed", "w").close()
-            except Exception:
+            except Exception as e:
+                print(e)
                 cfg.run.reset()
                 syslog.syslog("Got an error in fixNames\n")
                 bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error in fixNames")
@@ -114,6 +116,7 @@ while True:
         try:
             message = bcl2fastq_pipeline.afterFastq.postMakeSteps()
         except Exception as e:
+            print(e)
             cfg.run.reset()
             syslog.syslog(f"Got an error during postMakeSteps:\n {e}")
             bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error during postMakeSteps")
@@ -122,7 +125,8 @@ while True:
         # Get more statistics and create PDFs
         try:
             message += bcl2fastq_pipeline.misc.getFCmetricsImproved()
-        except Exception:
+        except Exception as e:
+            print(e)
             cfg.run.reset()
             syslog.syslog("Got an error during getFCmetrics\n")
             bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error during getFCmetrics")
@@ -133,7 +137,8 @@ while True:
         # Email finished message
         try:
             bcl2fastq_pipeline.misc.finishedEmail(message, runTime)
-        except Exception:
+        except Exception as e:
+            print(e)
             cfg.run.reset()
             syslog.syslog("Couldn't send the finished email! Quiting")
             bcl2fastq_pipeline.misc.errorEmail(
@@ -145,6 +150,7 @@ while True:
         try:
             bcl2fastq_pipeline.afterFastq.finalize()
         except Exception as e:
+            print(e)
             cfg.run.reset()
             syslog.syslog("Got an error during finalize!\n")
             bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), str(e))
@@ -152,8 +158,9 @@ while True:
         finalizeTime = datetime.datetime.now() - endTime
         runTime += finalizeTime
         try:
-            bcl2fastq_pipeline.misc.finalizedEmail(config, "", finalizeTime, runTime)
-        except Exception:
+            bcl2fastq_pipeline.misc.finalizedEmail("", finalizeTime, runTime)
+        except Exception as e:
+            print(e)
             cfg.run.reset()
             syslog.syslog("Couldn't send the finalize email! Quiting")
             bcl2fastq_pipeline.misc.errorEmail(

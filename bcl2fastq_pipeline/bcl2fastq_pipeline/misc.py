@@ -161,7 +161,7 @@ def parserDemultiplexStats(cfg):
 
     totals = [0, 0, 0, 0, 0, 0, 0, 0]
     undetermined = [0, 0, 0, 0, 0, 0, 0, 0]
-    tree = ET.parse(cfg.output_path / "Stats" / " DemultiplexingStats.xml")
+    tree = ET.parse(cfg.output_path / "Stats" / "DemultiplexingStats.xml")
     root = tree.getroot()
     for child in root[0].findall("Project"):
         if child.get("name") == "default":
@@ -305,8 +305,8 @@ def finalizedEmail(msg, finalizeTime, runTime):
     #    report.write(msg)
     msg = MIMEMultipart()
     msg["Subject"] = "[bcl2fastq_pipeline] {} finalized".format(", ".join(projects))
-    msg["From"] = cfg.static.email["fromAddress"]
-    msg["To"] = cfg.static.email["errorTo"]
+    msg["From"] = cfg.static.email["from_address"]
+    msg["To"] = cfg.static.email["error_to"]
     msg["Date"] = formatdate(localtime=True)
 
     msg.attach(MIMEText(message))
