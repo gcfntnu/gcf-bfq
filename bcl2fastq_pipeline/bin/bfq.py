@@ -51,7 +51,7 @@ while True:
         # There's no recovering from this!
         sys.exit("Error: couldn't read the config file!")
 
-    in_pths = [cfg.static.paths.nova_baseDir, cfg.static.paths.ekista_baseDir]
+    in_pths = [cfg.static.paths.nova_base_dir, cfg.static.paths.ekista_base_dir]
     completion_files = {
         "SN7001334": "ImageAnalysis_Netcopy_complete.txt",
         "NB501038": "RunCompletionStatus.xml",
