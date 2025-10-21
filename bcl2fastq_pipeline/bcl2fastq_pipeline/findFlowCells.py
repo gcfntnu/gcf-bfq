@@ -38,7 +38,7 @@ config = None  # to keep ruff happy while dev
 # Returns True on processed, False on unprocessed
 def flowCellProcessed():
     cfg = PipelineConfig.get()
-    flowcells = fm.list_flowcell_all(cfg.output_path)
+    flowcells = fm.list_flowcell_all(str(cfg.output_path))
     if not flowcells.empty:
         if rerunFlowcell(cfg):
             return False
@@ -155,7 +155,7 @@ def copy_sample_sub_form(instrument_path, output_path):
     return None
 
 
-def markFinished(config):
+def markFinished():
     cfg = PipelineConfig.get()
     open(cfg.output_path / "fastq.made", "w").close()
     project_dirs = af.get_project_dirs(cfg)
@@ -164,6 +164,6 @@ def markFinished(config):
     for gcf in project_names:
         fm.add_flowcell(
             project=gcf,
-            path=cfg.output_path,
+            path=str(cfg.output_path),
             timestamp=now,
         )
