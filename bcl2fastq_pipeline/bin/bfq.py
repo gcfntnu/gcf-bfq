@@ -167,7 +167,7 @@ while True:
             )
             continue
         # Mark the flow cell as having been processed
-        bcl2fastq_pipeline.findFlowCells.markFinished(cfg)
+        bcl2fastq_pipeline.findFlowCells.markFinished()
         cfg.run.reset()
 
     # done processing, no more flowcells in queue
