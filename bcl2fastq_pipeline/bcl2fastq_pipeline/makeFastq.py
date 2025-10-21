@@ -9,8 +9,6 @@ import shutil
 import subprocess
 import syslog
 
-from distutils.dir_util import copy_tree
-
 from bcl2fastq_pipeline.config import PipelineConfig
 
 MKFASTQ_10X = {
@@ -69,7 +67,7 @@ def bcl2fq():
     cfg = PipelineConfig.get()
     # Make the output directories
     (cfg.output_path / "InterOp").mkdir(parents=True, exist_ok=True)
-    copy_tree(
+    shutil.copytree(
         cfg.run.flowcell_path / "InterOp",
         cfg.output_path / "InterOp",
     )
