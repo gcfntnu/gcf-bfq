@@ -8,9 +8,8 @@ such as marking it as having been processed and sending emails.
 import datetime as dt
 import glob
 import os
+import shutil
 import syslog
-
-from shutil import copyfile
 
 import flowcell_manager.flowcell_manager as fm
 
@@ -51,12 +50,11 @@ def flowCellProcessed():
 # Determine if the flowcell should be rerun
 def rerunFlowcell(cfg):
     return False  # deprecated for now
-    # seq_data_path = af.SEQUENCER_OUTPUTFOLDER[config.get("Options","runID").split("_")[-3]]
     ss, opts = get_sample_sheet(cfg.run.flowcell_path)
     if not opts:
         return False
     if opts.get("Rerun", False):
-        if os.path.exists(cfg.output_path / "SampleSheet.csv"):
+        if (cfg.output_path / "SampleSheet.csv").exists():
             prev_start = os.path.getmtime(cfg.output_path / "SampleSheet.csv")
         else:
             # The bfq output for the flowcell has been deleted manually. Rerun
@@ -107,43 +105,37 @@ process, then the runID is filled in. Otherwise, that's set to None.
 
 
 def newFlowCell():
-    # instrument_dir = os.path.dirname(d)
-    # instrument_dir = os.path.join(config.get("Paths","baseDir"),config.get("Options","sequencer"),"data",config.get("Options","runID"))
     cfg = PipelineConfig.get()
 
     # EMERGENCY FINNMARK FIX
-    if os.path.exists(cfg.output_path):
-        # ss, opts = getSampleSheets(os.path.dirname(d))
+    if (cfg.output_path).exists():
         ss, opts = get_sample_sheet(cfg.output_path)
-        sample_sub_f = glob.glob(os.path.join(cfg.output_path, "*Sample-Submission-Form*.xlsx"))
+        sample_sub_f = cfg.output_path.glob("*Sample-Submission-Form*.xlsx")
         use_bfq_output_ss = True
     else:
-        # ss, opts = getSampleSheets(os.path.dirname(d))
         ss, opts = get_sample_sheet(cfg.run.flowcell_path)
-        sample_sub_f = glob.glob(
-            os.path.join(cfg.run.flowcell_path, "*Sample-Submission-Form*.xlsx")
-        )
+        sample_sub_f = cfg.run.flowcell_path.glob("*Sample-Submission-Form*.xlsx")
         use_bfq_output_ss = False
 
-    if not opts or not sample_sub_f:
+    if not opts or not list(sample_sub_f):
         cfg.run.reset()
         return
 
     syslog.syslog(f"Found a new flow cell: {cfg.run.run_id}\n")
-    if not os.path.exists(cfg.output_path):
-        os.makedirs(cfg.output_path)
+    if not (cfg.output_path).exists():
+        (cfg.output_path).mkdir()
 
     if not use_bfq_output_ss:
         sample_sub_f = copy_sample_sub_form(cfg.run.flowcell_path, cfg.output_path)
     else:
-        sample_sub_f = f"{cfg.output_path}/Sample-Submission-Form.xlsx"
+        sample_sub_f = cfg.output_path / "Sample-Submission-Form.xlsx"
 
     if ss is not None and use_bfq_output_ss:
-        ss = f"{cfg.output_path}/SampleSheet.csv"
+        ss = cfg.output_path / "SampleSheet.csv"
         cfg.run.apply_custom(opts, ss, sample_sub_f)
     elif ss is not None and not use_bfq_output_ss:
-        copyfile(ss, f"{cfg.output_path}/SampleSheet.csv")
-        ss = f"{cfg.output_path}/SampleSheet.csv"
+        shutil.copy2(ss, cfg.output_path / "SampleSheet.csv")
+        ss = cfg.output_path / "SampleSheet.csv"
         cfg.run.apply_custom(opts, ss, sample_sub_f)
     else:
         cfg.run.reset()
@@ -155,11 +147,11 @@ def bool2strint(b):
 
 
 def copy_sample_sub_form(instrument_path, output_path):
-    sample_sub_forms = glob.glob(f"{instrument_path}/*Sample-Submission-Form*.xlsx")
-    if bool(sample_sub_forms):
+    sample_sub_forms = list(instrument_path.glob("*Sample-Submission-Form*.xlsx"))
+    if sample_sub_forms:
         sample_sub_form = sample_sub_forms[0]
-        copyfile(sample_sub_form, f"{output_path}/Sample-Submission-Form.xlsx")
-        return f"{output_path}/Sample-Submission-Form.xlsx"
+        shutil.copy2(sample_sub_form, output_path / "Sample-Submission-Form.xlsx")
+        return output_path / "Sample-Submission-Form.xlsx"
     return None
 
 

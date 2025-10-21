@@ -68,8 +68,7 @@ def bcl2fq():
 
     cfg = PipelineConfig.get()
     # Make the output directories
-    os.makedirs(cfg.output_path, exist_ok=True)
-    os.makedirs(cfg.output_path / "InterOp", exist_ok=True)
+    (cfg.output_path / "InterOp").mkdir(parents=True, exist_ok=True)
     copy_tree(
         cfg.run.flowcell_path / "InterOp",
         cfg.output_path / "InterOp",
@@ -105,10 +104,9 @@ def bcl2fq():
                     syslog.syslog(f"[bcl2fq] Retrying with --barcode-mismatches 0 : {cmd}\n")
                     subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
 
-    if os.path.exists(cfg.output_path / "Reports" / "legacy" / "Stats"):
+    if (cfg.output_path / "Reports" / "legacy" / "Stats").exists():
         cmd = f"ln -sr {cfg.output_path}/Reports/legacy/Stats {cfg.output_path}/Stats"
         subprocess.check_call(cmd, shell=True)
-        # fix_stats_json(os.path.join("Stats", "Stats.json"))
 
     logOut.close()
     os.chdir(old_wd)

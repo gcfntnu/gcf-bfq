@@ -2,8 +2,6 @@
 Misc. functions
 """
 
-import os
-import os.path
 import shutil
 import smtplib
 import tempfile as tmp
@@ -57,7 +55,7 @@ def getFCmetricsImproved():
     cfg = PipelineConfig.get()
     message = ""
     try:
-        with open(os.path.join(cfg.output_path / "Stats" / "interop_summary.csv")) as fh:
+        with open(cfg.output_path / "Stats" / "interop_summary.csv") as fh:
             header = False
             while not header:
                 line = fh.readline()
@@ -252,8 +250,6 @@ def finishedEmail(msg, runTime):
         + "\n</body>\n</html>"
     )
 
-    # with open(os.path.join(config.get("Paths", "reportDir"),'{}.report'.format(config.get("Options","runID"))),'w') as report:
-    #    report.write(msg)
     msg = MIMEMultipart()
     msg["Subject"] = "[bcl2fastq_pipeline] {} processed".format(", ".join(projects))
     msg["From"] = cfg.static.email["from_address"]
@@ -273,9 +269,10 @@ def finishedEmail(msg, runTime):
         if cfg.run.libprep.startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences")):
             f = cfg.output_path / f"all_samples_web_summary_{p}_{date}.html"
             if f.exists():
+                fname = f.name
                 with open(f, "rb") as report:
                     part = MIMEApplication(report.read(), report.name)
-                part["Content-Disposition"] = f'attachment; filename="{os.path.basename(f)}"'
+                part["Content-Disposition"] = f'attachment; filename="{fname}"'
                 msg.attach(part)
     project_str = "_".join(projects)
     with open(cfg.output_path / "Stats" / f"sequencer_stats_{project_str}.html", "rb") as report:
@@ -296,13 +293,8 @@ def finalizedEmail(msg, finalizeTime, runTime):
     message = "{} has been finalized and prepared for delivery.\n\n".format(", ".join(projects))
     message += f"md5sum and 7zip runtime: {finalizeTime}\n"
     message += f"Total runtime for bcl2fastq_pipeline: {runTime}\n"
-    # message += "Data transfer: %s\n" % transferTime
     message += msg
 
-    # message = "<html>\n<body>\n<head></head>\n" + message + "\n</body>\n</html>"
-
-    # with open(os.path.join(config.get("Paths", "reportDir"),'{}.report'.format(config.get("Options","runID"))),'w') as report:
-    #    report.write(msg)
     msg = MIMEMultipart()
     msg["Subject"] = "[bcl2fastq_pipeline] {} finalized".format(", ".join(projects))
     msg["From"] = cfg.static.email["from_address"]

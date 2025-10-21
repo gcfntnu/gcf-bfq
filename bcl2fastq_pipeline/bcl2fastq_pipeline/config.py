@@ -66,6 +66,7 @@ class Paths:
     nova_base_dir: Path
     output_dir: Path
     log_dir: Path
+    manager_dir: Path
     report_dir: Path | None = None
     analysis_dir: Path | None = None
 
@@ -321,6 +322,7 @@ class PipelineConfig:
             log_dir=Path(p.get("logDir", "/mnt/logs")),
             report_dir=Path(p.get("reportDir", "/mnt/reports")),
             analysis_dir=Path(p.get("analysisDir", "/mnt/analysis")),
+            manager_dir=Path(p.get("manager_dir", "/mnt/manager")),
         )
 
         static = StaticConfig(

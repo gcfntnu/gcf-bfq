@@ -2,7 +2,6 @@
 import datetime
 import glob
 import importlib
-import os
 import signal
 import sys
 import syslog
@@ -29,7 +28,7 @@ def breakSleep(signo, _frame):
 
 
 def sleep(cfg):
-    gotHUP.wait(timeout=float(cfg.static.system["sleeptime"] * 60 * 60))
+    gotHUP.wait(timeout=float(cfg.static.system["sleeptime"]) * 60 * 60)
     gotHUP.clear()
 
 
@@ -90,7 +89,7 @@ while True:
         startTime = datetime.datetime.now()
 
         # Make the fastq files, if not already done
-        if not os.path.exists(f"{cfg.output_path}/bcl.done"):
+        if not (cfg.output_path / "bcl.done").exists():
             try:
                 bcl_done = bcl2fastq_pipeline.makeFastq.bcl2fq()
                 with open(cfg.output_path / "bcl.done", "w") as fh:
@@ -101,7 +100,7 @@ while True:
                 bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error in bcl2fq")
                 continue
 
-        if not os.path.exists(cfg.output_path / "files.renamed"):
+        if not (cfg.output_path / "files.renamed").exists():
             try:
                 bcl2fastq_pipeline.makeFastq.fixNames()
                 open(cfg.output_path / "files.renamed", "w").close()

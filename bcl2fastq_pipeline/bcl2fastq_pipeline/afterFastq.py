@@ -2,10 +2,8 @@
 This file includes code that actually runs FastQC and any other tools after the fastq files have actually been made. This uses a pool of workers to process each request.
 """
 
-import glob
 import multiprocessing as mp
 import os
-import os.path
 import shutil
 import subprocess
 import syslog
@@ -49,7 +47,7 @@ def get_gcf_name(fname):
 def to_dirs(files):
     s = set()
     for f in files:
-        d = os.path.dirname(f)
+        d = str(f.parent)
         if d.split("/")[-1].startswith("GCF-"):
             s.add(d)
         else:
@@ -282,28 +280,31 @@ def get_project_names(dirs):
 
 
 def get_project_dirs(cfg):
-    project_dirs = glob.glob(f"{cfg.output_path}/*/*.fastq.gz")
-    project_dirs.extend(glob.glob(f"{cfg.output_path}/*/*/*.fastq.gz"))
-    return to_dirs(project_dirs)
+    """
+    Find project directories under cfg.output_path containing FASTQ files.
+
+    Searches one and two levels deep for *.fastq.gz files,
+    then extracts their parent directories via to_dirs().
+    """
+    fastq_paths = list(cfg.output_path.glob("*/*.fastq.gz"))
+    fastq_paths += list(cfg.output_path.glob("*/*/*.fastq.gz"))
+    return to_dirs(fastq_paths)
 
 
 def post_workflow(project_id, base_dir, pipeline):
-    analysis_dir = os.path.join(
-        os.environ["TMPDIR"], "{}_{}".format(project_id, os.path.basename(base_dir).split("_")[0])
-    )
-    os.makedirs(os.path.join(base_dir, f"QC_{project_id}", "bfq"), exist_ok=True)
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", pipeline, "bfq"),
-        os.path.join(base_dir, f"QC_{project_id}", "bfq"),
-    )
-    subprocess.check_call(cmd, shell=True)
+    run_date = str(base_dir.name).split("_")[0]
+    analysis_dir = Path(os.environ["TMPDIR"]) / f"{project_id}_{run_date}"
+    bfq_dir = analysis_dir / "data" / "tmp" / pipeline / "bfq"
+    odir = base_dir / f"QC_{project_id}" / "bfq"
+    odir.mkdir(parents=True, exist_ok=True)
+
+    shutil.copytree(bfq_dir, odir, symlinks=False, dirs_exist_ok=True)
 
     # Copy sample info
-    cmd = "cp {} {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "sample_info.tsv"),
-        os.path.join(base_dir, f"{project_id}_samplesheet.tsv"),
+    shutil.copy2(
+        analysis_dir / "data" / "tmp" / "sample_info.tsv",
+        base_dir / f"{project_id}_samplesheet.tsv",
     )
-    subprocess.check_call(cmd, shell=True)
 
     return True
 
@@ -313,7 +314,7 @@ def full_align(cfg):
 
     os.chdir(os.environ["TMPDIR"])
     project_names = get_project_names(get_project_dirs(cfg))
-    run_date = os.path.basename(cfg.output_path).split("_")[0]
+    run_date = str(cfg.output_path.name).split("_")[0]
     for p in project_names:
         analysis_dir = Path(os.environ["TMPDIR"]) / f"{p}_{run_date}"
         analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -322,11 +323,13 @@ def full_align(cfg):
 
         os.chdir(analysis_dir)
 
+        src = Path("/opt/gcf-workflows")
+        dst = analysis_dir / "src" / "gcf-workflows"
+
         # copy snakemake pipeline
-        cmd = "rm -rf {dst} && cp -r {src} {dst}".format(
-            src="/opt/gcf-workflows", dst=os.path.join(analysis_dir, "src", "gcf-workflows")
-        )
-        subprocess.check_call(cmd, shell=True)
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
 
         # create config.yaml
         cmd = "/opt/conda/bin/python /opt/conda/bin/configmaker.py {runfolder} -p {project} --libkit '{lib}' --machine '{machine}' {create_fastq}".format(
@@ -337,10 +340,6 @@ def full_align(cfg):
             create_fastq=" --skip-create-fastq-dir" if Path("data/raw/fastq").exists() else "",
         )
         subprocess.check_call(cmd, shell=True)
-
-        # write template Snakefile for pipeline
-        # with open(os.path.join(analysis_dir,"Snakefile"), "w") as sn:
-        #    sn.write(SNAKEFILE_TEMPLATE.format(workflow=pipeline))
 
         # run snakemake pipeline
         cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR --cores 32 --verbose -p multiqc_report"
