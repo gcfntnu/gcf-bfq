@@ -68,8 +68,7 @@ def bcl2fq():
     # Make the output directories
     (cfg.output_path / "InterOp").mkdir(parents=True, exist_ok=True)
     shutil.copytree(
-        cfg.run.flowcell_path / "InterOp",
-        cfg.output_path / "InterOp",
+        cfg.run.flowcell_path / "InterOp", cfg.output_path / "InterOp", dirs_exist_ok=True
     )
     old_wd = os.getcwd()
     os.chdir(cfg.output_path)
@@ -90,15 +89,15 @@ def bcl2fq():
         bcl_done = ["bcl-convert", os.environ.get("BCL_CONVERT_VERSION")]
     try:
         syslog.syslog(f"[convert bcl] Running: {cmd}\n")
-        with open(cfg.static.paths.log / cfg.run.run_id / ".log", "w") as logOut:
+        with open(cfg.static.paths.log / "{cfg.run.run_id}.log", "w") as logOut:
             subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
     except Exception:
         if "10X Genomics" not in cfg.run.libprep and force_bcl2fastq:
-            with open(cfg.static.paths.log / cfg.run.run_id / ".log") as logOut:
+            with open(cfg.static.paths.log / "{cfg.run.run_id}.log") as logOut:
                 log_content = logOut.read()
             if "<bcl2fastq::layout::BarcodeCollisionError>" in log_content:
                 cmd += " --barcode-mismatches 0 "
-                with open(cfg.static.paths.log / cfg.run.run_id / ".log", "w") as logOut:
+                with open(cfg.static.paths.log / "{cfg.run.run_id}.log", "w") as logOut:
                     syslog.syslog(f"[bcl2fq] Retrying with --barcode-mismatches 0 : {cmd}\n")
                     subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
 
@@ -106,6 +105,5 @@ def bcl2fq():
         cmd = f"ln -sr {cfg.output_path}/Reports/legacy/Stats {cfg.output_path}/Stats"
         subprocess.check_call(cmd, shell=True)
 
-    logOut.close()
     os.chdir(old_wd)
     return bcl_done
