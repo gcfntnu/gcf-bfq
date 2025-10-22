@@ -2,17 +2,12 @@
 This file includes code that actually runs FastQC and any other tools after the fastq files have actually been made. This uses a pool of workers to process each request.
 """
 
+import json
 import multiprocessing as mp
 import os
 import shutil
 import subprocess
 import syslog
-
-import matplotlib
-
-matplotlib.use("Agg")
-import json
-import re
 
 from pathlib import Path
 
@@ -22,45 +17,9 @@ from configmaker.configmaker import SEQUENCERS
 
 from bcl2fastq_pipeline.config import PipelineConfig
 
-config = None
-localConfig = None
-
-
-def set_config(config):
-    """Store the configuration globally for this module."""
-    global localConfig  # noqa: PLW0603
-    localConfig = config
-
-
-def get_config():
-    """Return the current configuration object."""
-    return localConfig
-
-
-def get_gcf_name(fname):
-    for name in fname.split("/"):
-        if re.match(r"GCF-[0-9]{4}-[0-9]{3,}", name):
-            return re.search(r"GCF-[0-9]{4}-[0-9]{3,}", name)[0]
-    raise Exception(f"Unable to determine GCF project number for filename {fname}\n")
-
-
-def to_dirs(files):
-    s = set()
-    for f in files:
-        d = str(f.parent)
-        if d.split("/")[-1].startswith("GCF-"):
-            s.add(d)
-        else:
-            s.add(d[: d.rfind("/")])
-    return s
-
-
-def get_sequencer(run_id):
-    return SEQUENCERS.get(run_id.split("_")[1], "Sequencer could not be automatically determined.")
-
 
 def get_read_geometry(run_dir):
-    stats_file = open(f"{run_dir}/Stats/Stats.json")
+    stats_file = open(run_dir / "Stats" / "Stats.json")
     stats_json = json.load(stats_file)
     lane_info = stats_json["ReadInfosForLanes"][0].get("ReadInfos", None)
     if not lane_info:
@@ -82,9 +41,22 @@ def get_read_geometry(run_dir):
         return "Read geometry could not be automatically determined."
 
 
+def to_dirs(files):
+    s = set()
+    for f in files:
+        d = str(f.parent)
+        if d.split("/")[-1].startswith("GCF-"):
+            s.add(d)
+        else:
+            s.add(d[: d.rfind("/")])
+    return s
+
+
+def get_sequencer(run_id):
+    return SEQUENCERS.get(run_id.split("_")[1], "Sequencer could not be automatically determined.")
+
+
 def md5sum_worker(cfg):
-    old_wd = os.getcwd()
-    os.chdir(cfg.output_path)
     project_dirs = get_project_dirs(cfg)
     pnames = get_project_names(project_dirs)
     for p in pnames:
@@ -93,8 +65,7 @@ def md5sum_worker(cfg):
             continue
         cmd = f"find {p} -type f -name '*.fastq.gz' | parallel -j 5 md5sum > md5sum_{p}_fastq.txt"
         syslog.syslog(f"[md5sum_worker] Processing {cfg.output_path}/{p} \n")
-        subprocess.check_call(cmd, shell=True)
-    os.chdir(old_wd)
+        subprocess.check_call(cmd, shell=True, cwd=cfg.output_path)
 
 
 def md5sum_archive(archive_path: Path):
@@ -115,13 +86,12 @@ def md5sum_archive_worker(cfg):
 
 
 def multiqc_stats(cfg):
-    oldWd = os.getcwd()
-    os.chdir(cfg.output_path / "Stats")
+    cwd = cfg.output_path / "Stats"
 
     shutil.copy2(cfg.run.flowcell_path / "RunInfo.xml", cfg.output_path / "RunInfo.xml")
     # Illumina sequencer update - RunParameters.xml -> runParameters.xml
     shutil.copy2(
-        [f for f in cfg.run.flowcell_path.glob("[Rr]unParameters.xml")][0],
+        list(cfg.run.flowcell_path.glob("[Rr]unParameters.xml"))[0],
         cfg.output_path / "RunParameters.xml",
     )
 
@@ -129,14 +99,14 @@ def multiqc_stats(cfg):
     out_f = cfg.output_path / "Stats" / "interop_summary.csv"
     cmd = f"interop_summary {cfg.output_path} --csv=1 > {out_f}"
     syslog.syslog(f"[multiqc_worker] Interop summary on {cfg.output_path}\n")
-    subprocess.check_call(cmd, shell=True)
+    subprocess.check_call(cmd, shell=True, cwd=cwd)
 
     out_f = cfg.output_path / "Stats" / "interop_index-summary.csv"
     cmd = f"interop_index-summary {cfg.output_path} --csv=1 > {out_f}"
     syslog.syslog(f"[multiqc_worker] Interop index summary on {cfg.output_path}\n")
-    subprocess.check_call(cmd, shell=True)
+    subprocess.check_call(cmd, shell=True, cwd=cwd)
 
-    in_confs = [f for f in cfg.output_path.glob(".multiqc_config*.yaml")]
+    in_confs = list(cfg.output_path.glob(".multiqc_config*.yaml"))
     samples_custom_data = dict()
     for c in in_confs:
         with open(c) as c_fh:
@@ -162,7 +132,6 @@ def multiqc_stats(cfg):
     modules = "-m interop "
     FORCE_BCL2FASTQ = os.environ.get("FORCE_BCL2FASTQ", None)
     modules += "-m bclconvert " if not FORCE_BCL2FASTQ else "-m bcl2fastq"
-    # stats_dir = "Reports" if not FORCE_BCL2FASTQ else "Stats"
 
     multiqc_cmd = cfg.static.commands["multiqc_command"]
     multiqc_opts = cfg.static.commands["multiqc_options"]
@@ -181,9 +150,7 @@ def multiqc_stats(cfg):
             cmd = cmd.replace("-m bclconvert", "-m bcl2fastq")
             print(cmd)
 
-    subprocess.check_call(cmd, shell=True)
-
-    os.chdir(oldWd)
+    subprocess.check_call(cmd, shell=True, cwd=cwd)
 
 
 def generate_password(cfg, prefix: str) -> str:
@@ -310,9 +277,9 @@ def post_workflow(project_id, base_dir, pipeline):
 
 
 def full_align(cfg):
-    old_wd = os.getcwd()
+    # old_wd = Path.cwd()
 
-    os.chdir(os.environ["TMPDIR"])
+    # os.chdir(os.environ["TMPDIR"])
     project_names = get_project_names(get_project_dirs(cfg))
     run_date = str(cfg.output_path.name).split("_")[0]
     for p in project_names:
@@ -321,7 +288,7 @@ def full_align(cfg):
         (analysis_dir / "src").mkdir(parents=True, exist_ok=True)
         (analysis_dir / "data").mkdir(parents=True, exist_ok=True)
 
-        os.chdir(analysis_dir)
+        # os.chdir(analysis_dir)
 
         src = Path("/opt/gcf-workflows")
         dst = analysis_dir / "src" / "gcf-workflows"
@@ -339,15 +306,15 @@ def full_align(cfg):
             machine=get_sequencer(cfg.run.run_id),
             create_fastq=" --skip-create-fastq-dir" if Path("data/raw/fastq").exists() else "",
         )
-        subprocess.check_call(cmd, shell=True)
+        subprocess.check_call(cmd, shell=True, cwd=analysis_dir)
 
         # run snakemake pipeline
         cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR --cores 32 --verbose -p multiqc_report"
-        subprocess.check_call(cmd, shell=True)
+        subprocess.check_call(cmd, shell=True, cwd=analysis_dir)
 
         # copy report
         shutil.copy2(
-            Path("data") / "tmp" / cfg.run.pipeline / "bfq" / f"multiqc_{p}.html",
+            analysis_dir / "data" / "tmp" / cfg.run.pipeline / "bfq" / f"multiqc_{p}.html",
             cfg.output_path / f"multiqc_{p}_{run_date}.html",
         )
 
@@ -363,16 +330,17 @@ def full_align(cfg):
 
         # Copy sample info
         shutil.copy2(
-            Path("data") / "tmp" / "sample_info.tsv", cfg.output_path / f"{p}_samplesheet.tsv"
+            analysis_dir / "data" / "tmp" / "sample_info.tsv",
+            cfg.output_path / f"{p}_samplesheet.tsv",
         )
 
         # copy mqc_config
         shutil.copy2(
-            Path("data") / "tmp" / cfg.run.pipeline / "bfq" / ".multiqc_config.yaml",
+            analysis_dir / "data" / "tmp" / cfg.run.pipeline / "bfq" / ".multiqc_config.yaml",
             cfg.output_path / f".multiqc_config_{p}.yaml",
         )
 
-    os.chdir(old_wd)
+    # os.chdir(old_wd)
     open(cfg.output_path / "analysis.made", "w").close()
     return True
 

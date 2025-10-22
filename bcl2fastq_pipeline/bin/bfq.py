@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 import datetime
-import glob
 import importlib
 import signal
 import sys
 import syslog
 
-from pathlib import Path
 from threading import Event
 
 import bcl2fastq_pipeline.afterFastq
 import bcl2fastq_pipeline.findFlowCells
-import bcl2fastq_pipeline.getConfig
 import bcl2fastq_pipeline.makeFastq
 import bcl2fastq_pipeline.misc
 import urllib3
@@ -35,10 +32,9 @@ def sleep(cfg):
 signal.signal(signal.SIGHUP, breakSleep)
 
 PipelineConfig.load("/config/bcl2fastq.ini")
-config = None
+
 while True:
     # Reimport to allow reloading a new version
-    importlib.reload(bcl2fastq_pipeline.getConfig)
     importlib.reload(bcl2fastq_pipeline.findFlowCells)
     importlib.reload(bcl2fastq_pipeline.makeFastq)
     importlib.reload(bcl2fastq_pipeline.afterFastq)
@@ -66,9 +62,8 @@ while True:
     # Get the next flow cell to process, or sleep
     for pth in in_pths:
         for machine, fin_file in completion_files.items():
-            dirs.extend(glob.glob(f"{pth}/*_{machine}_*/{fin_file}"))
+            dirs += list(pth.glob(f"*_{machine}_*/{fin_file}"))
 
-    dirs = [Path(d) for d in dirs]
     for d in dirs:
         cfg.run.begin(d.parent, cfg.static.paths)
 
@@ -102,13 +97,13 @@ while True:
 
         if not (cfg.output_path / "files.renamed").exists():
             try:
-                bcl2fastq_pipeline.makeFastq.fixNames()
+                bcl2fastq_pipeline.makeFastq.rename_fastqs()
                 open(cfg.output_path / "files.renamed", "w").close()
             except Exception as e:
                 print(e)
                 cfg.run.reset()
-                syslog.syslog("Got an error in fixNames\n")
-                bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error in fixNames")
+                syslog.syslog("Got an error in rename_fastqs\n")
+                bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error in rename_fastqs")
                 continue
 
         # Run post-processing steps

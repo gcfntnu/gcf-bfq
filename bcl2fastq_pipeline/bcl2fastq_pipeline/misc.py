@@ -188,11 +188,6 @@ def parserDemultiplexStats(cfg):
     for i in range(8):
         if totals[i] == 0:
             continue
-        # Bad hack with "{:,}".format(val).replace(","," ") for separator, but avoids using locale. The "right" locale would also yield unwanted results (comma as separatpr)
-        """
-        out += "Lane %i: %s of %s reads/pairs had undetermined indices (%5.2f%%)\n<br>" % (
-            i+1,"{:,}".format(undetermined[i]).replace(","," "),"{:,}".format(totals[i]).replace(","," "),100*undetermined[i]/totals[i])
-        """
         lanes.append(i + 1)
         undeter.append(100 * undetermined[i] / totals[i])
         # out_d.append({"Lane": i+1, "Undetermined": 100*undetermined[i]/totals[i]})

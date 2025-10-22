@@ -6,10 +6,10 @@ such as marking it as having been processed and sending emails.
 """
 
 import datetime as dt
-import glob
-import os
 import shutil
 import syslog
+
+from pathlib import Path
 
 import flowcell_manager.flowcell_manager as fm
 
@@ -17,22 +17,9 @@ import bcl2fastq_pipeline.afterFastq as af
 
 from bcl2fastq_pipeline.config import PipelineConfig, parse_custom_options
 
-CUSTOM_OPTS = [
-    "Organism",
-    "Libprep",
-    "User",
-    "Rerun",
-    "SingleCell",
-    "RemoveHumanReads",
-    "SensitiveData",
-    "ReverseComplementIndexP5",
-    "ReverseComplementIndexP7",
-    "TrimAdapter",
-    "Adapter",
-    "AdapterRead2",
-]
 
-config = None  # to keep ruff happy while dev
+def modified_time(path: Path):
+    return dt.fromtimestamp(path.stat().st_mtime)
 
 
 # Returns True on processed, False on unprocessed
@@ -50,16 +37,16 @@ def flowCellProcessed():
 # Determine if the flowcell should be rerun
 def rerunFlowcell(cfg):
     return False  # deprecated for now
-    ss, opts = get_sample_sheet(cfg.run.flowcell_path)
+    opts, ss = get_sample_sheet(cfg.run.flowcell_path)
     if not opts:
         return False
     if opts.get("Rerun", False):
         if (cfg.output_path / "SampleSheet.csv").exists():
-            prev_start = os.path.getmtime(cfg.output_path / "SampleSheet.csv")
+            prev_start = modified_time(cfg.output_path / "SampleSheet.csv")
         else:
             # The bfq output for the flowcell has been deleted manually. Rerun
             return True
-        instr_ss = os.path.getmtime(ss)
+        instr_ss = modified_time(ss)
         if instr_ss > prev_start:
             fm.rerun_flowcell(
                 flowcell=cfg.output_path,
@@ -69,23 +56,19 @@ def rerunFlowcell(cfg):
     return False
 
 
-def str2bool(s):
-    return s.lower() in ["true", "1"]
-
-
 def get_sample_sheet(d):
     """
     Provide a list of output directories and sample sheets
     """
-    ss = glob.glob(f"{d}/SampleSheet*.csv")
+    ss = list(d.glob("SampleSheet*.csv"))
 
     if len(ss) == 0:
-        return ([None], None)
+        return None, None
 
     for sheet in ss:
         opts, ss_ = parse_custom_options(sheet)
         if ss_ and opts:
-            return ss_, opts
+            return opts, ss_
     return None, None
 
 
@@ -109,11 +92,11 @@ def newFlowCell():
 
     # EMERGENCY FINNMARK FIX
     if (cfg.output_path).exists():
-        ss, opts = get_sample_sheet(cfg.output_path)
+        opts, ss = get_sample_sheet(cfg.output_path)
         sample_sub_f = cfg.output_path.glob("*Sample-Submission-Form*.xlsx")
         use_bfq_output_ss = True
     else:
-        ss, opts = get_sample_sheet(cfg.run.flowcell_path)
+        opts, ss = get_sample_sheet(cfg.run.flowcell_path)
         sample_sub_f = cfg.run.flowcell_path.glob("*Sample-Submission-Form*.xlsx")
         use_bfq_output_ss = False
 
@@ -140,10 +123,6 @@ def newFlowCell():
     else:
         cfg.run.reset()
     return
-
-
-def bool2strint(b):
-    return "1" if b else "0"
 
 
 def copy_sample_sub_form(instrument_path, output_path):
