@@ -2,7 +2,6 @@
 This file contains functions required to actually convert the bcl files to fastq
 """
 
-import glob
 import os
 import re
 import shutil
@@ -17,45 +16,35 @@ MKFASTQ_10X = {
     "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3": "cellranger_mkfastq",
 }
 
-config = None
 
-
-def fixNames():
+def rename_fastqs():
+    """
+    Find and rename FASTQ files under cfg.output_path:
+    - Removes lane suffix `_001`
+    - Removes sample numbering `_S<number>`
+    """
     cfg = PipelineConfig.get()
 
     if "10X Genomics" in cfg.run.libprep:
         return
 
-    names = glob.glob("{cfg.output_path}/*/*.fastq.gz")
-    names.extend(glob.glob("{cfg.output_path}/*/*/*.fastq.gz"))
-    for fname in names:
-        if "_001.fastq.gz" in fname:
-            fnew = fname.replace("_001.fastq.gz", ".fastq.gz")
-            fnew = re.sub("_S[0-9]+", "", fnew)
-            syslog.syslog(f"Moving {fname} to {fnew}\n")
-            shutil.move(fname, fnew)
+    # Collect FASTQ files 1–2 levels deep
+    fastqs = list(cfg.output_path.glob("*/*.fastq.gz"))
+    fastqs += list(cfg.output_path.glob("*/*/*.fastq.gz"))
 
+    for fpath in fastqs:
+        if fpath.name.endswith("_001.fastq.gz"):
+            # Build new filename
+            new_name = fpath.name.replace("_001.fastq.gz", ".fastq.gz")
+            new_name = re.sub(r"_S[0-9]+", "", new_name)
 
-def fix_stats_json(stats_fn):
-    stats = list()
-    barcodes = False
+            fnew = fpath.with_name(new_name)
+            syslog.syslog(f"[rename_fastqs] Moving {fpath} → {fnew}")
 
-    with open(stats_fn) as fh:
-        for line in fh.readlines():
-            if not barcodes:
-                stats.append(line)
-                if "UnknownBarcodes" in line:
-                    barcodes = True
-            elif not any(s in line for s in ["{", "}", "Barcodes", "Lane"]):
-                stats.append(line.replace("\n", ",\n"))
-            elif line.startswith("  }"):
-                stats.append(line.replace("\n", ",\n"))
-                stats[-2] = stats[-2].replace(",\n", "\n")
+            # Ensure parent directory exists (should already)
+            fnew.parent.mkdir(parents=True, exist_ok=True)
 
-    stats[-2] = stats[-2].replace(",\n", "\n")
-    stats[-3] = stats[-3].replace(",\n", "\n")
-    with open(stats_fn, "w+") as fh:
-        fh.writelines(stats)
+            shutil.move(str(fpath), str(fnew))
 
 
 def bcl2fq():
@@ -70,8 +59,6 @@ def bcl2fq():
     shutil.copytree(
         cfg.run.flowcell_path / "InterOp", cfg.output_path / "InterOp", dirs_exist_ok=True
     )
-    old_wd = os.getcwd()
-    os.chdir(cfg.output_path)
     force_bcl2fastq = os.environ.get("FORCE_BCL2FASTQ", None)
 
     if "10X Genomics" in cfg.run.libprep:
@@ -87,23 +74,31 @@ def bcl2fq():
     else:
         cmd = f"bcl-convert --force --bcl-input-directory {cfg.run.flowcell_path} --output-directory {cfg.output_path} --sample-sheet {cfg.run.sample_sheet} --bcl-sampleproject-subdirectories true --no-lane-splitting true --output-legacy-stats true"
         bcl_done = ["bcl-convert", os.environ.get("BCL_CONVERT_VERSION")]
+
+    log_pth = cfg.static.paths.log_dir / "{cfg.run.run_id}.log"
     try:
         syslog.syslog(f"[convert bcl] Running: {cmd}\n")
-        with open(cfg.static.paths.log / "{cfg.run.run_id}.log", "w") as logOut:
-            subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
+        with log_pth.open("w") as logOut:
+            subprocess.check_call(
+                cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True, cwd=cfg.ouput_path
+            )
     except Exception:
         if "10X Genomics" not in cfg.run.libprep and force_bcl2fastq:
-            with open(cfg.static.paths.log / "{cfg.run.run_id}.log") as logOut:
+            with log_pth.open("w") as logOut:
                 log_content = logOut.read()
             if "<bcl2fastq::layout::BarcodeCollisionError>" in log_content:
                 cmd += " --barcode-mismatches 0 "
-                with open(cfg.static.paths.log / "{cfg.run.run_id}.log", "w") as logOut:
+                with log_pth.open("w") as logOut:
                     syslog.syslog(f"[bcl2fq] Retrying with --barcode-mismatches 0 : {cmd}\n")
-                    subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True)
+                    subprocess.check_call(
+                        cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True, cwd=cfg.ouput_path
+                    )
 
-    if (cfg.output_path / "Reports" / "legacy" / "Stats").exists():
-        cmd = f"ln -sr {cfg.output_path}/Reports/legacy/Stats {cfg.output_path}/Stats"
-        subprocess.check_call(cmd, shell=True)
+    src = cfg.output_path / "Reports" / "legacy" / "Stats"
+    if src.exists():
+        dst = cfg.output_path / "Stats"
+        if dst.exists() or dst.is_symlink():
+            dst.unlink()  # remove old link or directory first
+        dst.symlink_to(src, target_is_directory=True)
 
-    os.chdir(old_wd)
     return bcl_done

@@ -55,7 +55,7 @@ def getFCmetricsImproved():
     cfg = PipelineConfig.get()
     message = ""
     try:
-        with open(cfg.output_path / "Stats" / "interop_summary.csv") as fh:
+        with (cfg.output_path / "Stats" / "interop_summary.csv").open() as fh:
             header = False
             while not header:
                 line = fh.readline()
@@ -114,12 +114,11 @@ def parseSampleSheetMetrics(cfg):
     project_names = get_project_names(project_dirs)
     msg = "<strong>Sample sheet info</strong>\n"
     for pid in project_names:
-        with open(cfg.run.sample_sheet):
-            args = Namespace(
-                samplesheet=[cfg.run.sample_sheet],
-                project_id=[pid],
-            )
-            sample_df, _, _ = cm.get_project_samples_from_samplesheet(args)
+        args = Namespace(
+            samplesheet=[cfg.run.sample_sheet],
+            project_id=[pid],
+        )
+        sample_df, _, _ = cm.get_project_samples_from_samplesheet(args)
         msg += f"<strong>{pid}</strong>: Found {len(sample_df)} samples in samplesheet.\n"
 
     ssub_df, _ = cm.sample_submission_form_parser(cfg.run.sample_submission_form)
@@ -188,11 +187,6 @@ def parserDemultiplexStats(cfg):
     for i in range(8):
         if totals[i] == 0:
             continue
-        # Bad hack with "{:,}".format(val).replace(","," ") for separator, but avoids using locale. The "right" locale would also yield unwanted results (comma as separatpr)
-        """
-        out += "Lane %i: %s of %s reads/pairs had undetermined indices (%5.2f%%)\n<br>" % (
-            i+1,"{:,}".format(undetermined[i]).replace(","," "),"{:,}".format(totals[i]).replace(","," "),100*undetermined[i]/totals[i])
-        """
         lanes.append(i + 1)
         undeter.append(100 * undetermined[i] / totals[i])
         # out_d.append({"Lane": i+1, "Undetermined": 100*undetermined[i]/totals[i]})
@@ -214,11 +208,7 @@ def enoughFreeSpace():
 def errorEmail(errTuple, msg):
     cfg = PipelineConfig.get()
     msg = msg + f"\nError type: {errTuple[0]}\nError value: {errTuple[1]}\n{errTuple[2]}\n"
-    with open(
-        cfg.static.paths.report_dir / f"{cfg.run.run_id}.error",
-        "w",
-    ) as report:
-        report.write(msg)
+    (cfg.static.paths.report_dir / f"{cfg.run.run_id}.error").write_text(msg)
 
 
 def finishedEmail(msg, runTime):
@@ -261,7 +251,7 @@ def finishedEmail(msg, runTime):
     date = cfg.run.run_id.split("_")[0]
 
     for p in projects:
-        with open(cfg.output_path / f"multiqc_{p}_{date}.html", "rb") as report:
+        with (cfg.output_path / f"multiqc_{p}_{date}.html").open("rb") as report:
             part = MIMEApplication(report.read(), report.name)
         part["Content-Disposition"] = f'attachment; filename="multiqc_{p}_{date}.html"'
         msg.attach(part)
@@ -270,12 +260,12 @@ def finishedEmail(msg, runTime):
             f = cfg.output_path / f"all_samples_web_summary_{p}_{date}.html"
             if f.exists():
                 fname = f.name
-                with open(f, "rb") as report:
+                with f.open("rb") as report:
                     part = MIMEApplication(report.read(), report.name)
                 part["Content-Disposition"] = f'attachment; filename="{fname}"'
                 msg.attach(part)
     project_str = "_".join(projects)
-    with open(cfg.output_path / "Stats" / f"sequencer_stats_{project_str}.html", "rb") as report:
+    with (cfg.output_path / "Stats" / f"sequencer_stats_{project_str}.html").open("rb") as report:
         part = MIMEApplication(report.read(), report.name)
     part["Content-Disposition"] = f'attachment; filename="sequencer_stats_{project_str}.html"'
     msg.attach(part)
