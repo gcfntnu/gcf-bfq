@@ -228,7 +228,7 @@ class RunContext:
             return
 
         try:
-            with open(yaml_file, encoding="utf-8") as fh:
+            with yaml_file.open(encoding="utf-8") as fh:
                 data = yaml.safe_load(fh) or {}
         except Exception as e:
             print(f"[RunContext] Failed to parse {yaml_file}: {e}")
@@ -413,7 +413,7 @@ class PipelineConfig:
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(out_path, "w", encoding="utf-8") as fh:
+        with out_path.open("w", encoding="utf-8") as fh:
             yaml.safe_dump(cfg_dict, fh, sort_keys=False, default_flow_style=False)
 
 
@@ -446,7 +446,7 @@ def parse_custom_options(sample_sheet_path: Path) -> tuple[dict[str, str], Path]
     in_custom_section = False
     section_pattern = re.compile(r"^\s*\[.*\]\s*$")
 
-    with open(sample_sheet_path, newline="", encoding="utf-8-sig") as fh:
+    with sample_sheet_path.open(newline="", encoding="utf-8-sig") as fh:
         reader = csv.reader(fh)
         for row in reader:
             if not row:

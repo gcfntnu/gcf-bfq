@@ -47,28 +47,6 @@ def rename_fastqs():
             shutil.move(str(fpath), str(fnew))
 
 
-def fix_stats_json(stats_fn):
-    stats = list()
-    barcodes = False
-
-    with open(stats_fn) as fh:
-        for line in fh.readlines():
-            if not barcodes:
-                stats.append(line)
-                if "UnknownBarcodes" in line:
-                    barcodes = True
-            elif not any(s in line for s in ["{", "}", "Barcodes", "Lane"]):
-                stats.append(line.replace("\n", ",\n"))
-            elif line.startswith("  }"):
-                stats.append(line.replace("\n", ",\n"))
-                stats[-2] = stats[-2].replace(",\n", "\n")
-
-    stats[-2] = stats[-2].replace(",\n", "\n")
-    stats[-3] = stats[-3].replace(",\n", "\n")
-    with open(stats_fn, "w+") as fh:
-        fh.writelines(stats)
-
-
 def bcl2fq():
     """
     takes things from /dont_touch_this/solexa_runs/XXX/Data/Intensities/BaseCalls
@@ -96,19 +74,21 @@ def bcl2fq():
     else:
         cmd = f"bcl-convert --force --bcl-input-directory {cfg.run.flowcell_path} --output-directory {cfg.output_path} --sample-sheet {cfg.run.sample_sheet} --bcl-sampleproject-subdirectories true --no-lane-splitting true --output-legacy-stats true"
         bcl_done = ["bcl-convert", os.environ.get("BCL_CONVERT_VERSION")]
+
+    log_pth = cfg.static.paths.log_dir / "{cfg.run.run_id}.log"
     try:
         syslog.syslog(f"[convert bcl] Running: {cmd}\n")
-        with open(cfg.static.paths.log / "{cfg.run.run_id}.log", "w") as logOut:
+        with log_pth.open("w") as logOut:
             subprocess.check_call(
                 cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True, cwd=cfg.ouput_path
             )
     except Exception:
         if "10X Genomics" not in cfg.run.libprep and force_bcl2fastq:
-            with open(cfg.static.paths.log / "{cfg.run.run_id}.log") as logOut:
+            with log_pth.open("w") as logOut:
                 log_content = logOut.read()
             if "<bcl2fastq::layout::BarcodeCollisionError>" in log_content:
                 cmd += " --barcode-mismatches 0 "
-                with open(cfg.static.paths.log / "{cfg.run.run_id}.log", "w") as logOut:
+                with log_pth.open("w") as logOut:
                     syslog.syslog(f"[bcl2fq] Retrying with --barcode-mismatches 0 : {cmd}\n")
                     subprocess.check_call(
                         cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True, cwd=cfg.ouput_path

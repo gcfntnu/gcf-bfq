@@ -136,7 +136,7 @@ def copy_sample_sub_form(instrument_path, output_path):
 
 def markFinished():
     cfg = PipelineConfig.get()
-    open(cfg.output_path / "fastq.made", "w").close()
+    (cfg.output_path / "fastq.made").write_text("")
     project_dirs = af.get_project_dirs(cfg)
     project_names = af.get_project_names(project_dirs)
     now = dt.datetime.now()

@@ -19,8 +19,8 @@ from bcl2fastq_pipeline.config import PipelineConfig
 
 
 def get_read_geometry(run_dir):
-    stats_file = open(run_dir / "Stats" / "Stats.json")
-    stats_json = json.load(stats_file)
+    with (run_dir / "Stats" / "Stats.json").open() as stats_file:
+        stats_json = json.load(stats_file)
     lane_info = stats_json["ReadInfosForLanes"][0].get("ReadInfos", None)
     if not lane_info:
         return "Read geometry could not be automatically determined."
@@ -109,12 +109,12 @@ def multiqc_stats(cfg):
     in_confs = list(cfg.output_path.glob(".multiqc_config*.yaml"))
     samples_custom_data = dict()
     for c in in_confs:
-        with open(c) as c_fh:
+        with c.open() as c_fh:
             mqc_conf = yaml.load(c_fh, Loader=yaml.FullLoader)
         samples_custom_data.update(mqc_conf["custom_data"]["general_statistics"]["data"])
 
     # use one of the existing multiqc_config.yaml as template
-    with open(in_confs[0]) as in_conf_fh:
+    with in_confs[0].open() as in_conf_fh:
         mqc_conf = yaml.load(in_conf_fh, Loader=yaml.FullLoader)
 
     pnames = get_project_names(get_project_dirs(cfg))
@@ -125,8 +125,8 @@ def multiqc_stats(cfg):
     )
     mqc_conf["custom_data"]["general_statistics"]["data"] = samples_custom_data
 
-    conf_name = cfg.output_path / "Stats" / ".multiqc_config.yaml"
-    with open(conf_name, "w+") as out_conf_fh:
+    conf_pth = cfg.output_path / "Stats" / ".multiqc_config.yaml"
+    with conf_pth.open("w+") as out_conf_fh:
         yaml.dump(mqc_conf, out_conf_fh)
 
     modules = "-m interop "
@@ -138,7 +138,7 @@ def multiqc_stats(cfg):
     pname = pnames.replace(", ", "_")
     multiqc_out = cfg.output_path / "Stats" / f"sequencer_stats_{pname}.html"
 
-    cmd = f"{multiqc_cmd} {multiqc_opts} --config {conf_name} {cfg.output_path}/Stats --filename {multiqc_out} {modules}"
+    cmd = f"{multiqc_cmd} {multiqc_opts} --config {conf_pth} {cfg.output_path}/Stats --filename {multiqc_out} {modules}"
     syslog.syslog(f"[multiqc_worker] Processing {cfg.output_path}\n")
 
     if os.environ.get("BFQ_TEST", None) and not FORCE_BCL2FASTQ:
@@ -171,9 +171,7 @@ def generate_password(cfg, prefix: str) -> str:
     """
     pw = subprocess.check_output("xkcdpass -n 5 -d '-' -v '[a-z]'", shell=True).decode().strip("\n")
     pw_file = cfg.output_path / f"encryption.{prefix}"
-    with pw_file.open("w", encoding="utf-8") as fh:
-        fh.write(f"{pw}\n")
-
+    pw_file.write_text(f"{pw}\n", encoding="utf-8")
     return pw
 
 
@@ -341,7 +339,7 @@ def full_align(cfg):
         )
 
     # os.chdir(old_wd)
-    open(cfg.output_path / "analysis.made", "w").close()
+    (cfg.output_path / "analysis.made").write_text("")
     return True
 
 

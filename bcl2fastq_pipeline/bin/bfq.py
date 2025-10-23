@@ -87,8 +87,7 @@ while True:
         if not (cfg.output_path / "bcl.done").exists():
             try:
                 bcl_done = bcl2fastq_pipeline.makeFastq.bcl2fq()
-                with open(cfg.output_path / "bcl.done", "w") as fh:
-                    fh.write("\t".join(bcl_done))
+                (cfg.output_path / "bcl.done").write_text("\t".join(bcl_done))
             except Exception as e:
                 print(e)
                 syslog.syslog("Got an error in bcl2fq\n")
@@ -98,7 +97,7 @@ while True:
         if not (cfg.output_path / "files.renamed").exists():
             try:
                 bcl2fastq_pipeline.makeFastq.rename_fastqs()
-                open(cfg.output_path / "files.renamed", "w").close()
+                (cfg.output_path / "files.renamed").write_text("")
             except Exception as e:
                 print(e)
                 cfg.run.reset()
