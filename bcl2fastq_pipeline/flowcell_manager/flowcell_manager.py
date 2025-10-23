@@ -2,19 +2,30 @@
 
 import argparse
 import datetime
-import glob
-import os
+import shutil
 import subprocess
 
-import bcl2fastq_pipeline.getConfig
+from pathlib import Path
+
 import pandas as pd
+
+from bcl2fastq_pipeline.config import PipelineConfig
 
 pd.set_option("display.max_rows", 5000)
 pd.set_option("display.max_columns", 6)
 
 
+def get_cfg():
+    """Return the active PipelineConfig, loading a static one if needed."""
+    try:
+        return PipelineConfig.get()
+    except RuntimeError:
+        # Not initialized yet → load static config only
+        return PipelineConfig.load("/config/bcl2fastq.ini")
+
+
 def add_flowcell(**args):
-    config = bcl2fastq_pipeline.getConfig.getConfig()
+    cfg = get_cfg()
     row_list = [
         {
             "project": args["project"],
@@ -24,12 +35,10 @@ def add_flowcell(**args):
         }
     ]
     df = pd.DataFrame(row_list)
-    flowcells_processed = pd.read_csv(
-        os.path.join(config.get("FlowCellManager", "managerDir"), "flowcells.processed")
-    )
+    flowcells_processed = pd.read_csv(cfg.static.paths.manager_dir / "flowcells.processed")
     flowcells_processed = pd.concat([flowcells_processed, df], sort=True)
     flowcells_processed.to_csv(
-        os.path.join(config.get("FlowCellManager", "managerDir"), "flowcells.processed"),
+        cfg.static.paths.manager_dir / "flowcells.processed",
         index=False,
         columns=["project", "flowcell_path", "timestamp", "archived"],
     )
@@ -37,12 +46,10 @@ def add_flowcell(**args):
 
 def archive_flowcell(**args):
     force = args.get("force", False)
-    flowcell = args["flowcell"]
-    config = bcl2fastq_pipeline.getConfig.getConfig()
-    flowcells_processed = pd.read_csv(
-        os.path.join(config.get("FlowCellManager", "managerDir"), "flowcells.processed")
-    )
-    fc_for_deletion = flowcells_processed.loc[flowcells_processed["flowcell_path"] == flowcell]
+    flowcell = Path(args["flowcell"])
+    cfg = get_cfg()
+    flowcells_processed = pd.read_csv(cfg.static.paths.manager_dir / "flowcells.processed")
+    fc_for_deletion = flowcells_processed.loc[flowcells_processed["flowcell_path"] == str(flowcell)]
     if fc_for_deletion.empty:
         print("No such flowcell in inventory!")
         return
@@ -52,21 +59,26 @@ def archive_flowcell(**args):
         print(fc_for_deletion)
         confirm = input("Delete? (yes/no): ").lower()
     if confirm == "yes":
-        deletions = [os.path.join(flowcell, pid) for pid in fc_for_deletion["project"]]
-        bam = glob.glob(os.path.join(flowcell, "**", "*.bam"))
-        deletions.extend(bam)
-        bam_bai = glob.glob(os.path.join(flowcell, "**", "*.bam.bai"))
-        deletions.extend(bam_bai)
-        deletions.append(f"{flowcell}/*.fastq.gz")
-        deletions.append(f"{flowcell}/*.7za")
-        cmd = "rm -rf {}".format(" ".join(deletions))
-        print(f"DELETING: {cmd}")
-        subprocess.check_call(cmd, shell=True)
-        flowcells_processed.loc[flowcells_processed["flowcell_path"] == flowcell, "archived"] = (
-            datetime.datetime.now()
-        )
+        deletions = [(flowcell / pid) for pid in fc_for_deletion["project"]]
+        deletions += list(flowcell.rglob("*.bam"))
+        deletions += list(flowcell.rglob("*.bam.bai"))
+        deletions += list(flowcell.glob("*.fastq.gz"))
+        deletions += list(flowcell.glob("*.7za"))
+        print(f"DELETING: {len(deletions)} items from {flowcell}")
+        for i, item in enumerate(deletions, 1):
+            print(f"[{i}/{len(deletions)}] Deleting {item}")
+
+        for d in deletions:
+            if d.is_dir():
+                shutil.rmtree(d)
+            else:
+                d.unlink()
+
+        flowcells_processed.loc[
+            flowcells_processed["flowcell_path"] == str(flowcell), "archived"
+        ] = datetime.datetime.now()
         flowcells_processed.to_csv(
-            os.path.join(config.get("FlowCellManager", "managerDir"), "flowcells.processed"),
+            cfg.static.paths.manager_dir / "flowcells.processed",
             index=False,
             columns=["project", "flowcell_path", "timestamp", "archived"],
         )
@@ -77,10 +89,8 @@ def archive_flowcell(**args):
 def rerun_flowcell(**args):
     force = args.get("force", False)
     flowcell = args["flowcell"]
-    config = bcl2fastq_pipeline.getConfig.getConfig()
-    flowcells_processed = pd.read_csv(
-        os.path.join(config.get("FlowCellManager", "managerDir"), "flowcells.processed")
-    )
+    cfg = get_cfg()
+    flowcells_processed = pd.read_csv(cfg.static.paths.manager_dir / "flowcells.processed")
     fc_for_deletion = flowcells_processed.loc[flowcells_processed["flowcell_path"] == flowcell]
     if fc_for_deletion.empty:
         print("No such flowcell in inventory!")
@@ -98,7 +108,7 @@ def rerun_flowcell(**args):
             flowcells_processed["flowcell_path"] != flowcell
         ]
         flowcells_processed.to_csv(
-            os.path.join(config.get("FlowCellManager", "managerDir"), "flowcells.processed"),
+            cfg.static.paths.manager_dir / "flowcells.processed",
             index=False,
             columns=["project", "flowcell_path", "timestamp", "archived"],
         )
@@ -107,37 +117,29 @@ def rerun_flowcell(**args):
 
 
 def list_processed(**args):
-    config = bcl2fastq_pipeline.getConfig.getConfig()
-    flowcells_processed = pd.read_csv(
-        os.path.join(config.get("FlowCellManager", "managerDir"), "flowcells.processed")
-    )
+    cfg = get_cfg()
+    flowcells_processed = pd.read_csv(cfg.static.paths.manager_dir / "flowcells.processed")
     return flowcells_processed.loc[
         (flowcells_processed["timestamp"] != "0") | (flowcells_processed["archived"] != "0")
     ]
 
 
 def list_all(**args):
-    config = bcl2fastq_pipeline.getConfig.getConfig()
-    return pd.read_csv(
-        os.path.join(config.get("FlowCellManager", "managerDir"), "flowcells.processed")
-    )
+    cfg = get_cfg()
+    return pd.read_csv(cfg.static.paths.manager_dir / "flowcells.processed")
 
 
 def list_project(project):
-    config = bcl2fastq_pipeline.getConfig.getConfig()
-    flowcells_processed = pd.read_csv(
-        os.path.join(config.get("FlowCellManager", "managerDir"), "flowcells.processed")
-    )
+    cfg = get_cfg()
+    flowcells_processed = pd.read_csv(cfg.static.paths.manager_dir / "flowcells.processed")
     return flowcells_processed.loc[
         (flowcells_processed["project"] == project) & (flowcells_processed["timestamp"] != "0")
     ]
 
 
 def list_flowcell(flowcell):
-    config = bcl2fastq_pipeline.getConfig.getConfig()
-    flowcells_processed = pd.read_csv(
-        os.path.join(config.get("FlowCellManager", "managerDir"), "flowcells.processed")
-    )
+    cfg = get_cfg()
+    flowcells_processed = pd.read_csv(cfg.static.paths.manager_dir / "flowcells.processed")
     return flowcells_processed.loc[
         (flowcells_processed["flowcell_path"] == flowcell)
         & (flowcells_processed["timestamp"] != "0")
@@ -145,11 +147,9 @@ def list_flowcell(flowcell):
 
 
 def list_flowcell_all(flowcell):
+    cfg = get_cfg()
+    flowcells_processed = pd.read_csv(cfg.static.paths.manager_dir / "flowcells.processed")
     # USED TO AVOID RUNNING OLD FLOWCELLS
-    config = bcl2fastq_pipeline.getConfig.getConfig()
-    flowcells_processed = pd.read_csv(
-        os.path.join(config.get("FlowCellManager", "managerDir"), "flowcells.processed")
-    )
     return flowcells_processed.loc[flowcells_processed["flowcell_path"] == flowcell]
 
 

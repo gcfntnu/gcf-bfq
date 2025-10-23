@@ -2,63 +2,25 @@
 This file includes code that actually runs FastQC and any other tools after the fastq files have actually been made. This uses a pool of workers to process each request.
 """
 
-import glob
+import json
 import multiprocessing as mp
 import os
-import os.path
 import shutil
 import subprocess
 import syslog
 
-import matplotlib
-
-matplotlib.use("Agg")
-import json
-import re
+from pathlib import Path
 
 import yaml
 
 from configmaker.configmaker import SEQUENCERS
 
-localConfig = None
-
-
-def set_config(config):
-    """Store the configuration globally for this module."""
-    global localConfig  # noqa: PLW0603
-    localConfig = config
-
-
-def get_config():
-    """Return the current configuration object."""
-    return localConfig
-
-
-def get_gcf_name(fname):
-    for name in fname.split("/"):
-        if re.match(r"GCF-[0-9]{4}-[0-9]{3,}", name):
-            return re.search(r"GCF-[0-9]{4}-[0-9]{3,}", name)[0]
-    raise Exception(f"Unable to determine GCF project number for filename {fname}\n")
-
-
-def toDirs(files):
-    s = set()
-    for f in files:
-        d = os.path.dirname(f)
-        if d.split("/")[-1].startswith("GCF-"):
-            s.add(d)
-        else:
-            s.add(d[: d.rfind("/")])
-    return s
-
-
-def get_sequencer(run_id):
-    return SEQUENCERS.get(run_id.split("_")[1], "Sequencer could not be automatically determined.")
+from bcl2fastq_pipeline.config import PipelineConfig
 
 
 def get_read_geometry(run_dir):
-    stats_file = open(f"{run_dir}/Stats/Stats.json")
-    stats_json = json.load(stats_file)
+    with (run_dir / "Stats" / "Stats.json").open() as stats_file:
+        stats_json = json.load(stats_file)
     lane_info = stats_json["ReadInfosForLanes"][0].get("ReadInfos", None)
     if not lane_info:
         return "Read geometry could not be automatically determined."
@@ -79,133 +41,83 @@ def get_read_geometry(run_dir):
         return "Read geometry could not be automatically determined."
 
 
-def md5sum_worker(config):
-    old_wd = os.getcwd()
-    os.chdir(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID")))
-    project_dirs = get_project_dirs(config)
+def to_dirs(files):
+    s = set()
+    for f in files:
+        d = str(f.parent)
+        if d.split("/")[-1].startswith("GCF-"):
+            s.add(d)
+        else:
+            s.add(d[: d.rfind("/")])
+    return s
+
+
+def get_sequencer(run_id):
+    return SEQUENCERS.get(run_id.split("_")[1], "Sequencer could not be automatically determined.")
+
+
+def md5sum_worker(cfg):
+    project_dirs = get_project_dirs(cfg)
     pnames = get_project_names(project_dirs)
     for p in pnames:
-        if os.path.exists(f"md5sum_{p}_fastq.txt"):
+        md_path = Path(f"md5sum_{p}_fastq.txt")
+        if md_path.exists():
             continue
-        cmd = "find {} -type f -name '*.fastq.gz' | parallel -j 5 md5sum > {}".format(
-            p, f"md5sum_{p}_fastq.txt"
-        )
-        syslog.syslog(
-            "[md5sum_worker] Processing {}\n".format(
-                os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), p)
-            )
-        )
-        subprocess.check_call(cmd, shell=True)
-    os.chdir(old_wd)
+        cmd = f"find {p} -type f -name '*.fastq.gz' | parallel -j 5 md5sum > md5sum_{p}_fastq.txt"
+        syslog.syslog(f"[md5sum_worker] Processing {cfg.output_path}/{p} \n")
+        subprocess.check_call(cmd, shell=True, cwd=cfg.output_path)
 
 
-def md5sum_archive(archive):
-    a = archive.replace(".7za", "")
-    if (not os.path.exists(f"md5sum_{a}_archive.txt")) or (
-        os.path.exists(f"md5sum_{a}_archive.txt")
-        and (os.path.getmtime(f"{a}.7za") > os.path.getmtime(f"md5sum_{a}_archive.txt"))
-    ):
-        cmd = f"md5sum {a}.7za > md5sum_{a}_archive.txt"
+def md5sum_archive(archive_path: Path):
+    base = archive_path.with_suffix("")  # remove .7za suffix
+    md5_file = archive_path.parent / f"md5sum_{base.name}_archive.txt"
+
+    if not md5_file.exists() or archive_path.stat().st_mtime > md5_file.stat().st_mtime:
+        cmd = f"md5sum {archive_path} > {md5_file}"
         subprocess.check_call(cmd, shell=True)
 
 
-def md5sum_archive_worker(config):
-    old_wd = os.getcwd()
-    os.chdir(os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID")))
-    archives = glob.glob("*.7za")
-    p = mp.Pool()
-    p.map(md5sum_archive, archives)
-    p.close()
-    os.chdir(old_wd)
+def md5sum_archive_worker(cfg):
+    output_path = Path(cfg.output_path)
+    archives = list(output_path.glob("*.7za"))
+
+    with mp.Pool() as pool:
+        pool.map(md5sum_archive, archives)
 
 
-def multiqc_stats(project_dirs):
-    config = get_config()
-    oldWd = os.getcwd()
-    os.chdir(
-        os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), "Stats")
-    )
+def multiqc_stats(cfg):
+    cwd = cfg.output_path / "Stats"
 
-    shutil.copyfile(
-        os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID"), "RunInfo.xml"),
-        os.path.join(
-            config.get("Paths", "outputDir"), config.get("Options", "runID"), "RunInfo.xml"
-        ),
-    )
+    shutil.copy2(cfg.run.flowcell_path / "RunInfo.xml", cfg.output_path / "RunInfo.xml")
     # Illumina sequencer update - RunParameters.xml -> runParameters.xml
-    if os.path.isfile(
-        os.path.join(
-            config.get("Paths", "baseDir"), config.get("Options", "runID"), "RunParameters.xml"
-        )
-    ):
-        shutil.copyfile(
-            os.path.join(
-                config.get("Paths", "baseDir"), config.get("Options", "runID"), "RunParameters.xml"
-            ),
-            os.path.join(
-                config.get("Paths", "outputDir"),
-                config.get("Options", "runID"),
-                "RunParameters.xml",
-            ),
-        )
-    else:
-        shutil.copyfile(
-            os.path.join(
-                config.get("Paths", "baseDir"), config.get("Options", "runID"), "runParameters.xml"
-            ),
-            os.path.join(
-                config.get("Paths", "outputDir"),
-                config.get("Options", "runID"),
-                "RunParameters.xml",
-            ),
-        )
+    shutil.copy2(
+        list(cfg.run.flowcell_path.glob("[Rr]unParameters.xml"))[0],
+        cfg.output_path / "RunParameters.xml",
+    )
 
     # Illumina interop
-    cmd = "interop_summary {} --csv=1 > {}".format(
-        os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID")),
-        os.path.join(
-            config.get("Paths", "outputDir"),
-            config.get("Options", "runID"),
-            "Stats",
-            "interop_summary.csv",
-        ),
-    )
-    syslog.syslog(
-        "[multiqc_worker] Interop summary on {}\n".format(
-            os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID"))
-        )
-    )
-    subprocess.check_call(cmd, shell=True)
+    out_f = cfg.output_path / "Stats" / "interop_summary.csv"
+    cmd = f"interop_summary {cfg.output_path} --csv=1 > {out_f}"
+    syslog.syslog(f"[multiqc_worker] Interop summary on {cfg.output_path}\n")
+    subprocess.check_call(cmd, shell=True, cwd=cwd)
 
-    cmd = "interop_index-summary {} --csv=1 > {}".format(
-        os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID")),
-        os.path.join(
-            config.get("Paths", "outputDir"),
-            config.get("Options", "runID"),
-            "Stats",
-            "interop_index-summary.csv",
-        ),
-    )
-    syslog.syslog(
-        "[multiqc_worker] Interop index summary on {}\n".format(
-            os.path.join(config.get("Paths", "baseDir"), config.get("Options", "runID"))
-        )
-    )
-    subprocess.check_call(cmd, shell=True)
+    out_f = cfg.output_path / "Stats" / "interop_index-summary.csv"
+    cmd = f"interop_index-summary {cfg.output_path} --csv=1 > {out_f}"
+    syslog.syslog(f"[multiqc_worker] Interop index summary on {cfg.output_path}\n")
+    subprocess.check_call(cmd, shell=True, cwd=cwd)
 
-    run_dir = os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
-
-    in_confs = glob.glob(os.path.join(run_dir, ".multiqc_config*.yaml"))
+    in_confs = list(cfg.output_path.glob(".multiqc_config*.yaml"))
     samples_custom_data = dict()
     for c in in_confs:
-        with open(c) as c_fh:
+        with c.open() as c_fh:
             mqc_conf = yaml.load(c_fh, Loader=yaml.FullLoader)
         samples_custom_data.update(mqc_conf["custom_data"]["general_statistics"]["data"])
 
     # use one of the existing multiqc_config.yaml as template
-    with open(in_confs[0]) as in_conf_fh:
+    with in_confs[0].open() as in_conf_fh:
         mqc_conf = yaml.load(in_conf_fh, Loader=yaml.FullLoader)
-    pnames = get_project_names(project_dirs)
+
+    pnames = get_project_names(get_project_dirs(cfg))
     pnames = ", ".join(pnames)
     mqc_conf["title"] = pnames
     mqc_conf["intro_text"] = (
@@ -213,40 +125,24 @@ def multiqc_stats(project_dirs):
     )
     mqc_conf["custom_data"]["general_statistics"]["data"] = samples_custom_data
 
-    conf_name = os.path.join(run_dir, "Stats", ".multiqc_config.yaml")
-    with open(conf_name, "w+") as out_conf_fh:
+    conf_pth = cfg.output_path / "Stats" / ".multiqc_config.yaml"
+    with conf_pth.open("w+") as out_conf_fh:
         yaml.dump(mqc_conf, out_conf_fh)
 
     modules = "-m interop "
     FORCE_BCL2FASTQ = os.environ.get("FORCE_BCL2FASTQ", None)
     modules += "-m bclconvert " if not FORCE_BCL2FASTQ else "-m bcl2fastq"
-    # stats_dir = "Reports" if not FORCE_BCL2FASTQ else "Stats"
-    stats_dir = "Stats"
 
-    cmd = "{multiqc_cmd} {multiqc_opts} --config {conf} {flow_dir}/{stats_dir} --filename {flow_dir}/Stats/sequencer_stats_{pname}.html {modules}".format(
-        multiqc_cmd=config.get("MultiQC", "multiqc_command"),
-        multiqc_opts=config.get("MultiQC", "multiqc_options"),
-        conf=conf_name,
-        flow_dir=os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID")),
-        stats_dir=stats_dir,
-        pname=pnames.replace(", ", "_"),
-        modules=modules,
-    )
-    syslog.syslog(
-        "[multiqc_worker] Processing {}\n".format(
-            os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"), "Stats")
-        )
-    )
+    multiqc_cmd = cfg.static.commands["multiqc_command"]
+    multiqc_opts = cfg.static.commands["multiqc_options"]
+    pname = pnames.replace(", ", "_")
+    multiqc_out = cfg.output_path / "Stats" / f"sequencer_stats_{pname}.html"
+
+    cmd = f"{multiqc_cmd} {multiqc_opts} --config {conf_pth} {cfg.output_path}/Stats --filename {multiqc_out} {modules}"
+    syslog.syslog(f"[multiqc_worker] Processing {cfg.output_path}\n")
 
     if os.environ.get("BFQ_TEST", None) and not FORCE_BCL2FASTQ:
-        if not os.path.exists(
-            os.path.join(
-                config.get("Paths", "outputDir"),
-                config.get("Options", "runID"),
-                stats_dir,
-                "Demultiplex_Stats.csv",
-            )
-        ):
+        if not (cfg.output_path / "Stats" / "Demultiplex_Stats.csv").exists():
             print(
                 "BFQ-TEST: Testflowcell was generated with bcl2fastq but environment is configured for bcl-convert. Using bcl2fastq paths and mqc modules."
             )
@@ -254,127 +150,88 @@ def multiqc_stats(project_dirs):
             cmd = cmd.replace("-m bclconvert", "-m bcl2fastq")
             print(cmd)
 
-    subprocess.check_call(cmd, shell=True)
-
-    os.chdir(oldWd)
+    subprocess.check_call(cmd, shell=True, cwd=cwd)
 
 
-def archive_worker(config):
-    project_dirs = get_project_dirs(config)
+def generate_password(cfg, prefix: str) -> str:
+    """
+    Generate a one-time archive password and write it to file.
+
+    Parameters
+    ----------
+    cfg : PipelineConfig
+        Global configuration object.
+    prefix : str
+        Used to name the password file, e.g. 'encryption.<prefix>'.
+
+    Returns
+    -------
+    str
+        The generated password string.
+    """
+    pw = subprocess.check_output("xkcdpass -n 5 -d '-' -v '[a-z]'", shell=True).decode().strip("\n")
+    pw_file = cfg.output_path / f"encryption.{prefix}"
+    pw_file.write_text(f"{pw}\n", encoding="utf-8")
+    return pw
+
+
+def archive_worker(cfg):
+    project_dirs = get_project_dirs(cfg)
     pnames = get_project_names(project_dirs)
-    run_date = config.get("Options", "runID").split("_")[0]
+    run_date = str(cfg.run.run_id).split("_")[0]
 
     for p in pnames:
-        """
-        Archive fastq
-        """
-        if os.path.exists(
-            os.path.join(
-                config.get("Paths", "outputDir"), config.get("Options", "runID"), f"{p}.7za"
-            )
-        ):
-            os.remove(
-                os.path.join(
-                    config.get("Paths", "outputDir"), config.get("Options", "runID"), f"{p}.7za"
-                )
-            )
-        pw = None
-        if config.get("Options", "SensitiveData") == "1":
-            pw = (
-                subprocess.check_output("xkcdpass -n 5 -d '-' -v '[a-z]'", shell=True)
-                .decode()
-                .strip("\n")
-            )
-            with open(
-                os.path.join(
-                    config.get("Paths", "outputDir"),
-                    config.get("Options", "runID"),
-                    f"encryption.{p}",
-                ),
-                "w",
-            ) as pwfile:
-                pwfile.write(f"{pw}\n")
+        # ------------------------------------------------------------------ #
+        # Archive FASTQ
+        # ------------------------------------------------------------------ #
+        archive_fastq = cfg.output_path / f"{p}_{run_date}.7za"
+        if archive_fastq.exists():
+            archive_fastq.unlink()
+
+        pw = generate_password(cfg, p) if cfg.run.sensitive else None
         opts = f"-p{pw}" if pw else ""
-        flowdir = os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
-        report_dir = (
-            os.path.join(flowdir, "Reports")
-            if os.path.exists(os.path.join(flowdir, "Reports"))
-            else ""
+
+        report_dir = cfg.output_path / "Reports"
+        if not report_dir.exists():
+            report_dir = ""
+
+        cmd = (
+            f"7za a {opts} "
+            f"{cfg.output_path}/{p}_{run_date}.7za "
+            f"{cfg.output_path}/{p}/ "
+            f"{cfg.output_path}/Stats "
+            f"{report_dir} "
+            f"{cfg.output_path}/Undetermined*.fastq.gz "
+            f"{cfg.output_path}/{p}_samplesheet.tsv "
+            f"{cfg.output_path}/SampleSheet.csv "
+            f"{cfg.output_path}/Sample-Submission-Form.xlsx "
+            f"{cfg.output_path}/md5sum_{p}_fastq.txt "
         )
 
-        cmd = "7za a {opts} {flowdir}/{pnr}_{date}.7za {flowdir}/{pnr}/ {flowdir}/Stats {report_dir} {flowdir}/Undetermined*.fastq.gz {flowdir}/{pnr}_samplesheet.tsv {flowdir}/SampleSheet.csv {flowdir}/Sample-Submission-Form.xlsx {flowdir}/md5sum_{pnr}_fastq.txt ".format(
-            opts=opts,
-            date=run_date,
-            flowdir=os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID")),
-            report_dir=report_dir,
-            pnr=p,
-        )
-        if "10X Genomics" in config.get("Options", "Libprep"):
-            cmd += " {}".format(
-                os.path.join(
-                    config.get("Paths", "outputDir"),
-                    config.get("Options", "runID"),
-                    config.get("Options", "runID").split("_")[-1][1:],
-                )
-            )
-        syslog.syslog(
-            "[archive_worker] Zipping {}\n".format(
-                os.path.join(
-                    config.get("Paths", "outputDir"),
-                    config.get("Options", "runID"),
-                    f"{p}_{run_date}.7za",
-                )
-            )
-        )
+        if cfg.run.libprep and "10X Genomics" in cfg.run.libprep:
+            extra = cfg.run.run_id.split("_")[-1][1:]
+            cmd += f" {cfg.output_path}/{extra}"
+
+        syslog.syslog(f"[archive_worker] Zipping {archive_fastq}\n")
         subprocess.check_call(cmd, shell=True)
-        """
-        Archive pipeline output
-        """
-        if os.path.exists(
-            os.path.join(
-                config.get("Paths", "outputDir"), config.get("Options", "runID"), f"QC_{p}.7za"
-            )
-        ):
-            os.remove(
-                os.path.join(
-                    config.get("Paths", "outputDir"), config.get("Options", "runID"), f"QC_{p}.7za"
-                )
-            )
-        pw = None
-        if config.get("Options", "SensitiveData") == "1":
-            pw = (
-                subprocess.check_output("xkcdpass -n 5 -d '-' -v '[a-z]'", shell=True)
-                .decode()
-                .strip("\n")
-            )
-            with open(
-                os.path.join(
-                    config.get("Paths", "outputDir"),
-                    config.get("Options", "runID"),
-                    f"encryption.QC_{p}",
-                ),
-                "w",
-            ) as pwfile:
-                pwfile.write(f"{pw}\n")
 
+        # ------------------------------------------------------------------ #
+        # Archive pipeline output (QC)
+        # ------------------------------------------------------------------ #
+        qc_archive = cfg.output_path / f"QC_{p}_{run_date}.7za"
+        if qc_archive.exists():
+            qc_archive.unlink()
+
+        pw = generate_password(cfg, f"QC_{p}") if cfg.run.sensitive else None
         opts = f"-p{pw}" if pw else ""
-        flowdir = os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
-        pipeline = config.get("Options", "pipeline")
-        qc_dir = os.path.join(
-            os.environ["TMPDIR"], f"{p}_{run_date}", "data", "tmp", pipeline, "bfq"
-        )
 
-        cmd = f"7z a -l {opts} {flowdir}/QC_{p}_{run_date}.7za {qc_dir} "
+        tmp_dir = Path(os.environ["TMPDIR"])
+        qc_dir = tmp_dir / f"{p}_{run_date}" / "data" / "tmp" / cfg.run.pipeline / "bfq"
+        flowdir = cfg.output_path
 
-        """
-        cmd = "7z a -l {opts} {flowdir}/QC_{pnr}_{date}.7za {qc_dir} ".format(
-                opts = opts,
-                flowdir = os.path.join(config.get('Paths','outputDir'), config.get('Options','runID')),
-                pnr = p,
-                date = run_date,
-                qc_dir = qc_dir
-            )
-        """
+        cmd = f"7za a -l {opts} {flowdir}/QC_{p}_{run_date}.7za {qc_dir} "
+
+        syslog.syslog(f"[archive_worker] Archiving QC output → {qc_archive}\n")
         subprocess.check_call(cmd, shell=True)
 
 
@@ -387,148 +244,107 @@ def get_project_names(dirs):
     return gcf
 
 
-def get_project_dirs(config):
-    projectDirs = glob.glob(
-        "{}/{}/*/*.fastq.gz".format(
-            config.get("Paths", "outputDir"), config.get("Options", "runID")
-        )
-    )
-    projectDirs.extend(
-        glob.glob(
-            "{}/{}/*/*/*.fastq.gz".format(
-                config.get("Paths", "outputDir"), config.get("Options", "runID")
-            )
-        )
-    )
-    return toDirs(projectDirs)
+def get_project_dirs(cfg):
+    """
+    Find project directories under cfg.output_path containing FASTQ files.
+
+    Searches one and two levels deep for *.fastq.gz files,
+    then extracts their parent directories via to_dirs().
+    """
+    fastq_paths = list(cfg.output_path.glob("*/*.fastq.gz"))
+    fastq_paths += list(cfg.output_path.glob("*/*/*.fastq.gz"))
+    return to_dirs(fastq_paths)
 
 
 def post_workflow(project_id, base_dir, pipeline):
-    analysis_dir = os.path.join(
-        os.environ["TMPDIR"], "{}_{}".format(project_id, os.path.basename(base_dir).split("_")[0])
-    )
-    os.makedirs(os.path.join(base_dir, f"QC_{project_id}", "bfq"), exist_ok=True)
-    cmd = "rsync -rvLp {}/ {}".format(
-        os.path.join(analysis_dir, "data", "tmp", pipeline, "bfq"),
-        os.path.join(base_dir, f"QC_{project_id}", "bfq"),
-    )
-    subprocess.check_call(cmd, shell=True)
+    run_date = str(base_dir.name).split("_")[0]
+    analysis_dir = Path(os.environ["TMPDIR"]) / f"{project_id}_{run_date}"
+    bfq_dir = analysis_dir / "data" / "tmp" / pipeline / "bfq"
+    odir = base_dir / f"QC_{project_id}" / "bfq"
+    odir.mkdir(parents=True, exist_ok=True)
+
+    shutil.copytree(bfq_dir, odir, symlinks=False, dirs_exist_ok=True)
 
     # Copy sample info
-    cmd = "cp {} {}".format(
-        os.path.join(analysis_dir, "data", "tmp", "sample_info.tsv"),
-        os.path.join(base_dir, f"{project_id}_samplesheet.tsv"),
+    shutil.copy2(
+        analysis_dir / "data" / "tmp" / "sample_info.tsv",
+        base_dir / f"{project_id}_samplesheet.tsv",
     )
-    subprocess.check_call(cmd, shell=True)
 
     return True
 
 
-def full_align(config):
-    old_wd = os.getcwd()
-    libprep = config.get("Options", "Libprep")
-    pipeline = config.get("Options", "pipeline")
+def full_align(cfg):
+    # old_wd = Path.cwd()
 
-    base_dir = os.path.join(config.get("Paths", "outputDir"), config.get("Options", "runID"))
-    os.chdir(os.environ["TMPDIR"])
-    project_names = get_project_names(get_project_dirs(config))
-    run_date = os.path.basename(base_dir).split("_")[0]
+    # os.chdir(os.environ["TMPDIR"])
+    project_names = get_project_names(get_project_dirs(cfg))
+    run_date = str(cfg.output_path.name).split("_")[0]
     for p in project_names:
-        analysis_dir = os.path.join(os.environ["TMPDIR"], f"{p}_{run_date}")
-        os.makedirs(analysis_dir, exist_ok=True)
-        os.makedirs(os.path.join(analysis_dir, "src"), exist_ok=True)
-        os.makedirs(os.path.join(analysis_dir, "data"), exist_ok=True)
+        analysis_dir = Path(os.environ["TMPDIR"]) / f"{p}_{run_date}"
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+        (analysis_dir / "src").mkdir(parents=True, exist_ok=True)
+        (analysis_dir / "data").mkdir(parents=True, exist_ok=True)
 
-        os.chdir(analysis_dir)
+        # os.chdir(analysis_dir)
+
+        src = Path("/opt/gcf-workflows")
+        dst = analysis_dir / "src" / "gcf-workflows"
 
         # copy snakemake pipeline
-        cmd = "rm -rf {dst} && cp -r {src} {dst}".format(
-            src="/opt/gcf-workflows", dst=os.path.join(analysis_dir, "src", "gcf-workflows")
-        )
-        subprocess.check_call(cmd, shell=True)
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
 
         # create config.yaml
         cmd = "/opt/conda/bin/python /opt/conda/bin/configmaker.py {runfolder} -p {project} --libkit '{lib}' --machine '{machine}' {create_fastq}".format(
-            runfolder=base_dir,
+            runfolder=cfg.output_path,
             project=p,
-            lib=libprep,
-            machine=get_sequencer(config.get("Options", "runID")),
-            create_fastq=" --skip-create-fastq-dir" if os.path.exists("data/raw/fastq") else "",
+            lib=cfg.run.libprep,
+            machine=get_sequencer(cfg.run.run_id),
+            create_fastq=" --skip-create-fastq-dir" if Path("data/raw/fastq").exists() else "",
         )
-        subprocess.check_call(cmd, shell=True)
-
-        # write template Snakefile for pipeline
-        # with open(os.path.join(analysis_dir,"Snakefile"), "w") as sn:
-        #    sn.write(SNAKEFILE_TEMPLATE.format(workflow=pipeline))
+        subprocess.check_call(cmd, shell=True, cwd=analysis_dir)
 
         # run snakemake pipeline
         cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR --cores 32 --verbose -p multiqc_report"
-        subprocess.check_call(cmd, shell=True)
+        subprocess.check_call(cmd, shell=True, cwd=analysis_dir)
 
         # copy report
-        cmd = "cp {src} {dst}".format(
-            src=os.path.join("data", "tmp", pipeline, "bfq", f"multiqc_{p}.html"),
-            dst=os.path.join(base_dir, f"multiqc_{p}_{run_date}.html"),
+        shutil.copy2(
+            analysis_dir / "data" / "tmp" / cfg.run.pipeline / "bfq" / f"multiqc_{p}.html",
+            cfg.output_path / f"multiqc_{p}_{run_date}.html",
         )
-        subprocess.check_call(cmd, shell=True)
 
         # if additional html reports exists (single cell), copy
-        extra_html = glob.glob(
-            os.path.join(
-                analysis_dir, "data", "tmp", pipeline, "bfq", "summaries", "all_samples*.html"
-            )
+        extra_html = (analysis_dir / "data" / "tmp" / cfg.run.pipeline / "bfq" / "summaries").glob(
+            "all_samples*.html"
         )
+        extra_html = list(extra_html)
         if extra_html:
-            src = extra_html[0]
-            dst = os.path.join(base_dir, f"all_samples_web_summary_{p}_{run_date}.html")
-            cmd = f"cp {src} {dst}"
-            subprocess.check_call(cmd, shell=True)
+            shutil.copy2(
+                extra_html[0], cfg.output_path / f"all_samples_web_summary_{p}_{run_date}.html"
+            )
 
         # Copy sample info
-        cmd = "cp {} {}".format(
-            os.path.join("data", "tmp", "sample_info.tsv"),
-            os.path.join(base_dir, f"{p}_samplesheet.tsv"),
+        shutil.copy2(
+            analysis_dir / "data" / "tmp" / "sample_info.tsv",
+            cfg.output_path / f"{p}_samplesheet.tsv",
         )
-        subprocess.check_call(cmd, shell=True)
 
         # copy mqc_config
-        cmd = "cp {src} {dst}".format(
-            src=os.path.join("data", "tmp", pipeline, "bfq", ".multiqc_config.yaml"),
-            dst=os.path.join(base_dir, f".multiqc_config_{p}.yaml"),
+        shutil.copy2(
+            analysis_dir / "data" / "tmp" / cfg.run.pipeline / "bfq" / ".multiqc_config.yaml",
+            cfg.output_path / f".multiqc_config_{p}.yaml",
         )
-        subprocess.check_call(cmd, shell=True)
 
-        """
-        #push workflow bfq output to project directory
-        post_workflow(p, base_dir, pipeline)
-        """
-        r"""
-        #push analysis folder
-        analysis_export_dir = os.path.join(config.get("Paths","analysisDir"),"{}_{}".format(p,config.get("Options","runID").split("_")[0]))
-
-        cmd = "rm -rf {dst} && cp -rv {src}/ {dst} ".format(
-            src = analysis_dir,
-            dst = analysis_export_dir,
-        )
-        subprocess.check_call(cmd,shell=True)
-
-        #touch bfq_all to avoid rerunning pipelines from scratch
-        if not config.get("Options", "libprep").startswith("QIAseq 16S ITS Region Panels"):
-            os.chdir(analysis_export_dir)
-            #cmd = "find . -type d -exec chmod a+rwx {} \; && find . -type f -exec chmod a+rw {} \; && snakemake --touch -j1 multiqc_report "
-            cmd = "snakemake --touch --cores 1 multiqc_report "
-            subprocess.check_call(cmd,shell=True)
-        """
-
-    os.chdir(old_wd)
-    open(
-        os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"], "analysis.made"), "w"
-    ).close()
+    # os.chdir(old_wd)
+    (cfg.output_path / "analysis.made").write_text("")
     return True
 
 
 # All steps that should be run after `make` go here
-def postMakeSteps(config):
+def postMakeSteps():
     """
     Current steps are:
       1) Run FastQC on each fastq.gz file
@@ -536,38 +352,21 @@ def postMakeSteps(config):
     Other steps could easily be added to follow those. Note that this function
     will try to use a pool of threads. The size of the pool is set by config.postMakeThreads
     """
+    cfg = PipelineConfig.get()
 
-    projectDirs = get_project_dirs(config)
-    set_config(config)
-
-    with open("/opt/gcf-workflows/libprep.config") as lc_f:
-        libprep_config = yaml.load(lc_f, Loader=yaml.FullLoader)
-
-    if config.get("Options", "libprep") + " SE" in libprep_config.keys():
-        config["Options"]["pipeline"] = libprep_config[config.get("Options", "libprep") + " SE"][
-            "workflow"
-        ]
-    elif config.get("Options", "libprep") + " PE" in libprep_config.keys():
-        config["Options"]["pipeline"] = libprep_config[config.get("Options", "libprep") + " PE"][
-            "workflow"
-        ]
-    else:
-        print("failed to identify pipeline from libprep name, using default workflow")
-        config["Options"]["pipeline"] = "default"
+    cfg.run.set_pipeline_from_yaml(Path("/opt/gcf-workflows/libprep.config"))
 
     # md5sum fastqs
-    md5sum_worker(config)
+    md5sum_worker(cfg)
 
-    if not os.path.exists(
-        os.path.join(config["Paths"]["outputDir"], config["Options"]["runID"], "analysis.made")
-    ):
-        full_align(config)
+    if not (cfg.output_path / "analysis.made").exists():
+        full_align(cfg)
 
     # multiqc_stats
-    multiqc_stats(projectDirs)
+    multiqc_stats(cfg)
 
     # disk usage
-    tot, used, free = shutil.disk_usage(config.get("Paths", "outputDir"))
+    tot, used, free = shutil.disk_usage(cfg.static.paths.output_dir)
     tot /= 1024**3  # Convert to GiB
     used /= 1024**3
     free /= 1024**3
@@ -577,7 +376,7 @@ def postMakeSteps(config):
         f"({100 * free / tot:5.2f}%)\n<br>"
     )
 
-    tot, used, free = shutil.disk_usage(config.get("Paths", "baseDir"))
+    tot, used, free = shutil.disk_usage(cfg.run.flowcell_path.parent)
     tot /= 1024**3  # Convert to GiB
     used /= 1024**3
     free /= 1024**3
@@ -587,19 +386,14 @@ def postMakeSteps(config):
         f"({100 * free / tot:5.2f}%)\n<br>\n<br>"
     )
     # save configfile to flowcell
-    with open(
-        os.path.join(
-            config.get("Paths", "outputDir"), config.get("Options", "runID"), "bcl2fastq.ini"
-        ),
-        "w+",
-    ) as configfile:
-        config.write(configfile)
+    cfg.to_file(cfg.output_path / "bcl2fastq.ini")
 
     return message
 
 
-def finalize(config):
+def finalize():
+    cfg = PipelineConfig.get()
     # zip arhive
-    archive_worker(config)
+    archive_worker(cfg)
     # md5sum archive
-    md5sum_archive_worker(config)
+    md5sum_archive_worker(cfg)
