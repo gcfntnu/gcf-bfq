@@ -80,9 +80,10 @@ def bcl2fq():
         syslog.syslog(f"[convert bcl] Running: {cmd}\n")
         with log_pth.open("w") as logOut:
             subprocess.check_call(
-                cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True, cwd=cfg.ouput_path
+                cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True, cwd=cfg.output_path
             )
-    except Exception:
+    except Exception as e:
+        print(e)
         if "10X Genomics" not in cfg.run.libprep and force_bcl2fastq:
             with log_pth.open("w") as logOut:
                 log_content = logOut.read()
@@ -91,7 +92,11 @@ def bcl2fq():
                 with log_pth.open("w") as logOut:
                     syslog.syslog(f"[bcl2fq] Retrying with --barcode-mismatches 0 : {cmd}\n")
                     subprocess.check_call(
-                        cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True, cwd=cfg.ouput_path
+                        cmd,
+                        stdout=logOut,
+                        stderr=subprocess.STDOUT,
+                        shell=True,
+                        cwd=cfg.output_path,
                     )
 
     src = cfg.output_path / "Reports" / "legacy" / "Stats"
