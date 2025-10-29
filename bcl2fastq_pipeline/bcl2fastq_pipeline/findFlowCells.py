@@ -6,8 +6,8 @@ such as marking it as having been processed and sending emails.
 """
 
 import datetime as dt
+import logging
 import shutil
-import syslog
 
 from pathlib import Path
 
@@ -16,6 +16,8 @@ import flowcell_manager.flowcell_manager as fm
 import bcl2fastq_pipeline.afterFastq as af
 
 from bcl2fastq_pipeline.config import PipelineConfig, parse_custom_options
+
+log = logging.getLogger("bfq")
 
 
 def modified_time(path: Path):
@@ -104,7 +106,7 @@ def newFlowCell():
         cfg.run.reset()
         return
 
-    syslog.syslog(f"Found a new flow cell: {cfg.run.run_id}\n")
+    log.info(f"Found a new flow cell: {cfg.run.run_id}\n")
     if not (cfg.output_path).exists():
         (cfg.output_path).mkdir()
 

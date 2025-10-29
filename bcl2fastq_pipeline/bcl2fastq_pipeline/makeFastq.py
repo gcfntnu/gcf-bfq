@@ -2,13 +2,15 @@
 This file contains functions required to actually convert the bcl files to fastq
 """
 
+import logging
 import os
 import re
 import shutil
 import subprocess
-import syslog
 
 from bcl2fastq_pipeline.config import PipelineConfig
+
+log = logging.getLogger("bfq")
 
 MKFASTQ_10X = {
     "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit": "cellranger_spatial_mkfastq",
@@ -39,7 +41,7 @@ def rename_fastqs():
             new_name = re.sub(r"_S[0-9]+", "", new_name)
 
             fnew = fpath.with_name(new_name)
-            syslog.syslog(f"[rename_fastqs] Moving {fpath} → {fnew}")
+            log.debug(f"[rename_fastqs] Moving {fpath} → {fnew}")
 
             # Ensure parent directory exists (should already)
             fnew.parent.mkdir(parents=True, exist_ok=True)
@@ -77,20 +79,19 @@ def bcl2fq():
 
     log_pth = cfg.static.paths.log_dir / "{cfg.run.run_id}.log"
     try:
-        syslog.syslog(f"[convert bcl] Running: {cmd}\n")
+        log.info(f"[convert bcl] Running: {cmd}\n")
         with log_pth.open("w") as logOut:
             subprocess.check_call(
                 cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True, cwd=cfg.output_path
             )
-    except Exception as e:
-        print(e)
+    except Exception:
         if "10X Genomics" not in cfg.run.libprep and force_bcl2fastq:
             with log_pth.open("w") as logOut:
                 log_content = logOut.read()
             if "<bcl2fastq::layout::BarcodeCollisionError>" in log_content:
                 cmd += " --barcode-mismatches 0 "
                 with log_pth.open("w") as logOut:
-                    syslog.syslog(f"[bcl2fq] Retrying with --barcode-mismatches 0 : {cmd}\n")
+                    log.info(f"[bcl2fq] Retrying with --barcode-mismatches 0 : {cmd}\n")
                     subprocess.check_call(
                         cmd,
                         stdout=logOut,

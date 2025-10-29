@@ -3,11 +3,11 @@ This file includes code that actually runs FastQC and any other tools after the 
 """
 
 import json
+import logging
 import multiprocessing as mp
 import os
 import shutil
 import subprocess
-import syslog
 
 from pathlib import Path
 
@@ -16,6 +16,8 @@ import yaml
 from configmaker.configmaker import SEQUENCERS
 
 from bcl2fastq_pipeline.config import PipelineConfig
+
+log = logging.getLogger("bfq")
 
 
 def get_read_geometry(run_dir):
@@ -64,7 +66,7 @@ def md5sum_worker(cfg):
         if md_path.exists():
             continue
         cmd = f"find {p} -type f -name '*.fastq.gz' | parallel -j 5 md5sum > md5sum_{p}_fastq.txt"
-        syslog.syslog(f"[md5sum_worker] Processing {cfg.output_path}/{p} \n")
+        log.info(f"[md5sum_worker] Processing {cfg.output_path}/{p}")
         subprocess.check_call(cmd, shell=True, cwd=cfg.output_path)
 
 
@@ -98,12 +100,12 @@ def multiqc_stats(cfg):
     # Illumina interop
     out_f = cfg.output_path / "Stats" / "interop_summary.csv"
     cmd = f"interop_summary {cfg.output_path} --csv=1 > {out_f}"
-    syslog.syslog(f"[multiqc_worker] Interop summary on {cfg.output_path}\n")
+    log.info(f"[multiqc_worker] Interop summary on {cfg.output_path}")
     subprocess.check_call(cmd, shell=True, cwd=cwd)
 
     out_f = cfg.output_path / "Stats" / "interop_index-summary.csv"
     cmd = f"interop_index-summary {cfg.output_path} --csv=1 > {out_f}"
-    syslog.syslog(f"[multiqc_worker] Interop index summary on {cfg.output_path}\n")
+    log.info(f"[multiqc_worker] Interop index summary on {cfg.output_path}")
     subprocess.check_call(cmd, shell=True, cwd=cwd)
 
     in_confs = list(cfg.output_path.glob(".multiqc_config*.yaml"))
@@ -139,7 +141,7 @@ def multiqc_stats(cfg):
     multiqc_out = cfg.output_path / "Stats" / f"sequencer_stats_{pname}.html"
 
     cmd = f"{multiqc_cmd} {multiqc_opts} --config {conf_pth} {cfg.output_path}/Stats --filename {multiqc_out} {modules}"
-    syslog.syslog(f"[multiqc_worker] Processing {cfg.output_path}\n")
+    log(f"[multiqc_worker] Processing {cfg.output_path}")
 
     if os.environ.get("BFQ_TEST", None) and not FORCE_BCL2FASTQ:
         if not (cfg.output_path / "Stats" / "Demultiplex_Stats.csv").exists():
@@ -212,7 +214,7 @@ def archive_worker(cfg):
             extra = cfg.run.run_id.split("_")[-1][1:]
             cmd += f" {cfg.output_path}/{extra}"
 
-        syslog.syslog(f"[archive_worker] Zipping {archive_fastq}\n")
+        log.info(f"[archive_worker] Zipping {archive_fastq}")
         subprocess.check_call(cmd, shell=True)
 
         # ------------------------------------------------------------------ #
@@ -231,7 +233,7 @@ def archive_worker(cfg):
 
         cmd = f"7za a -l {opts} {flowdir}/QC_{p}_{run_date}.7za {qc_dir} "
 
-        syslog.syslog(f"[archive_worker] Archiving QC output → {qc_archive}\n")
+        log.info(f"[archive_worker] Archiving QC output → {qc_archive}\n")
         subprocess.check_call(cmd, shell=True)
 
 

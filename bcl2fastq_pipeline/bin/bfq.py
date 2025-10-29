@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import datetime
 import importlib
+import logging
 import signal
 import sys
 import syslog
@@ -29,7 +30,18 @@ def sleep(cfg):
     gotHUP.clear()
 
 
+def setup_logging(verbosity: int = 1) -> None:
+    """Initialize global logging configuration."""
+    level = logging.DEBUG if verbosity > 1 else logging.INFO
+    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    logging.basicConfig(level=level, format=fmt, datefmt="%Y-%m-%d %H:%M:%S")
+
+
 signal.signal(signal.SIGHUP, breakSleep)
+
+setup_logging()
+log = logging.getLogger("bfq")
+log.info("Starting bcl2fastq pipeline")
 
 PipelineConfig.load("/config/bcl2fastq.ini")
 
@@ -44,7 +56,8 @@ while True:
     cfg = PipelineConfig.get()
     if not cfg:
         # There's no recovering from this!
-        sys.exit("Error: couldn't read the config file!")
+        log.error("Unable to read configfile")
+        sys.exit(1)
 
     in_pths = [cfg.static.paths.nova_base_dir, cfg.static.paths.ekista_base_dir]
     completion_files = {
@@ -76,8 +89,8 @@ while True:
             continue
         # Ensure we have sufficient space
         if not bcl2fastq_pipeline.misc.enoughFreeSpace():
-            syslog.syslog("Error: insufficient free space!\n")
-            bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Error: insufficient free space!")
+            log.error("Insufficient free space!")
+            bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Insufficient free space!")
             cfg.run.reset()
             break
 
@@ -86,43 +99,51 @@ while True:
         # Make the fastq files, if not already done
         if not (cfg.output_path / "bcl.done").exists():
             try:
+                log.info(f"Starting demultiplexing: {cfg.run.run_id}")
                 bcl_done = bcl2fastq_pipeline.makeFastq.bcl2fq()
                 (cfg.output_path / "bcl.done").write_text("\t".join(bcl_done))
             except Exception as e:
-                print(e)
-                syslog.syslog("Got an error in bcl2fq\n")
-                bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error in bcl2fq")
+                cfg.run.reset()
+                log.exception("Got an error in bcl2fq")
+                bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), f"Got an error in bcl2fq: {e}")
                 continue
+        else:
+            log.info(f"Demultiplexing already done for {cfg.output_path}")
 
         if not (cfg.output_path / "files.renamed").exists():
             try:
+                log.info("Renaming files")
                 bcl2fastq_pipeline.makeFastq.rename_fastqs()
                 (cfg.output_path / "files.renamed").write_text("")
             except Exception as e:
-                print(e)
                 cfg.run.reset()
-                syslog.syslog("Got an error in rename_fastqs\n")
-                bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error in rename_fastqs")
+                log.exception("Got an error in rename_fastqs")
+                bcl2fastq_pipeline.misc.errorEmail(
+                    sys.exc_info(), f"Got an error in rename_fastqs: {e}"
+                )
                 continue
 
         # Run post-processing steps
         try:
+            log.info("Starting post-processing")
             message = bcl2fastq_pipeline.afterFastq.postMakeSteps()
         except Exception as e:
-            print(e)
             cfg.run.reset()
-            syslog.syslog(f"Got an error during postMakeSteps:\n {e}")
-            bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error during postMakeSteps")
+            log.exception("Got an error during postMakeSteps")
+            bcl2fastq_pipeline.misc.errorEmail(
+                sys.exc_info(), f"Got an error during postMakeSteps: {e}"
+            )
             continue
 
         # Get more statistics and create PDFs
         try:
             message += bcl2fastq_pipeline.misc.getFCmetricsImproved()
         except Exception as e:
-            print(e)
             cfg.run.reset()
-            syslog.syslog("Got an error during getFCmetrics\n")
-            bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Got an error during getFCmetrics")
+            log.exception("Got an error during getFCmetrics")
+            bcl2fastq_pipeline.misc.errorEmail(
+                sys.exc_info(), f"Got an error during getFCmetrics: {e}"
+            )
             continue
         endTime = datetime.datetime.now()
         runTime = endTime - startTime
@@ -131,11 +152,10 @@ while True:
         try:
             bcl2fastq_pipeline.misc.finishedEmail(message, runTime)
         except Exception as e:
-            print(e)
             cfg.run.reset()
-            syslog.syslog("Couldn't send the finished email! Quiting")
+            log.exception("Got an error in finishedEmail")
             bcl2fastq_pipeline.misc.errorEmail(
-                sys.exc_info(), "Got an error during finishedEmail()"
+                sys.exc_info(), f"Got an error during finishedEmail(): {e}"
             )
             continue
 
@@ -143,9 +163,8 @@ while True:
         try:
             bcl2fastq_pipeline.afterFastq.finalize()
         except Exception as e:
-            print(e)
             cfg.run.reset()
-            syslog.syslog("Got an error during finalize!\n")
+            log.exception("Got an error during finalize!\n")
             bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), str(e))
             continue
         finalizeTime = datetime.datetime.now() - endTime
@@ -153,11 +172,10 @@ while True:
         try:
             bcl2fastq_pipeline.misc.finalizedEmail("", finalizeTime, runTime)
         except Exception as e:
-            print(e)
             cfg.run.reset()
-            syslog.syslog("Couldn't send the finalize email! Quiting")
+            syslog.syslog("Got an error during finishedEmail")
             bcl2fastq_pipeline.misc.errorEmail(
-                sys.exc_info(), "Got an error during finishedEmail()"
+                sys.exc_info(), f"Got an error during finishedEmail(): {e}"
             )
             continue
         # Mark the flow cell as having been processed
