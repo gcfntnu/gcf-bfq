@@ -211,7 +211,7 @@ def errorEmail(errTuple, msg):
     (cfg.static.paths.report_dir / f"{cfg.run.run_id}.error").write_text(msg)
 
 
-def finishedEmail(msg, runTime):
+def finishedEmail(msg, runTime, extra_html=True):
     cfg = PipelineConfig.get()
     projects = get_project_names(get_project_dirs(cfg))
 
@@ -256,7 +256,10 @@ def finishedEmail(msg, runTime):
         part["Content-Disposition"] = f'attachment; filename="multiqc_{p}_{date}.html"'
         msg.attach(part)
 
-        if cfg.run.libprep.startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences")):
+        if (
+            cfg.run.libprep.startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences"))
+            and extra_html
+        ):
             f = cfg.output_path / f"all_samples_web_summary_{p}_{date}.html"
             if f.exists():
                 fname = f.name

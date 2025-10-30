@@ -2,9 +2,9 @@
 import datetime
 import importlib
 import logging
+import os
 import signal
 import sys
-import syslog
 
 from threading import Event
 
@@ -39,7 +39,8 @@ def setup_logging(verbosity: int = 1) -> None:
 
 signal.signal(signal.SIGHUP, breakSleep)
 
-setup_logging()
+verbosity = 2 if os.environ.get("BFQ_DEBUG", None) else 1
+setup_logging(verbosity)
 log = logging.getLogger("bfq")
 log.info("Starting bcl2fastq pipeline")
 
@@ -79,8 +80,9 @@ while True:
 
     for d in dirs:
         cfg.run.begin(d.parent, cfg.static.paths)
-
+        log.debug(f"Initiate {d}")
         if bcl2fastq_pipeline.findFlowCells.flowCellProcessed():
+            log.debug("Already processed {d}")
             cfg.run.reset()
             continue
 
@@ -149,23 +151,45 @@ while True:
         runTime = endTime - startTime
 
         # Email finished message
+        retry_email = None
         try:
             bcl2fastq_pipeline.misc.finishedEmail(message, runTime)
         except Exception as e:
-            cfg.run.reset()
-            log.exception("Got an error in finishedEmail")
-            bcl2fastq_pipeline.misc.errorEmail(
-                sys.exc_info(), f"Got an error during finishedEmail(): {e}"
-            )
-            continue
+            if cfg.run.libprep.startswith(
+                ("10X Genomics Chromium Single Cell", "Parse Biosciences")
+            ):
+                retry_email = True
+                log.info("Got an error during finishedEmail().")
+            else:
+                cfg.run.reset()
+                log.exception("Got an error in finishedEmail")
+                bcl2fastq_pipeline.misc.errorEmail(
+                    sys.exc_info(), f"Got an error during finishedEmail(): {e}"
+                )
+                continue
+
+        if retry_email:
+            try:
+                log.info("Retry without extra html")
+                extra_html = False
+                bcl2fastq_pipeline.misc.finishedEmail(message, runTime, extra_html)
+            except Exception as e:
+                cfg.run.reset()
+                log.exception("Retry failed. Got an error in finishedEmail")
+                bcl2fastq_pipeline.misc.errorEmail(
+                    sys.exc_info(), f"Got an error during finishedEmail(): {e}"
+                )
+                continue
 
         # Finalize
         try:
             bcl2fastq_pipeline.afterFastq.finalize()
         except Exception as e:
             cfg.run.reset()
-            log.exception("Got an error during finalize!\n")
-            bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), str(e))
+            log.exception("Got an error during finalize!")
+            bcl2fastq_pipeline.misc.errorEmail(
+                sys.exc_info(), f"Got an error during finalize(): {e}"
+            )
             continue
         finalizeTime = datetime.datetime.now() - endTime
         runTime += finalizeTime
@@ -173,13 +197,14 @@ while True:
             bcl2fastq_pipeline.misc.finalizedEmail("", finalizeTime, runTime)
         except Exception as e:
             cfg.run.reset()
-            syslog.syslog("Got an error during finishedEmail")
+            log.exception("Got an error during finishedEmail")
             bcl2fastq_pipeline.misc.errorEmail(
                 sys.exc_info(), f"Got an error during finishedEmail(): {e}"
             )
             continue
         # Mark the flow cell as having been processed
         bcl2fastq_pipeline.findFlowCells.markFinished()
+        log.info(f"bfq finished processing for {cfg.output_path}")
         cfg.run.reset()
 
     # done processing, no more flowcells in queue

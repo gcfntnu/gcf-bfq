@@ -76,6 +76,7 @@ def md5sum_archive(archive_path: Path):
 
     if not md5_file.exists() or archive_path.stat().st_mtime > md5_file.stat().st_mtime:
         cmd = f"md5sum {archive_path} > {md5_file}"
+        log.info(f"[md5sum_worker] Processing {cmd}")
         subprocess.check_call(cmd, shell=True)
 
 
@@ -141,7 +142,7 @@ def multiqc_stats(cfg):
     multiqc_out = cfg.output_path / "Stats" / f"sequencer_stats_{pname}.html"
 
     cmd = f"{multiqc_cmd} {multiqc_opts} --config {conf_pth} {cfg.output_path}/Stats --filename {multiqc_out} {modules}"
-    log(f"[multiqc_worker] Processing {cfg.output_path}")
+    log.info(f"[multiqc_worker] Processing {cfg.output_path}")
 
     if os.environ.get("BFQ_TEST", None) and not FORCE_BCL2FASTQ:
         if not (cfg.output_path / "Stats" / "Demultiplex_Stats.csv").exists():
@@ -287,6 +288,7 @@ def full_align(cfg):
         analysis_dir.mkdir(parents=True, exist_ok=True)
         (analysis_dir / "src").mkdir(parents=True, exist_ok=True)
         (analysis_dir / "data").mkdir(parents=True, exist_ok=True)
+        log.info(f"Setting up analysis for {analysis_dir}")
 
         # os.chdir(analysis_dir)
 
@@ -363,6 +365,8 @@ def postMakeSteps():
 
     if not (cfg.output_path / "analysis.made").exists():
         full_align(cfg)
+    else:
+        log.info("Analysis already made")
 
     # multiqc_stats
     multiqc_stats(cfg)
