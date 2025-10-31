@@ -17,7 +17,7 @@ import bcl2fastq_pipeline.afterFastq as af
 
 from bcl2fastq_pipeline.config import PipelineConfig, parse_custom_options
 
-log = logging.getLogger("bfq")
+log = logging.getLogger(__name__)
 
 
 def modified_time(path: Path):

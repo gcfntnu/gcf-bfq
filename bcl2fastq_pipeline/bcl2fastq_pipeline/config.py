@@ -43,7 +43,7 @@ from typing import ClassVar
 
 import yaml
 
-log = logging.getLogger("bfq")
+log = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
@@ -131,6 +131,9 @@ class RunContext:
     rerun: bool = False
     sensitive: bool = False
     custom: dict[str, str] = field(default_factory=dict)
+
+    def __repr__(self):
+        return f"<RunContext run_id={self.run_id!r} pipeline={self.pipeline!r} user={self.user!r}>"
 
     # --- mutators ----------------------------------------------------------- #
     def begin(self, flowcell_path: Path, static_paths: Paths) -> None:

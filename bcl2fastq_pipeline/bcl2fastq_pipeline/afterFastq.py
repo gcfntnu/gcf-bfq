@@ -17,7 +17,7 @@ from configmaker.configmaker import SEQUENCERS
 
 from bcl2fastq_pipeline.config import PipelineConfig
 
-log = logging.getLogger("bfq")
+log = logging.getLogger(__name__)
 
 
 def get_read_geometry(run_dir):

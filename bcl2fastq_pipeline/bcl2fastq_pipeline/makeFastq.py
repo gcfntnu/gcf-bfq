@@ -10,7 +10,7 @@ import subprocess
 
 from bcl2fastq_pipeline.config import PipelineConfig
 
-log = logging.getLogger("bfq")
+log = logging.getLogger(__name__)
 
 MKFASTQ_10X = {
     "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit": "cellranger_spatial_mkfastq",
