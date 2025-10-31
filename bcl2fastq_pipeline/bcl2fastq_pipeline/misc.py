@@ -276,13 +276,15 @@ def finishedEmail(msg, runTime, extra_html=True):
 def finalizedEmail(msg, finalizeTime, runTime):
     cfg = PipelineConfig.get()
 
-    message = "{', '.join(projects)} has been finalized and prepared for delivery.\n\n"
+    projects = get_project_names(get_project_dirs(cfg))
+
+    message = f"{', '.join(projects)} has been finalized and prepared for delivery.\n\n"
     message += f"md5sum and 7zip runtime: {finalizeTime}\n"
     message += f"Total runtime for bcl2fastq_pipeline: {runTime}\n"
     message += msg
 
     msg = MIMEMultipart()
-    msg["Subject"] = "[bcl2fastq_pipeline] {', '.join(projects)} finalized"
+    msg["Subject"] = f"[bcl2fastq_pipeline] {', '.join(projects)} finalized"
     msg["From"] = cfg.static.email["from_address"]
     msg["To"] = cfg.static.email["error_to"]
     msg["Date"] = formatdate(localtime=True)
