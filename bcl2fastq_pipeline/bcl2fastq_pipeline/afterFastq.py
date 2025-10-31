@@ -146,12 +146,12 @@ def multiqc_stats(cfg):
 
     if os.environ.get("BFQ_TEST", None) and not FORCE_BCL2FASTQ:
         if not (cfg.output_path / "Stats" / "Demultiplex_Stats.csv").exists():
-            print(
+            log.warning(
                 "BFQ-TEST: Testflowcell was generated with bcl2fastq but environment is configured for bcl-convert. Using bcl2fastq paths and mqc modules."
             )
             cmd = cmd.replace("Reports", "Stats")
             cmd = cmd.replace("-m bclconvert", "-m bcl2fastq")
-            print(cmd)
+            log.info(f"[multiqc_worker] Running: {cmd}")
 
     subprocess.check_call(cmd, shell=True, cwd=cwd)
 
@@ -300,14 +300,10 @@ def full_align(cfg):
             shutil.rmtree(dst)
         shutil.copytree(src, dst)
 
+        create_fastq = " --skip-create-fastq-dir" if Path("data/raw/fastq").exists() else ""
+        machine = get_sequencer(cfg.run.run_id)
         # create config.yaml
-        cmd = "/opt/conda/bin/python /opt/conda/bin/configmaker.py {runfolder} -p {project} --libkit '{lib}' --machine '{machine}' {create_fastq}".format(
-            runfolder=cfg.output_path,
-            project=p,
-            lib=cfg.run.libprep,
-            machine=get_sequencer(cfg.run.run_id),
-            create_fastq=" --skip-create-fastq-dir" if Path("data/raw/fastq").exists() else "",
-        )
+        cmd = f"/opt/conda/bin/python /opt/conda/bin/configmaker.py {cfg.output_path} -p {p} --libkit '{cfg.run.libprep}' --machine '{machine}' {create_fastq}"
         subprocess.check_call(cmd, shell=True, cwd=analysis_dir)
 
         # run snakemake pipeline
