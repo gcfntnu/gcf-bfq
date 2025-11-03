@@ -2,6 +2,7 @@
 Misc. functions
 """
 
+import logging
 import shutil
 import smtplib
 import tempfile as tmp
@@ -40,6 +41,8 @@ table, th, td {
 }
 </style>
 """
+
+log = logging.getLogger(__name__)
 
 
 def getSampleID(sampleTuple, project, lane, sampleName):
@@ -101,7 +104,6 @@ def getFCmetricsImproved():
         dfs[0]["R2 %>=Q30"] = dfs[1]["%>=Q30"]
         dfs[0] = dfs[0].rename(columns={"%>=Q30": "R1 %>=Q30"})
     dfs[0] = dfs[0].join(undeter.set_index("Lane"), on="Lane")
-    # message += "\n<br>\n<br><strong>{} metrics </strong>\n<br>".format(lines[read_start[i]].rstrip())
     message += "\n<br><strong>Flowcell metrics </strong>\n<br>"
     message += dfs[0].to_html(
         index=False, classes="border-collapse: collapse", border=1, justify="center", col_space=12
@@ -125,21 +127,17 @@ def parseSampleSheetMetrics(cfg):
     msg += f"\nFound {len(ssub_df.index)} samples in sample submission form.\n"
     if "Sample_Group" in ssub_df:
         if ssub_df["Sample_Group"].notnull().all():
-            msg += "Sample_Group has {} unique values: {}.\n".format(
-                len(ssub_df["Sample_Group"].unique()),
-                ", ".join(ssub_df["Sample_Group"].unique().astype(str)),
-            )
+            unique = ssub_df["Sample_Group"].unique().astype(str)
+            msg += f"Sample_Group has {len(unique)} unique values: {', '.join(unique)}.\n"
         elif ssub_df["Sample_Group"].isnull().all():
             msg += "Sample_Group has not been provided.\n"
         else:
             n_missing = ssub_df["Sample_Group"].isnull().values.sum()
             n_groups = len(ssub_df["Sample_Group"].dropna().unique())
-            msg += "Sample_Group has {} unique values: {}.\n".format(
-                n_groups, ", ".join(ssub_df["Sample_Group"].dropna().unique().astype(str))
-            )
-            msg += "Missing Sample_Group for {} sample{}.\n".format(
-                str(n_missing), "s" if n_missing > 1 else ""
-            )
+            group_names = ", ".join(ssub_df["Sample_Group"].dropna().unique().astype(str))
+            msg += f"Sample_Group has {n_groups} unique values: {group_names}.\n"
+            grammar = "s" if n_missing > 1 else ""
+            msg += f"Missing Sample_Group for {n_missing} sample{grammar}.\n"
     else:
         msg += "Sample_Group has not been provided.\n"
 
@@ -199,10 +197,10 @@ def enoughFreeSpace():
     """
     cfg = PipelineConfig.get()
     (tot, used, free) = shutil.disk_usage(cfg.static.paths.output_dir)
-    free /= 1024 * 1024 * 1024
-    if free >= float(cfg.static.system["minspace"]):
-        return True
-    return False
+    free_gb = free / (1024**3)
+    need = float(cfg.static.system["minspace"])
+    log.debug(f"Free GiB in output_dir: {free_gb:.1f} (need ≥ {need:.1f})")
+    return free_gb >= need
 
 
 def errorEmail(errTuple, msg):
@@ -211,11 +209,11 @@ def errorEmail(errTuple, msg):
     (cfg.static.paths.report_dir / f"{cfg.run.run_id}.error").write_text(msg)
 
 
-def finishedEmail(msg, runTime):
+def finishedEmail(msg, runTime, extra_html=True):
     cfg = PipelineConfig.get()
     projects = get_project_names(get_project_dirs(cfg))
 
-    message = "<strong>Short summary for {}. </strong>\n\n".format(", ".join(projects))
+    message = f"<strong>Short summary for {', '.join(projects)}. </strong>\n\n"
     message += f"<strong>User: {cfg.run.user} </strong>\n" if cfg.run.user != "N/A" else ""
     message += f"Flow cell: {cfg.run.run_id} \n"
     seq = get_sequencer(cfg.run.run_id)
@@ -241,7 +239,7 @@ def finishedEmail(msg, runTime):
     )
 
     msg = MIMEMultipart()
-    msg["Subject"] = "[bcl2fastq_pipeline] {} processed".format(", ".join(projects))
+    msg["Subject"] = f"[bcl2fastq_pipeline] {', '.join(projects)} processed"
     msg["From"] = cfg.static.email["from_address"]
     msg["To"] = cfg.static.email["finished_to"]
     msg["Date"] = formatdate(localtime=True)
@@ -256,7 +254,10 @@ def finishedEmail(msg, runTime):
         part["Content-Disposition"] = f'attachment; filename="multiqc_{p}_{date}.html"'
         msg.attach(part)
 
-        if cfg.run.libprep.startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences")):
+        if (
+            cfg.run.libprep.startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences"))
+            and extra_html
+        ):
             f = cfg.output_path / f"all_samples_web_summary_{p}_{date}.html"
             if f.exists():
                 fname = f.name
@@ -280,13 +281,13 @@ def finalizedEmail(msg, finalizeTime, runTime):
 
     projects = get_project_names(get_project_dirs(cfg))
 
-    message = "{} has been finalized and prepared for delivery.\n\n".format(", ".join(projects))
+    message = f"{', '.join(projects)} has been finalized and prepared for delivery.\n\n"
     message += f"md5sum and 7zip runtime: {finalizeTime}\n"
     message += f"Total runtime for bcl2fastq_pipeline: {runTime}\n"
     message += msg
 
     msg = MIMEMultipart()
-    msg["Subject"] = "[bcl2fastq_pipeline] {} finalized".format(", ".join(projects))
+    msg["Subject"] = f"[bcl2fastq_pipeline] {', '.join(projects)} finalized"
     msg["From"] = cfg.static.email["from_address"]
     msg["To"] = cfg.static.email["error_to"]
     msg["Date"] = formatdate(localtime=True)
