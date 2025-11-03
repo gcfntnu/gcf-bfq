@@ -80,9 +80,9 @@ while True:
 
     for d in sorted(dirs):
         cfg.run.begin(d.parent, cfg.static.paths)
-        log.debug(f"Initiate {d}")
+        log.debug(f"Initiate {d.parent}")
         if bcl2fastq_pipeline.findFlowCells.flowCellProcessed():
-            log.debug(f"Already processed {d}")
+            log.debug(f"Already processed {d.parent}")
             cfg.run.reset()
             continue
 
