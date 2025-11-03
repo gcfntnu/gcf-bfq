@@ -33,6 +33,7 @@ PosixPath('/mnt/data/output')
 from __future__ import annotations
 
 import csv
+import logging
 import re
 
 from configparser import ConfigParser
@@ -41,6 +42,8 @@ from pathlib import Path
 from typing import ClassVar
 
 import yaml
+
+log = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
@@ -128,6 +131,9 @@ class RunContext:
     rerun: bool = False
     sensitive: bool = False
     custom: dict[str, str] = field(default_factory=dict)
+
+    def __repr__(self):
+        return f"<RunContext run_id={self.run_id!r} pipeline={self.pipeline!r} user={self.user!r}>"
 
     # --- mutators ----------------------------------------------------------- #
     def begin(self, flowcell_path: Path, static_paths: Paths) -> None:
@@ -223,7 +229,7 @@ class RunContext:
 
         yaml_file = Path(yaml_path)
         if not yaml_file.exists():
-            print(f"[RunContext] libprep.config not found: {yaml_file}")
+            log.warning(f"[RunContext] libprep.config not found: {yaml_file}")
             self.pipeline = "UNKNOWN"
             return
 
@@ -231,7 +237,7 @@ class RunContext:
             with yaml_file.open(encoding="utf-8") as fh:
                 data = yaml.safe_load(fh) or {}
         except Exception as e:
-            print(f"[RunContext] Failed to parse {yaml_file}: {e}")
+            log.exception(f"[RunContext] Failed to parse {yaml_file}: {e}")
             self.pipeline = "UNKNOWN"
             return
 

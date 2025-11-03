@@ -6,8 +6,8 @@ such as marking it as having been processed and sending emails.
 """
 
 import datetime as dt
+import logging
 import shutil
-import syslog
 
 from pathlib import Path
 
@@ -17,9 +17,11 @@ import bcl2fastq_pipeline.afterFastq as af
 
 from bcl2fastq_pipeline.config import PipelineConfig, parse_custom_options
 
+log = logging.getLogger(__name__)
+
 
 def modified_time(path: Path):
-    return dt.fromtimestamp(path.stat().st_mtime)
+    return dt.datetime.fromtimestamp(path.stat().st_mtime)
 
 
 # Returns True on processed, False on unprocessed
@@ -95,16 +97,23 @@ def newFlowCell():
         opts, ss = get_sample_sheet(cfg.output_path)
         sample_sub_f = cfg.output_path.glob("*Sample-Submission-Form*.xlsx")
         use_bfq_output_ss = True
+        log.debug(f"Using samplesheet and submission form from {cfg.output_path}")
     else:
         opts, ss = get_sample_sheet(cfg.run.flowcell_path)
         sample_sub_f = cfg.run.flowcell_path.glob("*Sample-Submission-Form*.xlsx")
         use_bfq_output_ss = False
+        log.debug(f"Using samplesheet and submission form from {cfg.run.flowcell_path}")
 
-    if not opts or not list(sample_sub_f):
+    if not opts:
         cfg.run.reset()
+        log.debug("No custom opts in sample sheet")
+        return
+    if not list(sample_sub_f):
+        cfg.run.reset()
+        log.debug("No sample submission form")
         return
 
-    syslog.syslog(f"Found a new flow cell: {cfg.run.run_id}\n")
+    log.info(f"Found a new flow cell: {cfg.run.run_id}")
     if not (cfg.output_path).exists():
         (cfg.output_path).mkdir()
 
