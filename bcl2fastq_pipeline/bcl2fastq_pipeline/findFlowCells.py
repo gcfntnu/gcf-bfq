@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 
 
 def modified_time(path: Path):
-    return dt.fromtimestamp(path.stat().st_mtime)
+    return dt.datetime.fromtimestamp(path.stat().st_mtime)
 
 
 # Returns True on processed, False on unprocessed

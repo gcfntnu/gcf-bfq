@@ -2,6 +2,7 @@
 Misc. functions
 """
 
+import logging
 import shutil
 import smtplib
 import tempfile as tmp
@@ -40,6 +41,8 @@ table, th, td {
 }
 </style>
 """
+
+log = logging.getLogger(__name__)
 
 
 def getSampleID(sampleTuple, project, lane, sampleName):
@@ -194,10 +197,10 @@ def enoughFreeSpace():
     """
     cfg = PipelineConfig.get()
     (tot, used, free) = shutil.disk_usage(cfg.static.paths.output_dir)
-    free /= 1024 * 1024 * 1024
-    if free >= float(cfg.static.system["minspace"]):
-        return True
-    return False
+    free_gb = free / (1024**3)
+    need = float(cfg.static.system["minspace"])
+    log.debug(f"Free GiB in output_dir: {free_gb:.1f} (need ≥ {need:.1f})")
+    return free_gb >= need
 
 
 def errorEmail(errTuple, msg):

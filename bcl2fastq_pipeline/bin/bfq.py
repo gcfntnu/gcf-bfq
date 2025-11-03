@@ -78,11 +78,11 @@ while True:
         for machine, fin_file in completion_files.items():
             dirs += list(pth.glob(f"*_{machine}_*/{fin_file}"))
 
-    for d in dirs:
+    for d in sorted(dirs):
         cfg.run.begin(d.parent, cfg.static.paths)
         log.debug(f"Initiate {d}")
         if bcl2fastq_pipeline.findFlowCells.flowCellProcessed():
-            log.debug("Already processed {d}")
+            log.debug(f"Already processed {d}")
             cfg.run.reset()
             continue
 

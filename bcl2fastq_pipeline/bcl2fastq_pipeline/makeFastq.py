@@ -77,7 +77,7 @@ def bcl2fq():
         cmd = f"bcl-convert --force --bcl-input-directory {cfg.run.flowcell_path} --output-directory {cfg.output_path} --sample-sheet {cfg.run.sample_sheet} --bcl-sampleproject-subdirectories true --no-lane-splitting true --output-legacy-stats true"
         bcl_done = ["bcl-convert", os.environ.get("BCL_CONVERT_VERSION")]
 
-    log_pth = cfg.static.paths.log_dir / "{cfg.run.run_id}.log"
+    log_pth = cfg.static.paths.log_dir / f"{cfg.run.run_id}.log"
     try:
         log.info(f"[convert bcl] Running: {cmd}\n")
         with log_pth.open("w") as logOut:
@@ -86,8 +86,8 @@ def bcl2fq():
             )
     except Exception:
         if "10X Genomics" not in cfg.run.libprep and force_bcl2fastq:
-            with log_pth.open("w") as logOut:
-                log_content = logOut.read()
+            with log_pth.open("r") as logIn:
+                log_content = logIn.read()
             if "<bcl2fastq::layout::BarcodeCollisionError>" in log_content:
                 cmd += " --barcode-mismatches 0 "
                 with log_pth.open("w") as logOut:
