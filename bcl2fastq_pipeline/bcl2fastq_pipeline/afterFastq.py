@@ -75,9 +75,9 @@ def md5sum_archive(archive_path: Path):
     md5_file = archive_path.parent / f"md5sum_{base.name}_archive.txt"
 
     if not md5_file.exists() or archive_path.stat().st_mtime > md5_file.stat().st_mtime:
-        cmd = f"md5sum {archive_path} > {md5_file}"
+        cmd = f"md5sum {archive_path.name} > {md5_file.name}"
         log.info(f"[md5sum_worker] Processing {cmd}")
-        subprocess.check_call(cmd, shell=True)
+        subprocess.check_call(cmd, shell=True, cwd=archive_path.parent)
 
 
 def md5sum_archive_worker(cfg):
