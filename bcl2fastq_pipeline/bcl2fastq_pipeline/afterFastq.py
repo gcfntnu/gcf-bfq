@@ -63,11 +63,12 @@ def md5sum_worker(cfg):
     pnames = get_project_names(project_dirs)
     for p in pnames:
         md_path = Path(f"md5sum_{p}_fastq.txt")
-        if md_path.exists():
-            continue
-        cmd = f"find {p} -type f -name '*.fastq.gz' | parallel -j 5 md5sum > md5sum_{p}_fastq.txt"
-        log.info(f"[md5sum_worker] Processing {cfg.output_path}/{p}")
-        subprocess.check_call(cmd, shell=True, cwd=cfg.output_path)
+        if not (cfg.output_path / md_path).exists():
+            cmd = (
+                f"find {p} -type f -name '*.fastq.gz' | parallel -j 5 md5sum > md5sum_{p}_fastq.txt"
+            )
+            log.info(f"[md5sum_worker] Processing {cfg.output_path}/{p}")
+            subprocess.check_call(cmd, shell=True, cwd=cfg.output_path)
 
 
 def md5sum_archive(archive_path: Path):
