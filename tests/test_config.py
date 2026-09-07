@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from bcl2fastq_pipeline.config import Paths, PipelineConfig, RunContext
+from bcl2fastq_pipeline.config import (
+    Paths,
+    PipelineConfig,
+    RunContext,
+    parse_custom_options,
+)
 
 
 def write_ini(tmp_path: Path, contents: str) -> Path:
@@ -151,3 +156,95 @@ def test_reset_clears_run_specific_state(tmp_path):
     context.reset()
 
     assert context == RunContext()
+
+
+def test_parse_custom_options_handles_excel_style_csv(tmp_path):
+    sample_sheet = tmp_path / "SampleSheet.csv"
+    sample_sheet.write_text(
+        """\
+[Header],,,,,
+IEMFileVersion,4,,,,
+[CustomOptions],,,,,
+Libprep,RNA-seq,,,,
+User,geir,ignored extra value,,,
+SensitiveData,True,,,,
+EmptyValue,,,,,
+,,,,,
+[Data],,,,,
+Sample_ID,Sample_Name,,,,
+should-not,be-parsed,,,,
+""",
+        encoding="utf-8-sig",
+    )
+
+    custom_options, returned_path = parse_custom_options(sample_sheet)
+
+    assert returned_path == sample_sheet
+    assert custom_options == {
+        "Libprep": "RNA-seq",
+        "User": "geir",
+        "SensitiveData": "True",
+        "EmptyValue": "",
+    }
+
+
+def test_parse_custom_options_is_case_insensitive(tmp_path):
+    sample_sheet = tmp_path / "SampleSheet.csv"
+    sample_sheet.write_text(
+        "[customoptions]\nRerun,yes\n",
+        encoding="utf-8",
+    )
+
+    custom_options, _ = parse_custom_options(sample_sheet)
+
+    assert custom_options == {"Rerun": "yes"}
+
+
+@pytest.mark.parametrize(
+    ("libprep", "yaml_contents", "expected_pipeline"),
+    [
+        (
+            "Lexogen SENSE",
+            "Lexogen SENSE PE:\n  workflow: rnaseq\n  reads: PE\n",
+            "rnaseq",
+        ),
+        (
+            " qiaSEQ MIRNA se ",
+            "QIAseq miRNA SE:\n  workflow: mirna\n",
+            "mirna",
+        ),
+        (
+            "Unknown prep",
+            "QIAseq miRNA SE:\n  workflow: mirna\n",
+            "UNKNOWN",
+        ),
+    ],
+)
+def test_set_pipeline_from_yaml(tmp_path, libprep, yaml_contents, expected_pipeline):
+    yaml_path = tmp_path / "libprep.config"
+    yaml_path.write_text(yaml_contents, encoding="utf-8")
+    context = RunContext(libprep=libprep)
+
+    context.set_pipeline_from_yaml(yaml_path)
+
+    assert context.pipeline == expected_pipeline
+
+
+def test_set_pipeline_from_yaml_without_libprep_skips_lookup(tmp_path):
+    context = RunContext(libprep=None, pipeline="previous")
+
+    context.set_pipeline_from_yaml(tmp_path / "missing.config")
+
+    assert context.pipeline is None
+
+
+@pytest.mark.parametrize("yaml_state", ["missing", "malformed"])
+def test_set_pipeline_from_yaml_handles_unusable_files(tmp_path, yaml_state):
+    yaml_path = tmp_path / "libprep.config"
+    if yaml_state == "malformed":
+        yaml_path.write_text("workflow: [unclosed\n", encoding="utf-8")
+    context = RunContext(libprep="RNA-seq")
+
+    context.set_pipeline_from_yaml(yaml_path)
+
+    assert context.pipeline == "UNKNOWN"
