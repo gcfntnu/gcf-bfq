@@ -8,6 +8,8 @@ ToDo
 *.swo
 *.swn
 *.egg-info
+__pycache__/
+*.py[cod]
 build
 dist
 splitFastq
