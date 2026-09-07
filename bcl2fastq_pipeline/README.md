@@ -162,3 +162,13 @@ This package has the following dependencies:
   * There must be an available sendmail server somewhere. This package currently does not support authentication, but that could presumably be added.
   * pigz
   * splitFastq, which comes in this repository but must be compiled manually
+
+## Testing
+
+The unit tests exercise configuration handling without requiring sequencing data,
+external services, or bioinformatics applications. From the repository root, run:
+
+```console
+python -m pip install pytest==9.1.1 PyYAML==6.0.3
+python -m pytest
+```

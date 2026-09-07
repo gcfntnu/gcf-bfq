@@ -6,6 +6,26 @@ on:
     branches: [ master, main, bfq-dev, staging ]
 
 jobs:
+  tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: pip install pytest==9.1.1 PyYAML==6.0.3
+
+      - name: Run unit tests
+        run: python -m pytest
+
   ruff:
     name: Ruff lint & format check
     runs-on: ubuntu-latest
@@ -39,4 +59,3 @@ jobs:
         if: failure()
         run: |
           echo "⚠️ Ruff reported one or more issues. Please review inline PR comments or the CI logs for details."
-
