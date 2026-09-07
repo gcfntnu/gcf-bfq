@@ -1,17 +1,63 @@
-FROM continuumio/miniconda3:4.10.3
+ARG MINICONDA_VERSION=26.5.3
+FROM anaconda/miniconda:${MINICONDA_VERSION} AS dependencies
 
-RUN conda update conda -y
+# Keep compatibility with tools and scripts that expect Conda at /opt/conda.
+RUN if [ ! -e /opt/conda ]; then ln -s "$(conda info --base)" /opt/conda; fi
 
-RUN apt update && apt install -y -q git alien tabix pigz gzip zlibc zlib1g-dev zlib1g xkcdpass vim p7zip-full parallel rsync curl
-RUN conda config --add channels conda-forge
-RUN conda config --add channels bioconda
-RUN conda install -y pip mamba
-RUN mamba install -y pandas xlrd ea-utils configparser requests illumina-interop gh openpyxl 
-RUN mamba install -y snakemake=7.15.2 singularity=3.8.5
-RUN mamba update numpy
+ENV PYTHON_VERSION=3.11 \
+    SNAKEMAKE_VERSION=9.7.1
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        alien \
+        curl \
+        git \
+        gzip \
+        p7zip-full \
+        parallel \
+        pigz \
+        rsync \
+        tabix \
+        vim \
+        xkcdpass \
+        zlib1g \
+        zlib1g-dev \
+        zlibc && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN conda config --system --remove-key channels && \
+    conda config --system --add channels defaults && \
+    conda config --system --add channels bioconda && \
+    conda config --system --add channels conda-forge && \
+    conda config --system --set channel_priority strict && \
+    conda config --system --set plugins.auto_accept_tos yes
+
+RUN conda install --yes \
+        python=${PYTHON_VERSION} \
+        pip \
+        pandas \
+        xlrd \
+        ea-utils \
+        configparser \
+        requests \
+        illumina-interop \
+        gh \
+        openpyxl \
+        numpy \
+        snakemake=${SNAKEMAKE_VERSION} \
+        singularity=3.8.5 && \
+    conda clean --all --yes
+
+RUN conda --version && \
+    python --version && \
+    snakemake --version && \
+    singularity --version
 
 #Allow shared loop devices for singularity
 RUN sed -i -e 's/shared loop devices = no/shared loop devices = yes/g' /opt/conda/etc/singularity/singularity.conf
+
+FROM dependencies AS base
 
 WORKDIR /opt
 
