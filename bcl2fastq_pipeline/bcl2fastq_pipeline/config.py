@@ -457,18 +457,20 @@ def parse_custom_options(sample_sheet_path: Path) -> tuple[dict[str, str], Path]
         for row in reader:
             if not row:
                 continue
-            line = ",".join(row).strip()
+            first_cell = (row[0] or "").strip()
             if not in_custom_section:
-                if re.match(r"^\s*\[CustomOptions\]\s*$", line, flags=re.IGNORECASE):
+                if re.match(r"^\s*\[CustomOptions\]\s*$", first_cell, flags=re.IGNORECASE):
                     in_custom_section = True
                 continue
 
             # Exit when encountering another section header
-            if section_pattern.match(line) and not line.lower().startswith("[customoptions]"):
+            if section_pattern.match(first_cell) and not first_cell.lower().startswith(
+                "[customoptions]"
+            ):
                 break
 
             # Parse first two columns if present
-            key = (row[0] or "").strip()
+            key = first_cell
             value = (row[1] if len(row) > 1 else "").strip()
             if key:
                 custom_opts[key] = value
