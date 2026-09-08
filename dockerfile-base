@@ -11,6 +11,7 @@ ENV PYTHON_VERSION=3.11 \
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         alien \
+        ca-certificates \
         curl \
         git \
         gzip \
@@ -23,6 +24,7 @@ RUN apt-get update && \
         xkcdpass \
         zlib1g \
         zlib1g-dev && \
+    test -s /etc/ssl/certs/ca-certificates.crt && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
