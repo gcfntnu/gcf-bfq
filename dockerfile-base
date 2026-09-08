@@ -5,7 +5,8 @@ FROM anaconda/miniconda:${MINICONDA_VERSION} AS dependencies
 RUN if [ ! -e /opt/conda ]; then ln -s "$(conda info --base)" /opt/conda; fi
 
 ENV PYTHON_VERSION=3.11 \
-    SNAKEMAKE_VERSION=9.7.1
+    SNAKEMAKE_VERSION=9.7.1 \
+    APPTAINER_VERSION=1.5.3
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -45,16 +46,17 @@ RUN conda install --yes \
         openpyxl \
         numpy \
         snakemake=${SNAKEMAKE_VERSION} \
-        singularity=3.8.5 && \
+        apptainer=${APPTAINER_VERSION} && \
     conda clean --all --yes
 
 RUN conda --version && \
     python --version && \
     snakemake --version && \
+    apptainer --version && \
     singularity --version
 
-#Allow shared loop devices for singularity
-RUN sed -i -e 's/shared loop devices = no/shared loop devices = yes/g' /opt/conda/etc/singularity/singularity.conf
+# Allow shared loop devices for Apptainer/Singularity.
+RUN sed -i -e 's/shared loop devices = no/shared loop devices = yes/g' /opt/conda/etc/apptainer/apptainer.conf
 
 FROM dependencies AS base
 
