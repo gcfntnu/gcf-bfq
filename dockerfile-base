@@ -21,8 +21,7 @@ RUN apt-get update && \
         vim \
         xkcdpass \
         zlib1g \
-        zlib1g-dev \
-        zlibc && \
+        zlib1g-dev && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
