@@ -308,7 +308,7 @@ def full_align(cfg):
         subprocess.check_call(cmd, shell=True, cwd=analysis_dir)
 
         # run snakemake pipeline
-        cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR --cores 32 --verbose -p multiqc_report"
+        cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR --cores 32 -p multiqc_report"
         subprocess.check_call(cmd, shell=True, cwd=analysis_dir)
 
         # copy report
