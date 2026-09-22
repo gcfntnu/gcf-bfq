@@ -1,4 +1,4 @@
-FROM gcfntnu/bfq:base
+FROM gcfntnu/bfq:base-260902
 
 ARG GCF_TOOLS_BRANCH=bfq-dev
 ADD https://api.github.com/repos/gcfntnu/gcf-tools/git/refs/heads/$GCF_TOOLS_BRANCH conf_version

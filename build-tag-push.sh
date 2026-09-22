@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euo pipefail
+
 if [ "$#" -lt 2 ] ; 
 then
     echo  -e "Usage: \n" \

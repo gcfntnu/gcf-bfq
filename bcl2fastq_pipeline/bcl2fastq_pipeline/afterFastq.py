@@ -233,7 +233,8 @@ def archive_worker(cfg):
         qc_dir = tmp_dir / f"{p}_{run_date}" / "data" / "tmp" / cfg.run.pipeline / "bfq"
         flowdir = cfg.output_path
 
-        cmd = f"7za a -l {opts} {flowdir}/QC_{p}_{run_date}.7za {qc_dir} "
+        # Native 7-Zip follows symlinks by default; -snl would store the links themselves.
+        cmd = f"7za a {opts} {flowdir}/QC_{p}_{run_date}.7za {qc_dir} "
 
         log.info(f"[archive_worker] Archiving QC output → {qc_archive}\n")
         subprocess.check_call(cmd, shell=True)
@@ -308,7 +309,7 @@ def full_align(cfg):
         subprocess.check_call(cmd, shell=True, cwd=analysis_dir)
 
         # run snakemake pipeline
-        cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR --cores 32 --verbose -p multiqc_report"
+        cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR --cores 32 --scheduler greedy -p multiqc_report"
         subprocess.check_call(cmd, shell=True, cwd=analysis_dir)
 
         # copy report
