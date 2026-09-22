@@ -16,6 +16,7 @@ import yaml
 from configmaker.configmaker import SEQUENCERS
 
 from bcl2fastq_pipeline.config import PipelineConfig
+from bcl2fastq_pipeline.interop import prepare_index_metrics, run_interop_csv
 
 log = logging.getLogger(__name__)
 
@@ -101,14 +102,13 @@ def multiqc_stats(cfg):
 
     # Illumina interop
     out_f = cfg.output_path / "Stats" / "interop_summary.csv"
-    cmd = f"interop_summary {cfg.output_path} --csv=1 > {out_f}"
     log.info(f"[multiqc_worker] Interop summary on {cfg.output_path}")
-    subprocess.check_call(cmd, shell=True, cwd=cwd)
+    run_interop_csv("interop_summary", cfg.output_path, out_f, cwd)
 
+    prepare_index_metrics(cfg.output_path)
     out_f = cfg.output_path / "Stats" / "interop_index-summary.csv"
-    cmd = f"interop_index-summary {cfg.output_path} --csv=1 > {out_f}"
     log.info(f"[multiqc_worker] Interop index summary on {cfg.output_path}")
-    subprocess.check_call(cmd, shell=True, cwd=cwd)
+    run_interop_csv("interop_index-summary", cfg.output_path, out_f, cwd)
 
     in_confs = list(cfg.output_path.glob(".multiqc_config*.yaml"))
     samples_custom_data = dict()
