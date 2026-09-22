@@ -58,3 +58,6 @@ ignore-names = [
 ]
 extend-ignore-names = []
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-config --strict-markers"

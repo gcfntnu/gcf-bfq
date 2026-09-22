@@ -16,6 +16,7 @@ import yaml
 from configmaker.configmaker import SEQUENCERS
 
 from bcl2fastq_pipeline.config import PipelineConfig
+from bcl2fastq_pipeline.interop import prepare_index_metrics, run_interop_csv
 
 log = logging.getLogger(__name__)
 
@@ -101,14 +102,13 @@ def multiqc_stats(cfg):
 
     # Illumina interop
     out_f = cfg.output_path / "Stats" / "interop_summary.csv"
-    cmd = f"interop_summary {cfg.output_path} --csv=1 > {out_f}"
     log.info(f"[multiqc_worker] Interop summary on {cfg.output_path}")
-    subprocess.check_call(cmd, shell=True, cwd=cwd)
+    run_interop_csv("interop_summary", cfg.output_path, out_f, cwd)
 
+    prepare_index_metrics(cfg.output_path)
     out_f = cfg.output_path / "Stats" / "interop_index-summary.csv"
-    cmd = f"interop_index-summary {cfg.output_path} --csv=1 > {out_f}"
     log.info(f"[multiqc_worker] Interop index summary on {cfg.output_path}")
-    subprocess.check_call(cmd, shell=True, cwd=cwd)
+    run_interop_csv("interop_index-summary", cfg.output_path, out_f, cwd)
 
     in_confs = list(cfg.output_path.glob(".multiqc_config*.yaml"))
     samples_custom_data = dict()
@@ -233,7 +233,8 @@ def archive_worker(cfg):
         qc_dir = tmp_dir / f"{p}_{run_date}" / "data" / "tmp" / cfg.run.pipeline / "bfq"
         flowdir = cfg.output_path
 
-        cmd = f"7za a -l {opts} {flowdir}/QC_{p}_{run_date}.7za {qc_dir} "
+        # Native 7-Zip follows symlinks by default; -snl would store the links themselves.
+        cmd = f"7za a {opts} {flowdir}/QC_{p}_{run_date}.7za {qc_dir} "
 
         log.info(f"[archive_worker] Archiving QC output → {qc_archive}\n")
         subprocess.check_call(cmd, shell=True)
@@ -308,7 +309,7 @@ def full_align(cfg):
         subprocess.check_call(cmd, shell=True, cwd=analysis_dir)
 
         # run snakemake pipeline
-        cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR --cores 32 --verbose -p multiqc_report"
+        cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR --cores 32 --scheduler greedy -p multiqc_report"
         subprocess.check_call(cmd, shell=True, cwd=analysis_dir)
 
         # copy report
