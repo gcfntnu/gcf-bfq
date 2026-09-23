@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "bcl2fastq-pipeline"
 version = "0.3.1"
 description = "GCF pipeline for demultiplexing and processing Illumina sequencing runs"
-readme = "bcl2fastq_pipeline/README.md"
+readme = "README.md"
 requires-python = ">=3.11"
 authors = [
     { name = "Geir Amund Svan Hasle", email = "geir.hasle@ntnu.no" },
