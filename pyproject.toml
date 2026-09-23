@@ -1,3 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bcl2fastq-pipeline"
+version = "0.3.1"
+description = "GCF pipeline for demultiplexing and processing Illumina sequencing runs"
+readme = "bcl2fastq_pipeline/README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Geir Amund Svan Hasle", email = "geir.hasle@ntnu.no" },
+]
+dependencies = [
+    "gcf-tools>=0.1",
+    "pandas",
+    "PyYAML",
+    "urllib3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build",
+    "pytest==9.1.1",
+    "ruff==0.14.0",
+]
+
+[project.scripts]
+bfq = "bcl2fastq_pipeline.cli:main"
+"bfq.py" = "bcl2fastq_pipeline.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "bcl2fastq_pipeline" }
+
+[tool.setuptools.packages.find]
+where = ["bcl2fastq_pipeline"]
+include = ["bcl2fastq_pipeline*", "flowcell_manager*"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
