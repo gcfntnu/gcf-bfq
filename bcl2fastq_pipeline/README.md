@@ -1,3 +1,5 @@
+# GCF bcl2fastq pipeline
+
 For a version supporting bcl2fastq V1 from Illumina, see the "[bcl2fastqV1](https://github.com/maxplanck-ie/bcl2fastq_pipeline/tree/bcl2fastqV1)" branch.
 
 This is our bcl to fastq pipeline. Features include:
@@ -11,6 +13,34 @@ This is our bcl to fastq pipeline. Features include:
   * Compiles an automated project-report (pdf), to go along with each submission. This uses [ReportLab](https://pypi.python.org/pypi/reportlab).
   * Functions divided into more meaningful subfiles in a module, rather than being scattered across levels of shell scripts
   * Written explicitly for python3, just to future proof things a bit.
+
+Installation
+============
+
+BFQ requires Python 3.11 or newer. Install the project from the repository root;
+the Python dependencies declared in `pyproject.toml` are installed automatically.
+The GCF Docker images remain the recommended way to obtain the complete runtime,
+including the external bioinformatics tools used by the pipeline.
+
+```console
+python -m pip install .
+```
+
+For an editable development installation, install the development extra and the
+current `gcf-tools` source explicitly:
+
+```console
+python -m pip install -e ".[dev]" \
+  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/master.zip"
+```
+
+The installation provides two command-line programs:
+
+* `bfq` starts the main pipeline process.
+* `flowcell-manager` starts the flowcell management utility.
+
+The former source-file commands `bfq.py` and `flowcell_manager.py` are no longer
+installed as executables.
 
 General workflow
 ================
@@ -83,7 +113,8 @@ The following files have special meanings if found in an output directory:
 Restarting
 ==========
 
-To wake a sleeping `bfq.py`, one can simply `kill -HUP pid`, where `pid` is its process ID. This will wake the process immediately.
+To wake a sleeping `bfq` process, send it `SIGHUP` with `kill -HUP pid`, where
+`pid` is its process ID. This wakes the process immediately.
 
 Configuration file
 ==================
@@ -146,29 +177,32 @@ A few general notes are in order:
 
 Dependencies
 ============
-This package has the following dependencies:
-  * Python3 (python2 will explicitly not work, since some package and function names differ).
-  * The configparser module
-  * The reportlab module
-  * bioblend
-  * numpy and matplotlib
+
+Python package dependencies are declared in `pyproject.toml` and installed by
+`pip`. The pipeline also requires the following external programs and services
+at runtime. These are supplied by the GCF container images where applicable:
+
+  * Python 3.11 or newer
   * bcl2fastq version 2+
   * fastq\_screen
   * seqtk
   * FastQC must be present
   * MultiQC must be present
   * md5sum must be present
-  * The Pillow python module must be relatively up to date and functional (can't install in Ubuntu and have it work in CentOS).
   * There must be an available sendmail server somewhere. This package currently does not support authentication, but that could presumably be added.
   * pigz
   * splitFastq, which comes in this repository but must be compiled manually
 
 ## Testing
 
-The unit tests exercise configuration handling without requiring sequencing data,
-external services, or bioinformatics applications. From the repository root, run:
+The unit tests exercise configuration handling and packaging without requiring
+sequencing data, external services, or bioinformatics applications. From an
+editable development installation at the repository root, run:
 
 ```console
-python -m pip install pytest==9.1.1 PyYAML==6.0.3
+python -m pip check
 python -m pytest
+ruff check .
+ruff format --check .
+python -m build
 ```
