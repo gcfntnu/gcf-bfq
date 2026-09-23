@@ -28,6 +28,7 @@ dev = [
 [project.scripts]
 bfq = "bcl2fastq_pipeline.cli:main"
 "bfq.py" = "bcl2fastq_pipeline.cli:main"
+flowcell-manager = "flowcell_manager.flowcell_manager:main"
 
 [tool.setuptools]
 package-dir = { "" = "bcl2fastq_pipeline" }

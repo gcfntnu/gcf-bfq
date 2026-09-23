@@ -163,7 +163,7 @@ def pretty_print(df):
         )
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     subparsers = parser.add_subparsers()
     parser_add = subparsers.add_parser("add", help="Add a project to the inventory file.")
@@ -202,3 +202,7 @@ if __name__ == "__main__":
         pretty_print(args.func(**vars(args)))
     else:
         args.func(**vars(args))
+
+
+if __name__ == "__main__":
+    main()

@@ -14,7 +14,7 @@ def test_distribution_contains_runtime_dependencies():
     assert {"gcf-tools", "pandas", "PyYAML", "urllib3"} <= requirement_names
 
 
-def test_bfq_console_scripts_are_installed():
+def test_console_scripts_are_installed():
     scripts = {
         entry_point.name: entry_point.value
         for entry_point in metadata.entry_points(group="console_scripts")
@@ -23,6 +23,9 @@ def test_bfq_console_scripts_are_installed():
     expected = "bcl2fastq_pipeline.cli:main"
     assert scripts["bfq"] == expected
     assert scripts["bfq.py"] == expected
+
+    flowcell_manager = "flowcell_manager.flowcell_manager:main"
+    assert scripts["flowcell-manager"] == flowcell_manager
 
 
 def test_importing_cli_does_not_start_pipeline(monkeypatch):
