@@ -1,84 +1,48 @@
-import multiprocessing as mp
 import os
 import subprocess
-import tempfile
-
-from pathlib import Path
-
+import multiprocessing as mp
+import glob
 import pandas as pd
 
 forward = pd.read_csv("qiaseq_primers_fwd.csv", index_col=0)
 reverse = pd.read_csv("qiaseq_primers_rev.csv", index_col=0)
 
-
-def remove_region_marker(path):
-    """Apply the former sed replacement without interpreting the path as shell input."""
-    path = Path(path)
-    with path.open() as source, tempfile.NamedTemporaryFile(
-        mode="w", dir=path.parent, delete=False
-    ) as destination:
-        for line in source:
-            destination.write(line.replace(":region=no_adapter", ""))
-        temporary_path = Path(destination.name)
-    temporary_path.replace(path)
-
-
 def cutadapt_worker(fname):
-    fname = Path(fname)
-    sample = fname.name.removesuffix("_R1.fastq.gz")
-    temporary_inputs = set()
-
-    for region, row in forward.iterrows():
-        unknown_r1 = Path(f"{sample}_unknown_R1.fastq")
-        unknown_r2 = Path(f"{sample}_unknown_R2.fastq")
-        if unknown_r1.exists():
-            input_r1 = Path(f"input_{unknown_r1.name}")
-            input_r2 = Path(f"input_{unknown_r2.name}")
-            unknown_r1.replace(input_r1)
-            unknown_r2.replace(input_r2)
-            remove_region_marker(input_r1)
-            remove_region_marker(input_r2)
-            temporary_inputs.update((input_r1, input_r2))
-        else:
-            input_r1 = fname
-            input_r2 = fname.with_name(fname.name.replace("R1.fastq", "R2.fastq"))
-
-        cmd = [
-            "cutadapt",
-            "-g",
-            f"{region}={row['primer']}",
-            "-G",
-            f"{region}={reverse.loc[region, 'primer']}",
-            "--pair-adapters",
-            "--no-indels",
-            "-e",
-            "0.1",
-            "--untrimmed-output",
-            str(unknown_r1),
-            "--untrimmed-paired-output",
-            str(unknown_r2),
-            "--suffix",
-            ":region={name}",
-            "-o",
-            f"{sample}_{{name}}_R1.fastq",
-            "-p",
-            f"{sample}_{{name}}_R2.fastq",
-            str(input_r1),
-            str(input_r2),
-        ]
-        with Path("log", f"{sample}_qiaseq_demultiplex.log").open("ab") as log_fh:
-            subprocess.check_call(cmd, stdout=log_fh)
-
-    for input_path in temporary_inputs:
-        input_path.unlink(missing_ok=True)
+    sample = os.path.basename(fname).replace("_R1.fastq.gz","")
+    for i, r in forward.iterrows():
+        if os.path.exists("{}_unknown_R1.fastq".format(sample)):
+            fname = "{}_unknown_R1.fastq".format(sample)
+            cp_cmd = "mv -f {} input_{}".format(fname, fname)
+            subprocess.check_call(cp_cmd, shell=True)
+            cp_cmd = "mv -f {} input_{}".format(fname.replace("R1.fastq","R2.fastq"), fname.replace("R1.fastq","R2.fastq"))
+            subprocess.check_call(cp_cmd, shell=True)
+            sed_cmd = "sed -i -e s/:region=no_adapter//g input_{}".format(fname)
+            subprocess.check_call(sed_cmd, shell=True)
+            sed_cmd = "sed -i -e s/:region=no_adapter//g input_{}".format(fname.replace("R1.fastq","R2.fastq"))
+            subprocess.check_call(sed_cmd, shell=True)
 
 
-def main():
-    os.makedirs("log", exist_ok=True)
-    r1_fastqs = list(Path("data").glob("*R1.fastq.gz"))
-    with mp.Pool(4) as pool:
-        pool.map(cutadapt_worker, r1_fastqs)
+        cmd = "cutadapt -g {region}={fwd_primer} -G {region}={rev_primer} --pair-adapters --no-indels -e 0.1 --untrimmed-output {unknown_r1} --untrimmed-paired-output {unknown_r2} --suffix ':region={{name}}' -o {sample}_{{name}}_R1.fastq -p {sample}_{{name}}_R2.fastq {r1} {r2} >> log/{sample}_qiaseq_demultiplex.log".format(
+            sample = sample,
+            unknown_r1 = "{}_unknown_R1.fastq".format(sample),
+            unknown_r2 = "{}_unknown_R2.fastq".format(sample),
+            region = i,
+            fwd_primer = r['primer'],
+            rev_primer = reverse.loc[i, 'primer'],
+            r1 = ("input_" + fname) if "unknown_R1.fastq" in fname else fname,
+            r2 = ("input_" + fname.replace("R1.fastq", "R2.fastq")) if "unknown_R1.fastq" in fname else fname.replace("R1.fastq", "R2.fastq")
+            )
+        subprocess.check_call(cmd, shell=True)
+
+    rm_cmd = "rm input_{}_*fastq".format(sample)
+    subprocess.check_call(rm_cmd, shell=True)
 
 
-if __name__ == "__main__":
-    main()
+
+
+r1 = glob.glob(os.path.join("data","*R1.fastq.gz"))
+
+p = mp.Pool(4)
+p.map(cutadapt_worker, r1)
+p.close()
+p.join()

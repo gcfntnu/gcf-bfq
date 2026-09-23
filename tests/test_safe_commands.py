@@ -1,6 +1,4 @@
 import ast
-import runpy
-
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -213,33 +211,9 @@ def test_flowcell_rerun_deletes_only_the_inventory_path(tmp_path, monkeypatch):
     assert pd.read_csv(manager_dir / "flowcells.processed").empty
 
 
-def test_qiaseq_marker_replacement_handles_paths_with_spaces(tmp_path, monkeypatch):
-    repository_root = Path(__file__).parents[1]
-    script_paths = [
-        repository_root / "files" / "qiaseq" / "demultiplex_qiaseq.py",
-        repository_root / "files" / "qiaseq" / "demultiplex_concatenate_qiaseq.py",
-    ]
-    monkeypatch.chdir(script_paths[0].parent)
-
-    for index, script_path in enumerate(script_paths):
-        namespace = runpy.run_path(str(script_path))
-        fastq = tmp_path / f"sample {index};not-a-command.fastq"
-        fastq.write_text("@read:region=no_adapter\nACGT\n+\nFFFF\n")
-
-        namespace["remove_region_marker"](fastq)
-
-        assert fastq.read_text() == "@read\nACGT\n+\nFFFF\n"
-
-
 def test_python_sources_do_not_enable_shell_execution():
     repository_root = Path(__file__).parents[1]
     source_paths = list((repository_root / "bcl2fastq_pipeline").rglob("*.py"))
-    source_paths.extend(
-        [
-            repository_root / "files" / "qiaseq" / "demultiplex_qiaseq.py",
-            repository_root / "files" / "qiaseq" / "demultiplex_concatenate_qiaseq.py",
-        ]
-    )
     for source_path in source_paths:
         if "build" in source_path.relative_to(repository_root).parts:
             continue

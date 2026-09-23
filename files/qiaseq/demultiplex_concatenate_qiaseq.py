@@ -1,121 +1,67 @@
-import multiprocessing as mp
 import os
-import shutil
 import subprocess
-import tempfile
-
-from pathlib import Path
-
+import multiprocessing as mp
+import glob
 import pandas as pd
+import sys
 
 forward = pd.read_csv("qiaseq_primers_fwd.csv", index_col=0)
 reverse = pd.read_csv("qiaseq_primers_rev.csv", index_col=0)
 
-
-def remove_region_marker(path):
-    """Apply the former sed replacement without interpreting the path as shell input."""
-    path = Path(path)
-    with path.open() as source, tempfile.NamedTemporaryFile(
-        mode="w", dir=path.parent, delete=False
-    ) as destination:
-        for line in source:
-            destination.write(line.replace(":region=no_adapter", ""))
-        temporary_path = Path(destination.name)
-    temporary_path.replace(path)
-
-
-def compress_fastqs(input_paths, output_path):
-    """Stream several FASTQs through pigz into one gzip file."""
-    output_path = Path(output_path)
-    with output_path.open("wb") as output_fh:
-        process = subprocess.Popen(
-            ["pigz", "-6", "-p", "8"],
-            stdin=subprocess.PIPE,
-            stdout=output_fh,
-        )
-        try:
-            for input_path in input_paths:
-                with Path(input_path).open("rb") as input_fh:
-                    shutil.copyfileobj(input_fh, process.stdin)
-            process.stdin.close()
-            returncode = process.wait()
-        except Exception:
-            process.terminate()
-            process.wait()
-            raise
-    if returncode:
-        raise subprocess.CalledProcessError(returncode, process.args)
-
-
 def cutadapt_worker(fname):
-    fname = Path(fname)
-    sample = fname.name.removesuffix("_R1.fastq.gz")
-    regions = ["unknown"]
-    temporary_inputs = set()
+    sample = os.path.basename(fname).replace("_R1.fastq.gz", "")
+    regions = ['unknown']
+    for i, r in forward.iterrows():
+        if os.path.exists("{}_unknown_R1.fastq".format(sample)):
+            fname = "{}_unknown_R1.fastq".format(sample)
+            cp_cmd = "mv -f {} input_{}".format(fname, fname)
+            subprocess.check_call(cp_cmd, shell=True)
+            cp_cmd = "mv -f {} input_{}".format(fname.replace("R1.fastq","R2.fastq"), fname.replace("R1.fastq","R2.fastq"))
+            subprocess.check_call(cp_cmd, shell=True)
+            sed_cmd = "sed -i -e s/:region=no_adapter//g input_{}".format(fname)
+            subprocess.check_call(sed_cmd, shell=True)
+            sed_cmd = "sed -i -e s/:region=no_adapter//g input_{}".format(fname.replace("R1.fastq","R2.fastq"))
+            subprocess.check_call(sed_cmd, shell=True)
 
-    for region, row in forward.iterrows():
-        unknown_r1 = Path(f"{sample}_unknown_R1.fastq")
-        unknown_r2 = Path(f"{sample}_unknown_R2.fastq")
-        if unknown_r1.exists():
-            input_r1 = Path(f"input_{unknown_r1.name}")
-            input_r2 = Path(f"input_{unknown_r2.name}")
-            unknown_r1.replace(input_r1)
-            unknown_r2.replace(input_r2)
-            remove_region_marker(input_r1)
-            remove_region_marker(input_r2)
-            temporary_inputs.update((input_r1, input_r2))
-        else:
-            input_r1 = fname
-            input_r2 = fname.with_name(fname.name.replace("R1.fastq", "R2.fastq"))
+        cmd = "cutadapt -g {region}={fwd_primer} -G {region}={rev_primer} --pair-adapters --no-indels -e 0.1 --untrimmed-output {unknown_r1} --untrimmed-paired-output {unknown_r2} --suffix ':region={{name}}' -o {sample}_{{name}}_R1.fastq -p {sample}_{{name}}_R2.fastq {r1} {r2} >> log/{sample}_qiaseq_demultiplex.log".format(
+            sample = sample,
+            unknown_r1 = "{}_unknown_R1.fastq".format(sample),
+            unknown_r2 = "{}_unknown_R2.fastq".format(sample),
+            region = i,
+            fwd_primer = r['primer'],
+            rev_primer = reverse.loc[i, 'primer'],
+            r1 = ("input_" + fname) if "unknown_R1.fastq" in fname else fname,
+            r2 = ("input_" + fname.replace("R1.fastq", "R2.fastq")) if "unknown_R1.fastq" in fname else fname.replace("R1.fastq", "R2.fastq")
+            )
+        regions.append(i)
+        subprocess.check_call(cmd, shell=True)
 
-        cmd = [
-            "cutadapt",
-            "-g",
-            f"{region}={row['primer']}",
-            "-G",
-            f"{region}={reverse.loc[region, 'primer']}",
-            "--pair-adapters",
-            "--no-indels",
-            "-e",
-            "0.1",
-            "--untrimmed-output",
-            str(unknown_r1),
-            "--untrimmed-paired-output",
-            str(unknown_r2),
-            "--suffix",
-            ":region={name}",
-            "-o",
-            f"{sample}_{{name}}_R1.fastq",
-            "-p",
-            f"{sample}_{{name}}_R2.fastq",
-            str(input_r1),
-            str(input_r2),
-        ]
-        regions.append(region)
-        with Path("log", f"{sample}_qiaseq_demultiplex.log").open("ab") as log_fh:
-            subprocess.check_call(cmd, stdout=log_fh)
+    if os.path.exists("input_{}_*fastq".format(sample)):
+        rm_cmd = "rm input_{}_*fastq".format(sample)
+        subprocess.check_call(rm_cmd, shell=True)
 
-    for input_path in temporary_inputs:
-        input_path.unlink(missing_ok=True)
+    R1_comb = ["{}_{}_R1.fastq".format(sample, r) for r in regions]
+    R1 = [r1 for r1 in R1_comb if os.path.exists(r1)]
+    r1 = " ".join(R1)
+    r2 = r1.replace("R1.fastq", "R2.fastq")
+    
+    #cat and compress
+    cmd = "cat {r1} | pigz -6 -p 8 > {sample}_R1.fastq.gz".format(r1 = r1, sample = sample)
+    subprocess.check_call(cmd, shell=True)
+    cmd = "cat {r2} | pigz -6 -p 8 > {sample}_R2.fastq.gz".format(r2 = r2, sample = sample)
+    subprocess.check_call(cmd, shell=True)
 
-    r1_paths = [Path(f"{sample}_{region}_R1.fastq") for region in regions]
-    r1_paths = [path for path in r1_paths if path.exists()]
-    r2_paths = [path.with_name(path.name.replace("R1.fastq", "R2.fastq")) for path in r1_paths]
+    #unlink r1 and r2 from above
+    cmd = "rm -f {}".format(r1)
+    subprocess.check_call(cmd, shell=True)
+    cmd = "rm -f {}".format(r2)
+    subprocess.check_call(cmd, shell=True)
+    print("finished sample: {}".format(sample))
 
-    compress_fastqs(r1_paths, f"{sample}_R1.fastq.gz")
-    compress_fastqs(r2_paths, f"{sample}_R2.fastq.gz")
+os.makedirs("log", exist_ok=True)
+r1 = glob.glob(os.path.join("data","*R1.fastq.gz"))
 
-    for path in [*r1_paths, *r2_paths]:
-        path.unlink(missing_ok=True)
-    print(f"finished sample: {sample}")
-
-
-def main():
-    os.makedirs("log", exist_ok=True)
-    r1_fastqs = list(Path("data").glob("*R1.fastq.gz"))
-    with mp.Pool(32) as pool:
-        pool.map(cutadapt_worker, r1_fastqs)
-
-
-if __name__ == "__main__":
-    main()
+p = mp.Pool(32)
+p.map(cutadapt_worker, r1)
+p.close()
+p.join()
