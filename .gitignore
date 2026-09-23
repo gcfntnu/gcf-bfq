@@ -10,6 +10,7 @@ ToDo
 *.egg-info
 __pycache__/
 *.py[cod]
+.configmaker.debug
 build
 dist
 splitFastq

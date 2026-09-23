@@ -12,12 +12,9 @@ ARG GCF_WORKFLOWS_BRANCH=bfq-dev
 ADD https://api.github.com/repos/gcfntnu/gcf-workflows/git/refs/heads/$GCF_WORKFLOWS_BRANCH gcf-workflows_version
 RUN cd /opt && git clone https://github.com/gcfntnu/gcf-workflows.git && cd /opt/gcf-workflows && git checkout $GCF_WORKFLOWS_BRANCH
 
-COPY ./bcl2fastq_pipeline /opt/bcl2fastq_pipeline
-ENV PATH=$PATH:/opt/bcl2fastq_pipeline/flowcell_manager
-WORKDIR /opt/bcl2fastq_pipeline
-RUN pip install /opt/bcl2fastq_pipeline
+COPY pyproject.toml /opt/gcf-bfq/pyproject.toml
+COPY bcl2fastq_pipeline /opt/gcf-bfq/bcl2fastq_pipeline
+RUN pip install /opt/gcf-bfq
 
-ENV PATH=$PATH:/opt/bcl2fastq_pipeline
-
-ENV PATH=$PATH:/opt/bcl2fastq_pipeline
-CMD bin/bfq.py
+WORKDIR /opt
+CMD ["bfq"]
