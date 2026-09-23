@@ -17,13 +17,16 @@ This is our bcl to fastq pipeline. Features include:
 Installation
 ============
 
-BFQ requires Python 3.11 or newer. Install the project from the repository root;
-the Python dependencies declared in `pyproject.toml` are installed automatically.
-The GCF Docker images remain the recommended way to obtain the complete runtime,
-including the external bioinformatics tools used by the pipeline.
+BFQ requires Python 3.11 or newer. Install the project from the repository root.
+The in-house `gcf-tools` dependency is installed from its GitHub repository;
+other Python dependencies declared in `pyproject.toml` are resolved
+automatically. The GCF Docker images remain the recommended way to obtain the
+complete runtime, including the external bioinformatics tools used by the
+pipeline.
 
 ```console
-python -m pip install .
+python -m pip install . \
+  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/master.zip"
 ```
 
 For an editable development installation, install the development extra and the
