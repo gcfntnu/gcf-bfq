@@ -16,8 +16,5 @@ COPY pyproject.toml /opt/gcf-bfq/pyproject.toml
 COPY bcl2fastq_pipeline /opt/gcf-bfq/bcl2fastq_pipeline
 RUN pip install /opt/gcf-bfq
 
-# Preserve the legacy flowcell_manager.py command alongside flowcell-manager.
-ENV PATH=$PATH:/opt/gcf-bfq/bcl2fastq_pipeline/flowcell_manager
-
 WORKDIR /opt
-CMD ["bfq.py"]
+CMD ["bfq"]

@@ -12,11 +12,8 @@ RUN git clone https://github.com/gcfntnu/gcf-bfq.git /opt/gcf-bfq && \
     git checkout master && \
     pip install .
 
-# Preserve the legacy flowcell_manager.py command alongside flowcell-manager.
-ENV PATH=$PATH:/opt/gcf-bfq/bcl2fastq_pipeline/flowcell_manager
-
 ADD https://api.github.com/repos/gcfntnu/gcf-workflows/git/refs/heads/main gcf-workflows_version
 RUN cd /opt && git clone https://github.com/gcfntnu/gcf-workflows.git && cd /opt/gcf-workflows && git checkout main
 
 WORKDIR /opt
-CMD ["bfq.py"]
+CMD ["bfq"]
