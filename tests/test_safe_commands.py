@@ -195,7 +195,13 @@ def test_logged_command_preserves_output_and_raises_with_tail(tmp_path, capsys):
     command = [
         sys.executable,
         "-c",
-        "import sys; print('standard output'); print('workflow error', file=sys.stderr); sys.exit(3)",
+        (
+            "import os, sys; "
+            "assert os.isatty(sys.stdout.fileno()); "
+            "print('standard output'); "
+            "print('\\033[31mworkflow error\\033[0m', file=sys.stderr); "
+            "sys.exit(3)"
+        ),
     ]
     log_path = tmp_path / "snakemake.log"
 
@@ -205,7 +211,9 @@ def test_logged_command_preserves_output_and_raises_with_tail(tmp_path, capsys):
     assert error.value.returncode == 3
     assert set(error.value.output.splitlines()) == {"standard output", "workflow error"}
     assert log_path.read_text() == error.value.output
-    assert capsys.readouterr().out == error.value.output
+    console_output = capsys.readouterr().out
+    assert "\x1b[31mworkflow error\x1b[0m" in console_output
+    assert "\x1b[" not in error.value.output
 
 
 def test_flowcell_rerun_deletes_only_the_inventory_path(tmp_path, monkeypatch):

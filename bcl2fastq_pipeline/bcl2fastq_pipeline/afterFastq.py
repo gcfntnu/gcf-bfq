@@ -2,11 +2,15 @@
 This file includes code that actually runs FastQC and any other tools after the fastq files have actually been made. This uses a pool of workers to process each request.
 """
 
+import codecs
+import errno
 import hashlib
 import json
 import logging
 import multiprocessing as mp
 import os
+import pty
+import re
 import shlex
 import shutil
 import subprocess
@@ -25,32 +29,66 @@ from bcl2fastq_pipeline.interop import prepare_index_metrics, run_interop_csv
 
 log = logging.getLogger(__name__)
 COMMAND_OUTPUT_TAIL_LINES = 400
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def plain_command_output(text):
+    """Remove terminal formatting before persisting command output."""
+    return ANSI_ESCAPE_RE.sub("", text).replace("\r", "")
 
 
 def run_logged_command(cmd, cwd, log_path):
-    """Run a command while mirroring combined output to the console and a log file."""
+    """Run under a PTY, preserving console colour while saving a plain-text log."""
     log_path = Path(log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     output_tail = deque(maxlen=COMMAND_OUTPUT_TAIL_LINES)
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    pending = ""
+    master_fd, slave_fd = pty.openpty()
 
-    with log_path.open("w") as log_fh:
-        with subprocess.Popen(
-            cmd,
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-        ) as process:
-            for line in process.stdout:
-                sys.stdout.write(line)
-                sys.stdout.flush()
-                log_fh.write(line)
-                log_fh.flush()
-                output_tail.append(line)
-            returncode = process.wait()
+    try:
+        with log_path.open("w") as log_fh:
+            with subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+            ) as process:
+                os.close(slave_fd)
+                slave_fd = None
+                while True:
+                    try:
+                        data = os.read(master_fd, 4096)
+                    except OSError as error:
+                        if error.errno == errno.EIO:
+                            break
+                        raise
+                    if not data:
+                        break
+
+                    text = decoder.decode(data)
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
+                    pending += text
+
+                    while "\n" in pending:
+                        line, pending = pending.split("\n", 1)
+                        line = f"{plain_command_output(line)}\n"
+                        log_fh.write(line)
+                        log_fh.flush()
+                        output_tail.append(line)
+
+                pending += decoder.decode(b"", final=True)
+                if pending:
+                    line = plain_command_output(pending)
+                    log_fh.write(line)
+                    log_fh.flush()
+                    output_tail.append(line)
+                returncode = process.wait()
+    finally:
+        os.close(master_fd)
+        if slave_fd is not None:
+            os.close(slave_fd)
 
     if returncode:
         raise subprocess.CalledProcessError(
