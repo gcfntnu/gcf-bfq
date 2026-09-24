@@ -211,6 +211,11 @@ def errorEmail(errTuple, msg):
 
     if errTuple and errTuple[0] is not None:
         msg = f"{msg}\n\n{''.join(traceback.format_exception(*errTuple))}"
+        command_output = getattr(errTuple[1], "output", None)
+        if command_output:
+            if isinstance(command_output, bytes):
+                command_output = command_output.decode("utf-8", errors="replace")
+            msg += f"\nCaptured command output (last 400 lines):\n{command_output}"
 
     report_path = report_dir / f"{cfg.run.run_id}.error"
     report_path.write_text(msg)

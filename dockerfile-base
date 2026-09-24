@@ -21,6 +21,7 @@ RUN apt-get update && \
         rsync \
         tabix \
         vim \
+        wget \
         xkcdpass \
         zlib1g \
         zlib1g-dev && \

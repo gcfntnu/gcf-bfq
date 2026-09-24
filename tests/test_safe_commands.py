@@ -1,9 +1,12 @@
 import ast
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pandas as pd
+import pytest
 
 from bcl2fastq_pipeline import afterFastq, makeFastq
 from flowcell_manager import flowcell_manager
@@ -151,6 +154,7 @@ def test_workflow_commands_keep_config_values_as_single_arguments(tmp_path, monk
     project = "GCF-2026-001 project;not-a-command"
     cfg = SimpleNamespace(
         output_path=output_path,
+        static=SimpleNamespace(paths=SimpleNamespace(log_dir=tmp_path / "logs")),
         run=SimpleNamespace(
             run_id="260923_A01990_0001_ABC",
             libprep="RNA prep;not-a-command",
@@ -158,19 +162,21 @@ def test_workflow_commands_keep_config_values_as_single_arguments(tmp_path, monk
         ),
     )
     check_call = Mock()
+    run_logged_command = Mock()
     monkeypatch.setattr(afterFastq, "get_project_names", Mock(return_value={project}))
     monkeypatch.setattr(afterFastq, "get_project_dirs", Mock(return_value=set()))
     monkeypatch.setattr(afterFastq, "get_sequencer", Mock(return_value="Nova Seq;not-a-command"))
     monkeypatch.setattr(afterFastq.shutil, "copytree", Mock())
     monkeypatch.setattr(afterFastq.shutil, "copy2", Mock())
     monkeypatch.setattr(afterFastq.subprocess, "check_call", check_call)
+    monkeypatch.setattr(afterFastq, "run_logged_command", run_logged_command)
     monkeypatch.setenv("TMPDIR", str(work_root))
     monkeypatch.setenv("SINGULARITY_CACHEDIR", str(tmp_path / "cache with spaces"))
 
     afterFastq.full_align(cfg)
 
     configmaker_command = check_call.call_args_list[0].args[0]
-    snakemake_command = check_call.call_args_list[1].args[0]
+    snakemake_command = run_logged_command.call_args.args[0]
     assert configmaker_command[configmaker_command.index("--libkit") + 1] == cfg.run.libprep
     assert configmaker_command[configmaker_command.index("--machine") + 1] == (
         "Nova Seq;not-a-command"
@@ -179,6 +185,27 @@ def test_workflow_commands_keep_config_values_as_single_arguments(tmp_path, monk
         tmp_path / "cache with spaces"
     )
     assert all("shell" not in call.kwargs for call in check_call.call_args_list)
+    assert "shell" not in run_logged_command.call_args.kwargs
+    assert run_logged_command.call_args.kwargs["log_path"] == (
+        tmp_path / "logs" / f"{cfg.run.run_id}_{project}_snakemake.log"
+    )
+
+
+def test_logged_command_preserves_output_and_raises_with_tail(tmp_path, capsys):
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; print('standard output'); print('workflow error', file=sys.stderr); sys.exit(3)",
+    ]
+    log_path = tmp_path / "snakemake.log"
+
+    with pytest.raises(subprocess.CalledProcessError) as error:
+        afterFastq.run_logged_command(command, cwd=tmp_path, log_path=log_path)
+
+    assert error.value.returncode == 3
+    assert set(error.value.output.splitlines()) == {"standard output", "workflow error"}
+    assert log_path.read_text() == error.value.output
+    assert capsys.readouterr().out == error.value.output
 
 
 def test_flowcell_rerun_deletes_only_the_inventory_path(tmp_path, monkeypatch):

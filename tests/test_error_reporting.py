@@ -1,4 +1,5 @@
 import logging
+import subprocess
 import sys
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -43,3 +44,26 @@ def test_run_context_is_reset_after_error_report(monkeypatch):
         cli.report_run_error(cfg, log, "workflow failed")
 
     assert events == ["report", "reset"]
+
+
+def test_error_report_includes_captured_command_output(tmp_path, monkeypatch):
+    report_dir = tmp_path / "reports"
+    cfg = SimpleNamespace(
+        static=SimpleNamespace(paths=SimpleNamespace(report_dir=report_dir)),
+        run=SimpleNamespace(run_id="260924_A01990_0221_TEST"),
+    )
+    monkeypatch.setattr(misc.PipelineConfig, "get", Mock(return_value=cfg))
+
+    try:
+        raise subprocess.CalledProcessError(
+            1,
+            ["snakemake", "multiqc_report"],
+            output="/usr/bin/bash: wget: command not found\nError in rule ensembl_genome\n",
+        )
+    except subprocess.CalledProcessError:
+        report_path = misc.errorEmail(sys.exc_info(), "Got an error during postMakeSteps")
+
+    report = report_path.read_text()
+    assert "Captured command output (last 400 lines):" in report
+    assert "wget: command not found" in report
+    assert "Error in rule ensembl_genome" in report

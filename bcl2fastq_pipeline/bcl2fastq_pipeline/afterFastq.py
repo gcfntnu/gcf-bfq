@@ -10,7 +10,9 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -22,6 +24,40 @@ from bcl2fastq_pipeline.config import PipelineConfig
 from bcl2fastq_pipeline.interop import prepare_index_metrics, run_interop_csv
 
 log = logging.getLogger(__name__)
+COMMAND_OUTPUT_TAIL_LINES = 400
+
+
+def run_logged_command(cmd, cwd, log_path):
+    """Run a command while mirroring combined output to the console and a log file."""
+    log_path = Path(log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    output_tail = deque(maxlen=COMMAND_OUTPUT_TAIL_LINES)
+
+    with log_path.open("w") as log_fh:
+        with subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        ) as process:
+            for line in process.stdout:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                log_fh.write(line)
+                log_fh.flush()
+                output_tail.append(line)
+            returncode = process.wait()
+
+    if returncode:
+        raise subprocess.CalledProcessError(
+            returncode,
+            cmd,
+            output="".join(output_tail),
+        )
 
 
 def command_args(command: str, options: str = "") -> list[str]:
@@ -367,7 +403,8 @@ def full_align(cfg):
             "-p",
             "multiqc_report",
         ]
-        subprocess.check_call(cmd, cwd=analysis_dir)
+        snakemake_log = cfg.static.paths.log_dir / f"{cfg.run.run_id}_{p}_snakemake.log"
+        run_logged_command(cmd, cwd=analysis_dir, log_path=snakemake_log)
 
         # copy report
         shutil.copy2(
