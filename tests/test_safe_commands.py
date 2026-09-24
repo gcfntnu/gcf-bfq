@@ -1,6 +1,7 @@
 import ast
 import subprocess
 import sys
+
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -8,17 +9,22 @@ from unittest.mock import Mock
 import pandas as pd
 import pytest
 
-from bcl2fastq_pipeline import afterFastq, makeFastq
 from flowcell_manager import flowcell_manager
+
+from bcl2fastq_pipeline import afterFastq, makeFastq
 
 
 def test_configured_commands_are_split_without_losing_quoted_values():
     assert afterFastq.command_args(
         "/opt/tools/multiqc", "--title 'Project with spaces' --force"
     ) == ["/opt/tools/multiqc", "--title", "Project with spaces", "--force"]
-    assert makeFastq.command_args(
-        "cellranger mkfastq", "--jobmode=local --localmem 55"
-    ) == ["cellranger", "mkfastq", "--jobmode=local", "--localmem", "55"]
+    assert makeFastq.command_args("cellranger mkfastq", "--jobmode=local --localmem 55") == [
+        "cellranger",
+        "mkfastq",
+        "--jobmode=local",
+        "--localmem",
+        "55",
+    ]
 
 
 def test_bcl_convert_keeps_dynamic_paths_as_single_arguments(tmp_path, monkeypatch):
@@ -142,8 +148,7 @@ def test_fastq_md5_generation_handles_paths_with_shell_metacharacters(tmp_path, 
 
     md5_file = output_path / f"md5sum_{project}_fastq.txt"
     assert md5_file.read_text().splitlines() == [
-        f"d41d8cd98f00b204e9800998ecf8427e  {fastq.relative_to(output_path)}"
-        for fastq in fastqs
+        f"d41d8cd98f00b204e9800998ecf8427e  {fastq.relative_to(output_path)}" for fastq in fastqs
     ]
 
 

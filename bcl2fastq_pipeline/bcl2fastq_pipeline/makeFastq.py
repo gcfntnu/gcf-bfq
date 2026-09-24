@@ -122,9 +122,7 @@ def bcl2fq():
     try:
         log.info(f"[convert bcl] Running: {shlex.join(cmd)}\n")
         with log_pth.open("w") as logOut:
-            subprocess.check_call(
-                cmd, stdout=logOut, stderr=subprocess.STDOUT, cwd=cfg.output_path
-            )
+            subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, cwd=cfg.output_path)
     except Exception:
         if "10X Genomics" not in cfg.run.libprep and force_bcl2fastq:
             with log_pth.open("r") as logIn:

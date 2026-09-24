@@ -170,9 +170,7 @@ def main():
                     extra_html = False
                     bcl2fastq_pipeline.misc.finishedEmail(message, runTime, extra_html)
                 except Exception as e:
-                    report_run_error(
-                        cfg, log, f"Retry failed during finishedEmail(): {e}"
-                    )
+                    report_run_error(cfg, log, f"Retry failed during finishedEmail(): {e}")
                     continue
 
             # Finalize
