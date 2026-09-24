@@ -6,6 +6,7 @@ import logging
 import shutil
 import smtplib
 import tempfile as tmp
+import traceback
 import xml.etree.ElementTree as ET
 
 from argparse import Namespace
@@ -205,8 +206,15 @@ def enoughFreeSpace():
 
 def errorEmail(errTuple, msg):
     cfg = PipelineConfig.get()
-    msg = msg + f"\nError type: {errTuple[0]}\nError value: {errTuple[1]}\n{errTuple[2]}\n"
-    (cfg.static.paths.report_dir / f"{cfg.run.run_id}.error").write_text(msg)
+    report_dir = cfg.static.paths.report_dir
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    if errTuple and errTuple[0] is not None:
+        msg = f"{msg}\n\n{''.join(traceback.format_exception(*errTuple))}"
+
+    report_path = report_dir / f"{cfg.run.run_id}.error"
+    report_path.write_text(msg)
+    return report_path
 
 
 def finishedEmail(msg, runTime, extra_html=True):

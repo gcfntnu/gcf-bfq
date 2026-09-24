@@ -38,6 +38,18 @@ def setup_logging(verbosity: int = 1) -> None:
     logging.basicConfig(level=level, format=fmt, datefmt="%Y-%m-%d %H:%M:%S")
 
 
+def report_run_error(cfg, log, message):
+    """Log and persist a run failure before clearing its flowcell context."""
+    error_info = sys.exc_info()
+    log.exception(message)
+    try:
+        bcl2fastq_pipeline.misc.errorEmail(error_info, message)
+    except Exception:
+        log.exception("Unable to write the flowcell error report")
+    finally:
+        cfg.run.reset()
+
+
 def main():
     signal.signal(signal.SIGHUP, breakSleep)
 
@@ -107,11 +119,7 @@ def main():
                     bcl_done = bcl2fastq_pipeline.makeFastq.bcl2fq()
                     (cfg.output_path / "bcl.done").write_text("\t".join(bcl_done))
                 except Exception as e:
-                    cfg.run.reset()
-                    log.exception("Got an error in bcl2fq")
-                    bcl2fastq_pipeline.misc.errorEmail(
-                        sys.exc_info(), f"Got an error in bcl2fq: {e}"
-                    )
+                    report_run_error(cfg, log, f"Got an error in bcl2fq: {e}")
                     continue
             else:
                 log.info(f"Demultiplexing already done for {cfg.output_path}")
@@ -122,11 +130,7 @@ def main():
                     bcl2fastq_pipeline.makeFastq.rename_fastqs()
                     (cfg.output_path / "files.renamed").write_text("")
                 except Exception as e:
-                    cfg.run.reset()
-                    log.exception("Got an error in rename_fastqs")
-                    bcl2fastq_pipeline.misc.errorEmail(
-                        sys.exc_info(), f"Got an error in rename_fastqs: {e}"
-                    )
+                    report_run_error(cfg, log, f"Got an error in rename_fastqs: {e}")
                     continue
 
             # Run post-processing steps
@@ -134,22 +138,14 @@ def main():
                 log.info("Starting post-processing")
                 message = bcl2fastq_pipeline.afterFastq.postMakeSteps()
             except Exception as e:
-                cfg.run.reset()
-                log.exception("Got an error during postMakeSteps")
-                bcl2fastq_pipeline.misc.errorEmail(
-                    sys.exc_info(), f"Got an error during postMakeSteps: {e}"
-                )
+                report_run_error(cfg, log, f"Got an error during postMakeSteps: {e}")
                 continue
 
             # Get more statistics and create PDFs
             try:
                 message += bcl2fastq_pipeline.misc.getFCmetricsImproved()
             except Exception as e:
-                cfg.run.reset()
-                log.exception("Got an error during getFCmetrics")
-                bcl2fastq_pipeline.misc.errorEmail(
-                    sys.exc_info(), f"Got an error during getFCmetrics: {e}"
-                )
+                report_run_error(cfg, log, f"Got an error during getFCmetrics: {e}")
                 continue
             endTime = datetime.datetime.now()
             runTime = endTime - startTime
@@ -165,11 +161,7 @@ def main():
                     retry_email = True
                     log.info("Got an error during finishedEmail().")
                 else:
-                    cfg.run.reset()
-                    log.exception("Got an error in finishedEmail")
-                    bcl2fastq_pipeline.misc.errorEmail(
-                        sys.exc_info(), f"Got an error during finishedEmail(): {e}"
-                    )
+                    report_run_error(cfg, log, f"Got an error during finishedEmail(): {e}")
                     continue
 
             if retry_email:
@@ -178,10 +170,8 @@ def main():
                     extra_html = False
                     bcl2fastq_pipeline.misc.finishedEmail(message, runTime, extra_html)
                 except Exception as e:
-                    cfg.run.reset()
-                    log.exception("Retry failed. Got an error in finishedEmail")
-                    bcl2fastq_pipeline.misc.errorEmail(
-                        sys.exc_info(), f"Got an error during finishedEmail(): {e}"
+                    report_run_error(
+                        cfg, log, f"Retry failed during finishedEmail(): {e}"
                     )
                     continue
 
@@ -189,22 +179,14 @@ def main():
             try:
                 bcl2fastq_pipeline.afterFastq.finalize()
             except Exception as e:
-                cfg.run.reset()
-                log.exception("Got an error during finalize!")
-                bcl2fastq_pipeline.misc.errorEmail(
-                    sys.exc_info(), f"Got an error during finalize(): {e}"
-                )
+                report_run_error(cfg, log, f"Got an error during finalize(): {e}")
                 continue
             finalizeTime = datetime.datetime.now() - endTime
             runTime += finalizeTime
             try:
                 bcl2fastq_pipeline.misc.finalizedEmail("", finalizeTime, runTime)
             except Exception as e:
-                cfg.run.reset()
-                log.exception("Got an error during finishedEmail")
-                bcl2fastq_pipeline.misc.errorEmail(
-                    sys.exc_info(), f"Got an error during finishedEmail(): {e}"
-                )
+                report_run_error(cfg, log, f"Got an error during finalizedEmail(): {e}")
                 continue
             # Mark the flow cell as having been processed
             bcl2fastq_pipeline.findFlowCells.markFinished()
