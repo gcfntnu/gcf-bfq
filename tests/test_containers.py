@@ -120,3 +120,10 @@ def test_shipped_configs_contain_only_runtime_options(relative_path):
         "bcl2fastq_options",
         "cellranger_mkfastq_options",
     }
+
+
+def test_base_image_enables_writable_container_overlays():
+    dockerfile = (Path(__file__).parents[1] / "dockerfile-base").read_text()
+
+    assert "ENV SINGULARITY_WRITABLE_TMPFS=true" in dockerfile
+    assert "ENV APPTAINER_WRITABLE_TMPFS=$SINGULARITY_WRITABLE_TMPFS" in dockerfile
