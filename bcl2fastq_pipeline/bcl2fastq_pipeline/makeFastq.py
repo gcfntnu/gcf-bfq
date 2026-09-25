@@ -5,6 +5,7 @@ This file contains functions required to actually convert the bcl files to fastq
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 
@@ -17,6 +18,11 @@ MKFASTQ_10X = {
     "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1": "cellranger_atac_mkfastq",
     "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3": "cellranger_mkfastq",
 }
+
+
+def command_args(command: str, options: str = "") -> list[str]:
+    """Split configured command strings without invoking a shell."""
+    return [*shlex.split(command), *shlex.split(options)]
 
 
 def rename_fastqs():
@@ -66,37 +72,72 @@ def bcl2fq():
     if "10X Genomics" in cfg.run.libprep:
         cellranger_cmd = cfg.static.commands[MKFASTQ_10X[cfg.run.libprep]]
         cellranger_options = cfg.static.commands["cellranger_mkfastq_options"]
-        cmd = f"{cellranger_cmd} --output-dir={cfg.output_path} --sample-sheet={cfg.run.sample_sheet} --run={cfg.run.flowcell_path} {cellranger_options}"
+        cmd = command_args(cellranger_cmd)
+        cmd.extend(
+            [
+                f"--output-dir={cfg.output_path}",
+                f"--sample-sheet={cfg.run.sample_sheet}",
+                f"--run={cfg.run.flowcell_path}",
+            ]
+        )
+        cmd.extend(shlex.split(cellranger_options))
         bcl_done = ["cellranger mkfastq", os.environ.get("CR_VERSION")]
     elif force_bcl2fastq:
         bcl2fastq_bin = cfg.static.commands["bcl2fastq"]
         bcl2fastq_opts = cfg.static.commands["bcl2fastq_options"]
-        cmd = f"{bcl2fastq_bin} {bcl2fastq_opts} --sample-sheet {cfg.run.sample_sheet} -o {cfg.output_path} -R {cfg.run.flowcell_path} --interop-dir {cfg.output_path}/InterOp"
+        cmd = command_args(bcl2fastq_bin, bcl2fastq_opts)
+        cmd.extend(
+            [
+                "--sample-sheet",
+                str(cfg.run.sample_sheet),
+                "-o",
+                str(cfg.output_path),
+                "-R",
+                str(cfg.run.flowcell_path),
+                "--interop-dir",
+                str(cfg.output_path / "InterOp"),
+            ]
+        )
         bcl_done = ["bcl2fastq", os.environ.get("BCL2FASTQ_VERSION")]
     else:
-        cmd = f"bcl-convert --force --bcl-input-directory {cfg.run.flowcell_path} --output-directory {cfg.output_path} --sample-sheet {cfg.run.sample_sheet} --bcl-sampleproject-subdirectories true --no-lane-splitting true --output-legacy-stats true"
+        cmd = [
+            "bcl-convert",
+            "--force",
+            "--bcl-input-directory",
+            str(cfg.run.flowcell_path),
+            "--output-directory",
+            str(cfg.output_path),
+            "--sample-sheet",
+            str(cfg.run.sample_sheet),
+            "--bcl-sampleproject-subdirectories",
+            "true",
+            "--no-lane-splitting",
+            "true",
+            "--output-legacy-stats",
+            "true",
+        ]
         bcl_done = ["bcl-convert", os.environ.get("BCL_CONVERT_VERSION")]
 
     log_pth = cfg.static.paths.log_dir / f"{cfg.run.run_id}.log"
     try:
-        log.info(f"[convert bcl] Running: {cmd}\n")
+        log.info(f"[convert bcl] Running: {shlex.join(cmd)}\n")
         with log_pth.open("w") as logOut:
-            subprocess.check_call(
-                cmd, stdout=logOut, stderr=subprocess.STDOUT, shell=True, cwd=cfg.output_path
-            )
+            subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, cwd=cfg.output_path)
     except Exception:
         if "10X Genomics" not in cfg.run.libprep and force_bcl2fastq:
             with log_pth.open("r") as logIn:
                 log_content = logIn.read()
             if "<bcl2fastq::layout::BarcodeCollisionError>" in log_content:
-                cmd += " --barcode-mismatches 0 "
+                cmd.extend(["--barcode-mismatches", "0"])
                 with log_pth.open("w") as logOut:
-                    log.info(f"[bcl2fq] Retrying with --barcode-mismatches 0 : {cmd}\n")
+                    log.info(
+                        "[bcl2fq] Retrying with --barcode-mismatches 0: %s\n",
+                        shlex.join(cmd),
+                    )
                     subprocess.check_call(
                         cmd,
                         stdout=logOut,
                         stderr=subprocess.STDOUT,
-                        shell=True,
                         cwd=cfg.output_path,
                     )
 
