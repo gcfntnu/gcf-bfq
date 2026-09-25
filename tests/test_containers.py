@@ -110,9 +110,13 @@ def test_tool_entrypoints_forward_arguments(entrypoint, tool, monkeypatch):
     "relative_path",
     ["files/bcl2fastq.ini", "bcl2fastq_pipeline/bcl2fastq.ini"],
 )
-def test_shipped_configs_use_container_wrappers(relative_path):
+def test_shipped_configs_contain_only_runtime_options(relative_path):
     config = ConfigParser()
     config.read(Path(__file__).parents[1] / relative_path)
 
-    assert config["Commands"]["multiqc_command"] == "multiqc"
-    assert config["Commands"]["bcl2fastq"] == "bcl2fastq"
+    commands = config["Commands"]
+    assert set(commands) == {
+        "multiqc_options",
+        "bcl2fastq_options",
+        "cellranger_mkfastq_options",
+    }
