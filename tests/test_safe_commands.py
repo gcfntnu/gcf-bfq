@@ -59,6 +59,92 @@ def test_bcl_convert_keeps_dynamic_paths_as_single_arguments(tmp_path, monkeypat
     assert "shell" not in check_call.call_args.kwargs
 
 
+def test_demultiplex_failure_raises_with_log_tail(tmp_path, monkeypatch):
+    flowcell_path = tmp_path / "flowcell"
+    (flowcell_path / "InterOp").mkdir(parents=True)
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    cfg = SimpleNamespace(
+        output_path=output_path,
+        run=SimpleNamespace(
+            flowcell_path=flowcell_path,
+            sample_sheet=flowcell_path / "SampleSheet.csv",
+            libprep="Illumina DNA Prep",
+            run_id=flowcell_path.name,
+        ),
+        static=SimpleNamespace(
+            paths=SimpleNamespace(log_dir=log_dir),
+            commands={},
+        ),
+    )
+
+    def fail_demultiplexing(command, stdout, **_kwargs):
+        stdout.write("\n".join(f"diagnostic line {line}" for line in range(60)))
+        stdout.flush()
+        raise subprocess.CalledProcessError(134, command)
+
+    monkeypatch.setattr(makeFastq.PipelineConfig, "get", Mock(return_value=cfg))
+    monkeypatch.setattr(makeFastq.subprocess, "check_call", fail_demultiplexing)
+    monkeypatch.delenv("FORCE_BCL2FASTQ", raising=False)
+
+    with pytest.raises(RuntimeError) as error:
+        makeFastq.bcl2fq()
+
+    message = str(error.value)
+    assert "exit code 134" in message
+    assert str(log_dir / "flowcell.log") in message
+    assert "diagnostic line 59" in message
+    assert "diagnostic line 9" not in message
+    assert isinstance(error.value.__cause__, subprocess.CalledProcessError)
+
+
+def test_bcl2fastq_barcode_collision_retry_is_preserved(tmp_path, monkeypatch):
+    flowcell_path = tmp_path / "flowcell"
+    (flowcell_path / "InterOp").mkdir(parents=True)
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    cfg = SimpleNamespace(
+        output_path=output_path,
+        run=SimpleNamespace(
+            flowcell_path=flowcell_path,
+            sample_sheet=flowcell_path / "SampleSheet.csv",
+            libprep="Illumina DNA Prep",
+            run_id=flowcell_path.name,
+        ),
+        static=SimpleNamespace(
+            paths=SimpleNamespace(log_dir=log_dir),
+            commands={"bcl2fastq_options": "--no-lane-splitting"},
+        ),
+    )
+    calls = []
+
+    def collision_then_success(command, stdout, **_kwargs):
+        calls.append(command.copy())
+        if len(calls) == 1:
+            stdout.write("<bcl2fastq::layout::BarcodeCollisionError>\n")
+            stdout.flush()
+            raise subprocess.CalledProcessError(1, command)
+        stdout.write("retry succeeded\n")
+
+    monkeypatch.setattr(makeFastq.PipelineConfig, "get", Mock(return_value=cfg))
+    monkeypatch.setattr(makeFastq.subprocess, "check_call", collision_then_success)
+    monkeypatch.setenv("FORCE_BCL2FASTQ", "True")
+
+    makeFastq.bcl2fq()
+
+    assert len(calls) == 2
+    assert "--barcode-mismatches" not in calls[0]
+    assert calls[1][-2:] == ["--barcode-mismatches", "0"]
+    log_content = (log_dir / "flowcell.log").read_text()
+    assert "BarcodeCollisionError" in log_content
+    assert "Retrying with --barcode-mismatches 0" in log_content
+    assert "retry succeeded" in log_content
+
+
 def test_force_bcl2fastq_ignores_legacy_executable_setting(tmp_path, monkeypatch):
     flowcell_path = tmp_path / "flowcell"
     (flowcell_path / "InterOp").mkdir(parents=True)
