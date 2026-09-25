@@ -133,7 +133,42 @@ def run_tool(
     """Run a supported tool while preserving its terminal stdin/stdout/stderr."""
     command = build_command(tool, arguments, config_path)
     log.info("Running %s from %s", tool, command[2])
+    print(f"BFQ Apptainer: {tool} -> {command[2]}", file=sys.stderr, flush=True)
     return subprocess.call(command)
+
+
+def tool_main(tool: str, argv: Sequence[str] | None = None) -> int:
+    """Run one configured tool as a transparent console-script wrapper."""
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    try:
+        return run_tool(tool, arguments)
+    except ContainerConfigError as error:
+        print(f"{tool}: {error}", file=sys.stderr)
+        return 2
+
+
+def bcl_convert_main() -> int:
+    return tool_main("bcl-convert")
+
+
+def bcl2fastq_main() -> int:
+    return tool_main("bcl2fastq")
+
+
+def cellranger_main() -> int:
+    return tool_main("cellranger")
+
+
+def cellranger_atac_main() -> int:
+    return tool_main("cellranger-atac")
+
+
+def multiqc_main() -> int:
+    return tool_main("multiqc")
+
+
+def spaceranger_main() -> int:
+    return tool_main("spaceranger")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -145,8 +180,4 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if arguments else 2
 
     tool, *tool_arguments = arguments
-    try:
-        return run_tool(tool, tool_arguments)
-    except ContainerConfigError as error:
-        print(f"bfq-container: {error}", file=sys.stderr)
-        return 2
+    return tool_main(tool, tool_arguments)
