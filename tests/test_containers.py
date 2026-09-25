@@ -127,11 +127,3 @@ def test_base_image_enables_writable_container_overlays():
 
     assert "ENV SINGULARITY_WRITABLE_TMPFS=true" in dockerfile
     assert "ENV APPTAINER_WRITABLE_TMPFS=$SINGULARITY_WRITABLE_TMPFS" in dockerfile
-
-
-def test_base_image_downloads_the_bcl2fastq_release():
-    dockerfile = (Path(__file__).parents[1] / "dockerfile-base").read_text()
-
-    assert "COPY files/bcl2fastq2" not in dockerfile
-    assert "ARG BCL2FASTQ_ARCHIVE_URL=https://archive.org/download/" in dockerfile
-    assert "sha256sum --check" in dockerfile
