@@ -150,6 +150,9 @@ def test_images_do_not_install_containerized_tools_natively():
     prod_image = (repository / "dockerfile-prod").read_text()
 
     assert "alien" not in base
+    assert "libgomp1" in base
+    assert "interop_summary | grep Version" in base
+    assert "interop_index-summary | grep Version" in base
     assert "COPY files/bcl2fastq" not in base
     assert "COPY files/bcl-convert" not in base
     assert "COPY files/cellranger" not in base

@@ -14,6 +14,7 @@ RUN apt-get update && \
         curl \
         git \
         gzip \
+        libgomp1 \
         p7zip-full \
         parallel \
         pigz \
@@ -55,7 +56,9 @@ RUN conda --version && \
     python --version && \
     snakemake --version && \
     apptainer --version && \
-    singularity --version
+    singularity --version && \
+    interop_summary | grep Version && \
+    interop_index-summary | grep Version
 
 # Allow shared loop devices for Apptainer/Singularity.
 RUN sed -i -e 's/shared loop devices = no/shared loop devices = yes/g' /opt/conda/etc/apptainer/apptainer.conf
