@@ -27,6 +27,7 @@ dev = [
 
 [project.scripts]
 bfq = "bcl2fastq_pipeline.entrypoint:main"
+bfq-container = "bcl2fastq_pipeline.containers:main"
 flowcell-manager = "flowcell_manager.flowcell_manager:main"
 
 [tool.setuptools]
