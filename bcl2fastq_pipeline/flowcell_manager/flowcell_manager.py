@@ -3,7 +3,6 @@
 import argparse
 import datetime
 import shutil
-import subprocess
 
 from pathlib import Path
 
@@ -101,9 +100,9 @@ def rerun_flowcell(**args):
         print(fc_for_deletion)
         confirm = input("Delete? (yes/no): ").lower()
     if confirm == "yes":
-        cmd = f"rm -rf {flowcell}"
-        print(f"DELETING FLOWCELL: {cmd}")
-        subprocess.check_call(cmd, shell=True)
+        flowcell_path = Path(flowcell)
+        print(f"DELETING FLOWCELL: {flowcell_path}")
+        shutil.rmtree(flowcell_path)
         flowcells_processed = flowcells_processed.loc[
             flowcells_processed["flowcell_path"] != flowcell
         ]
@@ -163,7 +162,7 @@ def pretty_print(df):
         )
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     subparsers = parser.add_subparsers()
     parser_add = subparsers.add_parser("add", help="Add a project to the inventory file.")
@@ -202,3 +201,7 @@ if __name__ == "__main__":
         pretty_print(args.func(**vars(args)))
     else:
         args.func(**vars(args))
+
+
+if __name__ == "__main__":
+    main()

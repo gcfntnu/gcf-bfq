@@ -10,17 +10,18 @@ ENV PYTHON_VERSION=3.11 \
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        alien \
         ca-certificates \
         curl \
         git \
         gzip \
+        libgomp1 \
         p7zip-full \
         parallel \
         pigz \
         rsync \
         tabix \
         vim \
+        wget \
         xkcdpass \
         zlib1g \
         zlib1g-dev && \
@@ -55,7 +56,9 @@ RUN conda --version && \
     python --version && \
     snakemake --version && \
     apptainer --version && \
-    singularity --version
+    singularity --version && \
+    interop_summary | grep Version && \
+    interop_index-summary | grep Version
 
 # Allow shared loop devices for Apptainer/Singularity.
 RUN sed -i -e 's/shared loop devices = no/shared loop devices = yes/g' /opt/conda/etc/apptainer/apptainer.conf
@@ -68,35 +71,11 @@ RUN mkdir images
 COPY files/ntnu.png images/
 COPY files/logo_ntnu.png /opt/images/
 
-ENV BCL2FASTQ_VERSION=2.20.0.422
-COPY files/bcl2fastq2-v$BCL2FASTQ_VERSION-Linux-x86_64.rpm /tmp
-RUN alien -i /tmp/bcl2fastq2-v$BCL2FASTQ_VERSION-Linux-x86_64.rpm
-
-ENV BCL_CONVERT_VERSION=4.2.4
-COPY files/bcl-convert-$BCL_CONVERT_VERSION-2.el7.x86_64.rpm /tmp
-RUN alien -i /tmp/bcl-convert-$BCL_CONVERT_VERSION-2.el7.x86_64.rpm
-
 RUN mkdir /bfq
 WORKDIR /bfq
 RUN mkdir output seq_share data log
 
 WORKDIR /opt
-
-ENV CR_VERSION=10.1.0
-COPY files/cellranger-$CR_VERSION.tar.gz /tmp/cellranger-$CR_VERSION.tar.gz
-RUN tar -C /opt/ -zxvf /tmp/cellranger-$CR_VERSION.tar.gz
-ENV PATH=$PATH:/opt/cellranger-$CR_VERSION
-RUN rm /tmp/cellranger-$CR_VERSION.tar.gz
-
-COPY files/cellranger-atac-1.2.0.tar.gz /tmp/cellranger-atac-1.2.0.tar.gz
-RUN tar -C /opt/ -xvf /tmp/cellranger-atac-1.2.0.tar.gz
-ENV PATH=$PATH:/opt/cellranger-atac-1.2.0
-RUN rm /tmp/cellranger-atac-1.2.0.tar.gz
-
-COPY files/spaceranger-1.2.1.tar.gz /tmp/spaceranger-1.2.1.tar.gz
-RUN tar -C /opt/ -xvf /tmp/spaceranger-1.2.1.tar.gz
-ENV PATH=$PATH:/opt/spaceranger-1.2.1
-RUN rm /tmp/spaceranger-1.2.1.tar.gz
 
 #FIX for qiime2 cli: need access to cache files in /home of q2 image
 RUN chmod -R a+w /home
@@ -104,16 +83,18 @@ RUN chmod -R a+w /home
 ENV TMPDIR=/bfq-tmp
 ENV EXT_DIR=/bfq-ext
 ENV GCF_EXT=$EXT_DIR
-ENV SINGULARITY_BINDPATH=/mnt,/opt/gcf-workflows,/bfq-tmp,/bfq-ext,/home
+ENV SINGULARITY_BINDPATH=/mnt,/opt/gcf-workflows,/bfq-tmp,/bfq-ext,/home,/instruments,/import-kista
 ENV SINGULARITY_CACHEDIR=$TMPDIR/singularity/
 ENV SINGULARITY_TMPDIR=$SINGULARITY_CACHEDIR/tmp
 ENV SINGULARITY_LOCALCACHEDIR=$SINGULARITY_CACHEDIR/tmp/
 ENV SINGULARITY_PULLFOLDER=$SINGULARITY_CACHEDIR
+ENV SINGULARITY_WRITABLE_TMPFS=true
 ENV APPTAINER_BINDPATH=$SINGULARITY_BINDPATH
 ENV APPTAINER_CACHEDIR=$SINGULARITY_CACHEDIR
 ENV APPTAINER_TMPDIR=$SINGULARITY_TMPDIR
 ENV APPTAINER_LOCALCACHEDIR=$SINGULARITY_LOCALCACHEDIR
 ENV APPTAINER_PULLFOLDER=$SINGULARITY_PULLFOLDER
+ENV APPTAINER_WRITABLE_TMPFS=$SINGULARITY_WRITABLE_TMPFS
 ENV GCF_SECRET=/secrets/gcf_secrets.yaml
 
 #ENV FORCE_BCL2FASTQ=True

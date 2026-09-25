@@ -2,13 +2,22 @@
 This file includes code that actually runs FastQC and any other tools after the fastq files have actually been made. This uses a pool of workers to process each request.
 """
 
+import codecs
+import errno
+import hashlib
 import json
 import logging
 import multiprocessing as mp
 import os
+import pty
+import re
+import shlex
 import shutil
 import subprocess
+import sys
 
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import yaml
@@ -19,6 +28,88 @@ from bcl2fastq_pipeline.config import PipelineConfig
 from bcl2fastq_pipeline.interop import prepare_index_metrics, run_interop_csv
 
 log = logging.getLogger(__name__)
+COMMAND_OUTPUT_TAIL_LINES = 400
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def plain_command_output(text):
+    """Remove terminal formatting before persisting command output."""
+    return ANSI_ESCAPE_RE.sub("", text).replace("\r", "")
+
+
+def run_logged_command(cmd, cwd, log_path):
+    """Run under a PTY, preserving console colour while saving a plain-text log."""
+    log_path = Path(log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    output_tail = deque(maxlen=COMMAND_OUTPUT_TAIL_LINES)
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    pending = ""
+    master_fd, slave_fd = pty.openpty()
+
+    try:
+        with log_path.open("w") as log_fh:
+            with subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+            ) as process:
+                os.close(slave_fd)
+                slave_fd = None
+                while True:
+                    try:
+                        data = os.read(master_fd, 4096)
+                    except OSError as error:
+                        if error.errno == errno.EIO:
+                            break
+                        raise
+                    if not data:
+                        break
+
+                    text = decoder.decode(data)
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
+                    pending += text
+
+                    while "\n" in pending:
+                        line, pending = pending.split("\n", 1)
+                        line = f"{plain_command_output(line)}\n"
+                        log_fh.write(line)
+                        log_fh.flush()
+                        output_tail.append(line)
+
+                pending += decoder.decode(b"", final=True)
+                if pending:
+                    line = plain_command_output(pending)
+                    log_fh.write(line)
+                    log_fh.flush()
+                    output_tail.append(line)
+                returncode = process.wait()
+    finally:
+        os.close(master_fd)
+        if slave_fd is not None:
+            os.close(slave_fd)
+
+    if returncode:
+        raise subprocess.CalledProcessError(
+            returncode,
+            cmd,
+            output="".join(output_tail),
+        )
+
+
+def command_args(command: str, options: str = "") -> list[str]:
+    """Split configured command strings without invoking a shell."""
+    return [*shlex.split(command), *shlex.split(options)]
+
+
+def file_md5(path: Path) -> str:
+    """Return the hexadecimal MD5 digest for a file."""
+    digest = hashlib.md5(usedforsecurity=False)
+    with path.open("rb") as input_fh:
+        for chunk in iter(lambda: input_fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def get_read_geometry(run_dir):
@@ -65,11 +156,14 @@ def md5sum_worker(cfg):
     for p in pnames:
         md_path = Path(f"md5sum_{p}_fastq.txt")
         if not (cfg.output_path / md_path).exists():
-            cmd = (
-                f"find {p} -type f -name '*.fastq.gz' | parallel -j 5 md5sum > md5sum_{p}_fastq.txt"
-            )
+            fastqs = sorted((cfg.output_path / p).rglob("*.fastq.gz"))
             log.info(f"[md5sum_worker] Processing {cfg.output_path}/{p}")
-            subprocess.check_call(cmd, shell=True, cwd=cfg.output_path)
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                checksums = executor.map(file_md5, fastqs)
+                with (cfg.output_path / md_path).open("w") as output_fh:
+                    for fastq, checksum in zip(fastqs, checksums, strict=True):
+                        relative_path = fastq.relative_to(cfg.output_path)
+                        output_fh.write(f"{checksum}  {relative_path}\n")
 
 
 def md5sum_archive(archive_path: Path):
@@ -77,9 +171,10 @@ def md5sum_archive(archive_path: Path):
     md5_file = archive_path.parent / f"md5sum_{base.name}_archive.txt"
 
     if not md5_file.exists() or archive_path.stat().st_mtime > md5_file.stat().st_mtime:
-        cmd = f"md5sum {archive_path.name} > {md5_file.name}"
-        log.info(f"[md5sum_worker] Processing {cmd}")
-        subprocess.check_call(cmd, shell=True, cwd=archive_path.parent)
+        cmd = ["md5sum", archive_path.name]
+        log.info(f"[md5sum_worker] Processing {shlex.join(cmd)}")
+        with md5_file.open("w") as output_fh:
+            subprocess.check_call(cmd, stdout=output_fh, cwd=archive_path.parent)
 
 
 def md5sum_archive_worker(cfg):
@@ -133,28 +228,39 @@ def multiqc_stats(cfg):
     with conf_pth.open("w+") as out_conf_fh:
         yaml.dump(mqc_conf, out_conf_fh)
 
-    modules = "-m interop "
-    FORCE_BCL2FASTQ = os.environ.get("FORCE_BCL2FASTQ", None)
-    modules += "-m bclconvert " if not FORCE_BCL2FASTQ else "-m bcl2fastq"
+    force_bcl2fastq = os.environ.get("FORCE_BCL2FASTQ", None)
+    demultiplexer_module = "bcl2fastq" if force_bcl2fastq else "bclconvert"
 
-    multiqc_cmd = cfg.static.commands["multiqc_command"]
     multiqc_opts = cfg.static.commands["multiqc_options"]
     pname = pnames.replace(", ", "_")
     multiqc_out = cfg.output_path / "Stats" / f"sequencer_stats_{pname}.html"
 
-    cmd = f"{multiqc_cmd} {multiqc_opts} --config {conf_pth} {cfg.output_path}/Stats --filename {multiqc_out} {modules}"
+    cmd = command_args("multiqc", multiqc_opts)
+    cmd.extend(
+        [
+            "--config",
+            str(conf_pth),
+            str(cfg.output_path / "Stats"),
+            "--filename",
+            str(multiqc_out),
+            "-m",
+            "interop",
+            "-m",
+            demultiplexer_module,
+        ]
+    )
     log.info(f"[multiqc_worker] Processing {cfg.output_path}")
 
-    if os.environ.get("BFQ_TEST", None) and not FORCE_BCL2FASTQ:
+    if os.environ.get("BFQ_TEST", None) and not force_bcl2fastq:
         if not (cfg.output_path / "Stats" / "Demultiplex_Stats.csv").exists():
             log.warning(
                 "BFQ-TEST: Testflowcell was generated with bcl2fastq but environment is configured for bcl-convert. Using bcl2fastq paths and mqc modules."
             )
-            cmd = cmd.replace("Reports", "Stats")
-            cmd = cmd.replace("-m bclconvert", "-m bcl2fastq")
-            log.info(f"[multiqc_worker] Running: {cmd}")
+            cmd = [arg.replace("Reports", "Stats") for arg in cmd]
+            cmd[cmd.index("bclconvert")] = "bcl2fastq"
+            log.info(f"[multiqc_worker] Running: {shlex.join(cmd)}")
 
-    subprocess.check_call(cmd, shell=True, cwd=cwd)
+    subprocess.check_call(cmd, cwd=cwd)
 
 
 def generate_password(cfg, prefix: str) -> str:
@@ -173,7 +279,9 @@ def generate_password(cfg, prefix: str) -> str:
     str
         The generated password string.
     """
-    pw = subprocess.check_output("xkcdpass -n 5 -d '-' -v '[a-z]'", shell=True).decode().strip("\n")
+    pw = subprocess.check_output(
+        ["xkcdpass", "-n", "5", "-d", "-", "-v", "[a-z]"], text=True
+    ).strip("\n")
     pw_file = cfg.output_path / f"encryption.{prefix}"
     pw_file.write_text(f"{pw}\n", encoding="utf-8")
     return pw
@@ -193,31 +301,31 @@ def archive_worker(cfg):
             archive_fastq.unlink()
 
         pw = generate_password(cfg, p) if cfg.run.sensitive else None
-        opts = f"-p{pw}" if pw else ""
-
         report_dir = cfg.output_path / "Reports"
-        if not report_dir.exists():
-            report_dir = ""
-
-        cmd = (
-            f"7za a {opts} "
-            f"{cfg.output_path}/{p}_{run_date}.7za "
-            f"{cfg.output_path}/{p}/ "
-            f"{cfg.output_path}/Stats "
-            f"{report_dir} "
-            f"{cfg.output_path}/Undetermined*.fastq.gz "
-            f"{cfg.output_path}/{p}_samplesheet.tsv "
-            f"{cfg.output_path}/SampleSheet.csv "
-            f"{cfg.output_path}/Sample-Submission-Form.xlsx "
-            f"{cfg.output_path}/md5sum_{p}_fastq.txt "
+        archive_inputs = [cfg.output_path / p, cfg.output_path / "Stats"]
+        if report_dir.exists():
+            archive_inputs.append(report_dir)
+        archive_inputs.extend(sorted(cfg.output_path.glob("Undetermined*.fastq.gz")))
+        archive_inputs.extend(
+            [
+                cfg.output_path / f"{p}_samplesheet.tsv",
+                cfg.output_path / "SampleSheet.csv",
+                cfg.output_path / "Sample-Submission-Form.xlsx",
+                cfg.output_path / f"md5sum_{p}_fastq.txt",
+            ]
         )
 
         if cfg.run.libprep and "10X Genomics" in cfg.run.libprep:
             extra = cfg.run.run_id.split("_")[-1][1:]
-            cmd += f" {cfg.output_path}/{extra}"
+            archive_inputs.append(cfg.output_path / extra)
+
+        cmd = ["7za", "a"]
+        if pw:
+            cmd.append(f"-p{pw}")
+        cmd.extend([str(archive_fastq), *(str(path) for path in archive_inputs)])
 
         log.info(f"[archive_worker] Zipping {archive_fastq}")
-        subprocess.check_call(cmd, shell=True)
+        subprocess.check_call(cmd)
 
         # ------------------------------------------------------------------ #
         # Archive pipeline output (QC)
@@ -227,17 +335,17 @@ def archive_worker(cfg):
             qc_archive.unlink()
 
         pw = generate_password(cfg, f"QC_{p}") if cfg.run.sensitive else None
-        opts = f"-p{pw}" if pw else ""
-
         tmp_dir = Path(os.environ["TMPDIR"])
         qc_dir = tmp_dir / f"{p}_{run_date}" / "data" / "tmp" / cfg.run.pipeline / "bfq"
-        flowdir = cfg.output_path
 
         # Native 7-Zip follows symlinks by default; -snl would store the links themselves.
-        cmd = f"7za a {opts} {flowdir}/QC_{p}_{run_date}.7za {qc_dir} "
+        cmd = ["7za", "a"]
+        if pw:
+            cmd.append(f"-p{pw}")
+        cmd.extend([str(qc_archive), str(qc_dir)])
 
         log.info(f"[archive_worker] Archiving QC output → {qc_archive}\n")
-        subprocess.check_call(cmd, shell=True)
+        subprocess.check_call(cmd)
 
 
 def get_project_names(dirs):
@@ -302,15 +410,38 @@ def full_align(cfg):
             shutil.rmtree(dst)
         shutil.copytree(src, dst)
 
-        create_fastq = " --skip-create-fastq-dir" if Path("data/raw/fastq").exists() else ""
         machine = get_sequencer(cfg.run.run_id)
         # create config.yaml
-        cmd = f"/opt/conda/bin/python /opt/conda/bin/configmaker.py {cfg.output_path} -p {p} --libkit '{cfg.run.libprep}' --machine '{machine}' {create_fastq}"
-        subprocess.check_call(cmd, shell=True, cwd=analysis_dir)
+        cmd = [
+            "/opt/conda/bin/python",
+            "/opt/conda/bin/configmaker.py",
+            str(cfg.output_path),
+            "-p",
+            str(p),
+            "--libkit",
+            str(cfg.run.libprep),
+            "--machine",
+            str(machine),
+        ]
+        if Path("data/raw/fastq").exists():
+            cmd.append("--skip-create-fastq-dir")
+        subprocess.check_call(cmd, cwd=analysis_dir)
 
         # run snakemake pipeline
-        cmd = "snakemake --use-singularity --singularity-prefix $SINGULARITY_CACHEDIR --cores 32 --scheduler greedy -p multiqc_report"
-        subprocess.check_call(cmd, shell=True, cwd=analysis_dir)
+        cmd = [
+            "snakemake",
+            "--use-singularity",
+            "--singularity-prefix",
+            os.environ["SINGULARITY_CACHEDIR"],
+            "--cores",
+            "32",
+            "--scheduler",
+            "greedy",
+            "-p",
+            "multiqc_report",
+        ]
+        snakemake_log = cfg.static.paths.log_dir / f"{cfg.run.run_id}_{p}_snakemake.log"
+        run_logged_command(cmd, cwd=analysis_dir, log_path=snakemake_log)
 
         # copy report
         shutil.copy2(
