@@ -40,7 +40,6 @@ include = ["bcl2fastq_pipeline*", "flowcell_manager*"]
 target-version = "py311"
 line-length = 100
 indent-width = 4
-fix = true
 
 # Exclude generated or data-heavy dirs
 extend-exclude = [
