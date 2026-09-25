@@ -1,6 +1,7 @@
 import logging
 import subprocess
 import sys
+
 from types import SimpleNamespace
 from unittest.mock import Mock
 
