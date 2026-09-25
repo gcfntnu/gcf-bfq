@@ -308,11 +308,15 @@ displayed target carefully before confirming either destructive operation.
 | `FORCE_BCL2FASTQ` | Uses legacy bcl2fastq instead of bcl-convert for non-10x runs. |
 | `GCF_WORKFLOWS_DOCKER_CONFIG` | Overrides the default `/opt/gcf-workflows/docker.config` image mapping. |
 | `BFQ_APPTAINER_COMMAND` | Overrides the default `apptainer` executable, for example with `singularity`. |
+| `APPTAINER_WRITABLE_TMPFS` | Makes container filesystems temporarily writable. Set to `true` by the base image. |
+| `SINGULARITY_WRITABLE_TMPFS` | Backwards-compatible equivalent of `APPTAINER_WRITABLE_TMPFS`. |
 | `TMPDIR` | Root for per-project workflow work directories and QC archive sources. Set by the base image. |
 | `BCL_CONVERT_VERSION`, `BCL2FASTQ_VERSION`, `CR_VERSION` | Version strings recorded in `bcl.done`. Set by the image. |
 
 Apptainer/Singularity cache, temporary-directory, and bind-path variables are
-also provided by the base image for the downstream Snakemake workflows.
+also provided by the base image for the downstream Snakemake workflows. The
+writable tmpfs overlay is discarded after each container command; output that
+must persist still needs to be written to a bind-mounted path.
 
 ## Output overview
 
