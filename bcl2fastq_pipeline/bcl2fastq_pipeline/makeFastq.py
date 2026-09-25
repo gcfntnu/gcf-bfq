@@ -14,15 +14,10 @@ from bcl2fastq_pipeline.config import PipelineConfig
 log = logging.getLogger(__name__)
 
 MKFASTQ_10X = {
-    "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit": "cellranger_spatial_mkfastq",
-    "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1": "cellranger_atac_mkfastq",
-    "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3": "cellranger_mkfastq",
+    "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit": "spaceranger",
+    "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1": "cellranger-atac",
+    "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3": "cellranger",
 }
-
-
-def command_args(command: str, options: str = "") -> list[str]:
-    """Split configured command strings without invoking a shell."""
-    return [*shlex.split(command), *shlex.split(options)]
 
 
 def rename_fastqs():
@@ -70,9 +65,9 @@ def bcl2fq():
     force_bcl2fastq = os.environ.get("FORCE_BCL2FASTQ", None)
 
     if "10X Genomics" in cfg.run.libprep:
-        cellranger_cmd = cfg.static.commands[MKFASTQ_10X[cfg.run.libprep]]
+        cellranger_cmd = MKFASTQ_10X[cfg.run.libprep]
         cellranger_options = cfg.static.commands["cellranger_mkfastq_options"]
-        cmd = command_args(cellranger_cmd)
+        cmd = [cellranger_cmd, "mkfastq"]
         cmd.extend(
             [
                 f"--output-dir={cfg.output_path}",
@@ -83,9 +78,8 @@ def bcl2fq():
         cmd.extend(shlex.split(cellranger_options))
         bcl_done = ["cellranger mkfastq", os.environ.get("CR_VERSION")]
     elif force_bcl2fastq:
-        bcl2fastq_bin = cfg.static.commands["bcl2fastq"]
         bcl2fastq_opts = cfg.static.commands["bcl2fastq_options"]
-        cmd = command_args(bcl2fastq_bin, bcl2fastq_opts)
+        cmd = ["bcl2fastq", *shlex.split(bcl2fastq_opts)]
         cmd.extend(
             [
                 "--sample-sheet",
