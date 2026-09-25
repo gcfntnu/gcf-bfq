@@ -20,6 +20,7 @@ RUN apt-get update && \
         pigz \
         rsync \
         tabix \
+        unzip \
         vim \
         wget \
         xkcdpass \
@@ -70,8 +71,13 @@ COPY files/ntnu.png images/
 COPY files/logo_ntnu.png /opt/images/
 
 ENV BCL2FASTQ_VERSION=2.20.0.422
-COPY files/bcl2fastq2-v$BCL2FASTQ_VERSION-Linux-x86_64.rpm /tmp
-RUN alien -i /tmp/bcl2fastq2-v$BCL2FASTQ_VERSION-Linux-x86_64.rpm
+ARG BCL2FASTQ_ARCHIVE_URL=https://archive.org/download/bcl2fastq2-v2-20-0-linux-x86-64/bcl2fastq2-v2-20-0-linux-x86-64.zip
+ARG BCL2FASTQ_ARCHIVE_SHA256=3744bc1c02fff1dd17d18c8e8b8b2cc2405b37d7d248b8889f4f8a8fc220b434
+RUN wget --output-document=/tmp/bcl2fastq.zip "$BCL2FASTQ_ARCHIVE_URL" && \
+    echo "$BCL2FASTQ_ARCHIVE_SHA256  /tmp/bcl2fastq.zip" | sha256sum --check - && \
+    unzip /tmp/bcl2fastq.zip -d /tmp && \
+    alien -i /tmp/bcl2fastq2-v$BCL2FASTQ_VERSION-Linux-x86_64.rpm && \
+    rm /tmp/bcl2fastq.zip /tmp/bcl2fastq2-v$BCL2FASTQ_VERSION-Linux-x86_64.rpm
 
 ENV BCL_CONVERT_VERSION=4.2.4
 COPY files/bcl-convert-$BCL_CONVERT_VERSION-2.el7.x86_64.rpm /tmp
