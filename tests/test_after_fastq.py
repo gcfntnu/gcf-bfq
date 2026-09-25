@@ -38,7 +38,7 @@ def test_run_interop_csv_publishes_nonempty_output(tmp_path, monkeypatch):
     output_path = tmp_path / "Stats" / "interop_index-summary.csv"
     output_path.parent.mkdir()
 
-    def write_csv(command, stdout, cwd):
+    def write_csv(command, stdout, stderr, cwd):
         stdout.write("Lane,Sample\n1,sample\n")
 
     check_call = Mock(side_effect=write_csv)
@@ -51,6 +51,7 @@ def test_run_interop_csv_publishes_nonempty_output(tmp_path, monkeypatch):
     check_call.assert_called_once_with(
         ["interop_index-summary", str(tmp_path), "--csv=1"],
         stdout=ANY,
+        stderr=ANY,
         cwd=output_path.parent,
     )
 
@@ -70,13 +71,20 @@ def test_run_interop_csv_rejects_empty_output(tmp_path, monkeypatch):
 def test_run_interop_csv_preserves_previous_output_on_command_failure(tmp_path, monkeypatch):
     output_path = tmp_path / "interop_index-summary.csv"
     output_path.write_text("previous report\n")
+
+    def fail_with_diagnostics(command, stderr, **_kwargs):
+        stderr.write("libgomp.so.1: cannot open shared object file\n")
+        stderr.flush()
+        raise CalledProcessError(127, command)
+
     monkeypatch.setattr(
         "bcl2fastq_pipeline.interop.subprocess.check_call",
-        Mock(side_effect=CalledProcessError(1, "interop_index-summary")),
+        Mock(side_effect=fail_with_diagnostics),
     )
 
-    with pytest.raises(CalledProcessError):
+    with pytest.raises(RuntimeError, match="libgomp.so.1.*cannot open shared object file"):
         run_interop_csv("interop_index-summary", tmp_path, output_path, tmp_path)
 
     assert output_path.read_text() == "previous report\n"
     assert not output_path.with_suffix(".csv.tmp").exists()
+    assert not output_path.with_suffix(".csv.stderr.tmp").exists()

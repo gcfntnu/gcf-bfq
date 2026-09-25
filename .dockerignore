@@ -1,0 +1,3 @@
+files/*.rpm
+files/cellranger*.tar.gz
+files/spaceranger*.tar.gz

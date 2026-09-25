@@ -91,13 +91,8 @@ error_to = pipeline-errors@example.org
 pipeline = 0.3.1
 
 [Commands]
-multiqc_command = /opt/conda/bin/multiqc
 multiqc_options = -f -q --interactive
-bcl2fastq = /usr/local/bin/bcl2fastq
 bcl2fastq_options = --no-lane-splitting -p 32 -r 12 -w 12 -l WARNING
-cellranger_mkfastq = cellranger mkfastq
-cellranger_atac_mkfastq = cellranger-atac mkfastq
-cellranger_spatial_mkfastq = spaceranger mkfastq
 cellranger_mkfastq_options = --qc --jobmode=local --localcores=32 --localmem=55
 ```
 
@@ -164,17 +159,15 @@ deployment identifiers; the current pipeline does not branch on these values.
 
 | Option | When required | Purpose |
 | --- | --- | --- |
-| `multiqc_command` | Always | MultiQC executable or command. |
 | `multiqc_options` | Always | Options passed to the sequencer-level MultiQC invocation. |
-| `bcl2fastq` | With `FORCE_BCL2FASTQ` | Legacy Illumina bcl2fastq executable. |
 | `bcl2fastq_options` | With `FORCE_BCL2FASTQ` | Options passed to legacy bcl2fastq. |
-| `cellranger_mkfastq` | Chromium gene-expression runs | Cell Ranger mkfastq command. |
-| `cellranger_atac_mkfastq` | Chromium ATAC runs | Cell Ranger ATAC mkfastq command. |
-| `cellranger_spatial_mkfastq` | Visium runs | Space Ranger mkfastq command. |
 | `cellranger_mkfastq_options` | Any supported 10x run | Shared local execution options for the 10x mkfastq commands. |
 
-Standard runs use `bcl-convert` from `PATH`. The 10x command is selected by an
-exact `Libprep` match in the mapping defined in `makeFastq.py`.
+BFQ selects the executable internally and runs it through an Apptainer wrapper.
+Image references come from the checked-out `gcf-workflows/docker.config`.
+Standard runs use `bcl-convert`; `FORCE_BCL2FASTQ` selects `bcl2fastq`. The 10x
+wrapper is selected by an exact `Libprep` match in `makeFastq.py`. Legacy INI
+executable entries are accepted as extra configuration values but ignored.
 
 ## Per-flowcell input
 
@@ -313,11 +306,20 @@ displayed target carefully before confirming either destructive operation.
 | `BFQ_DEBUG` | Enables debug logging when set. |
 | `BFQ_TEST` | Enables compatibility handling for test flowcells generated with bcl2fastq while the image defaults to bcl-convert. |
 | `FORCE_BCL2FASTQ` | Uses legacy bcl2fastq instead of bcl-convert for non-10x runs. |
+| `GCF_WORKFLOWS_DOCKER_CONFIG` | Overrides the default `/opt/gcf-workflows/docker.config` image mapping. |
+| `BFQ_APPTAINER_COMMAND` | Overrides the default `apptainer` executable, for example with `singularity`. |
+| `APPTAINER_WRITABLE_TMPFS` | Makes container filesystems temporarily writable. Set to `true` by the base image. |
+| `SINGULARITY_WRITABLE_TMPFS` | Backwards-compatible equivalent of `APPTAINER_WRITABLE_TMPFS`. |
 | `TMPDIR` | Root for per-project workflow work directories and QC archive sources. Set by the base image. |
-| `BCL_CONVERT_VERSION`, `BCL2FASTQ_VERSION`, `CR_VERSION` | Version strings recorded in `bcl.done`. Set by the image. |
 
 Apptainer/Singularity cache, temporary-directory, and bind-path variables are
-also provided by the base image for the downstream Snakemake workflows.
+also provided by the base image for the downstream Snakemake workflows. The
+writable tmpfs overlay is discarded after each container command; output that
+must persist still needs to be written to a bind-mounted path.
+
+The demultiplexer name and image tag (or digest) are recorded in `bcl.done`.
+They are resolved from the active `gcf-workflows/docker.config`; BFQ no longer
+maintains separate version environment variables for these tools.
 
 ## Output overview
 

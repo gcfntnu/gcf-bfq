@@ -28,6 +28,17 @@ def test_console_scripts_are_installed():
     assert scripts["flowcell-manager"] == flowcell_manager
     assert "flowcell_manager.py" not in scripts
 
+    container_scripts = {
+        "bcl-convert": "bcl_convert_main",
+        "bcl2fastq": "bcl2fastq_main",
+        "cellranger": "cellranger_main",
+        "cellranger-atac": "cellranger_atac_main",
+        "multiqc": "multiqc_main",
+        "spaceranger": "spaceranger_main",
+    }
+    for script, function in container_scripts.items():
+        assert scripts[script] == f"bcl2fastq_pipeline.containers:{function}"
+
 
 def test_entrypoint_avoids_neighboring_script_shadowing(tmp_path, monkeypatch):
     executable_directory = tmp_path / "bin"

@@ -26,8 +26,15 @@ dev = [
 ]
 
 [project.scripts]
+bcl-convert = "bcl2fastq_pipeline.containers:bcl_convert_main"
+bcl2fastq = "bcl2fastq_pipeline.containers:bcl2fastq_main"
 bfq = "bcl2fastq_pipeline.entrypoint:main"
+bfq-container = "bcl2fastq_pipeline.containers:main"
+cellranger = "bcl2fastq_pipeline.containers:cellranger_main"
+cellranger-atac = "bcl2fastq_pipeline.containers:cellranger_atac_main"
 flowcell-manager = "flowcell_manager.flowcell_manager:main"
+multiqc = "bcl2fastq_pipeline.containers:multiqc_main"
+spaceranger = "bcl2fastq_pipeline.containers:spaceranger_main"
 
 [tool.setuptools]
 package-dir = { "" = "bcl2fastq_pipeline" }

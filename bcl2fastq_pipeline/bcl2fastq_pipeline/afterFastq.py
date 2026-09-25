@@ -231,12 +231,11 @@ def multiqc_stats(cfg):
     force_bcl2fastq = os.environ.get("FORCE_BCL2FASTQ", None)
     demultiplexer_module = "bcl2fastq" if force_bcl2fastq else "bclconvert"
 
-    multiqc_cmd = cfg.static.commands["multiqc_command"]
     multiqc_opts = cfg.static.commands["multiqc_options"]
     pname = pnames.replace(", ", "_")
     multiqc_out = cfg.output_path / "Stats" / f"sequencer_stats_{pname}.html"
 
-    cmd = command_args(multiqc_cmd, multiqc_opts)
+    cmd = command_args("multiqc", multiqc_opts)
     cmd.extend(
         [
             "--config",

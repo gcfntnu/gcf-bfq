@@ -14,17 +14,22 @@ from flowcell_manager import flowcell_manager
 from bcl2fastq_pipeline import afterFastq, makeFastq
 
 
+@pytest.fixture(autouse=True)
+def configured_container_versions(monkeypatch):
+    versions = {
+        "bcl-convert": "4.2.4",
+        "bcl2fastq": "2.20.0",
+        "cellranger": "10.1.0",
+        "cellranger-atac": "2.2.0",
+        "spaceranger": "4.0.1",
+    }
+    monkeypatch.setattr(makeFastq, "image_version", versions.__getitem__)
+
+
 def test_configured_commands_are_split_without_losing_quoted_values():
     assert afterFastq.command_args(
         "/opt/tools/multiqc", "--title 'Project with spaces' --force"
     ) == ["/opt/tools/multiqc", "--title", "Project with spaces", "--force"]
-    assert makeFastq.command_args("cellranger mkfastq", "--jobmode=local --localmem 55") == [
-        "cellranger",
-        "mkfastq",
-        "--jobmode=local",
-        "--localmem",
-        "55",
-    ]
 
 
 def test_bcl_convert_keeps_dynamic_paths_as_single_arguments(tmp_path, monkeypatch):
@@ -54,8 +59,6 @@ def test_bcl_convert_keeps_dynamic_paths_as_single_arguments(tmp_path, monkeypat
     monkeypatch.setattr(makeFastq.PipelineConfig, "get", Mock(return_value=cfg))
     monkeypatch.setattr(makeFastq.subprocess, "check_call", check_call)
     monkeypatch.delenv("FORCE_BCL2FASTQ", raising=False)
-    monkeypatch.setenv("BCL_CONVERT_VERSION", "4.2.4")
-
     assert makeFastq.bcl2fq() == ["bcl-convert", "4.2.4"]
 
     command = check_call.call_args.args[0]
@@ -64,6 +67,221 @@ def test_bcl_convert_keeps_dynamic_paths_as_single_arguments(tmp_path, monkeypat
     assert command[command.index("--output-directory") + 1] == str(output_path)
     assert command[command.index("--sample-sheet") + 1] == str(sample_sheet)
     assert "shell" not in check_call.call_args.kwargs
+
+
+def test_demultiplex_failure_raises_with_log_tail(tmp_path, monkeypatch):
+    flowcell_path = tmp_path / "flowcell"
+    (flowcell_path / "InterOp").mkdir(parents=True)
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    cfg = SimpleNamespace(
+        output_path=output_path,
+        run=SimpleNamespace(
+            flowcell_path=flowcell_path,
+            sample_sheet=flowcell_path / "SampleSheet.csv",
+            libprep="Illumina DNA Prep",
+            run_id=flowcell_path.name,
+        ),
+        static=SimpleNamespace(
+            paths=SimpleNamespace(log_dir=log_dir),
+            commands={},
+        ),
+    )
+
+    def fail_demultiplexing(command, stdout, **_kwargs):
+        stdout.write("\n".join(f"diagnostic line {line}" for line in range(60)))
+        stdout.flush()
+        raise subprocess.CalledProcessError(134, command)
+
+    monkeypatch.setattr(makeFastq.PipelineConfig, "get", Mock(return_value=cfg))
+    monkeypatch.setattr(makeFastq.subprocess, "check_call", fail_demultiplexing)
+    monkeypatch.delenv("FORCE_BCL2FASTQ", raising=False)
+
+    with pytest.raises(RuntimeError) as error:
+        makeFastq.bcl2fq()
+
+    message = str(error.value)
+    assert "exit code 134" in message
+    assert str(log_dir / "flowcell.log") in message
+    assert "diagnostic line 59" in message
+    assert "diagnostic line 9" not in message
+    assert isinstance(error.value.__cause__, subprocess.CalledProcessError)
+
+
+def test_bcl2fastq_barcode_collision_retry_is_preserved(tmp_path, monkeypatch):
+    flowcell_path = tmp_path / "flowcell"
+    (flowcell_path / "InterOp").mkdir(parents=True)
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    cfg = SimpleNamespace(
+        output_path=output_path,
+        run=SimpleNamespace(
+            flowcell_path=flowcell_path,
+            sample_sheet=flowcell_path / "SampleSheet.csv",
+            libprep="Illumina DNA Prep",
+            run_id=flowcell_path.name,
+        ),
+        static=SimpleNamespace(
+            paths=SimpleNamespace(log_dir=log_dir),
+            commands={"bcl2fastq_options": "--no-lane-splitting"},
+        ),
+    )
+    calls = []
+
+    def collision_then_success(command, stdout, **_kwargs):
+        calls.append(command.copy())
+        if len(calls) == 1:
+            stdout.write("<bcl2fastq::layout::BarcodeCollisionError>\n")
+            stdout.flush()
+            raise subprocess.CalledProcessError(1, command)
+        stdout.write("retry succeeded\n")
+
+    monkeypatch.setattr(makeFastq.PipelineConfig, "get", Mock(return_value=cfg))
+    monkeypatch.setattr(makeFastq.subprocess, "check_call", collision_then_success)
+    monkeypatch.setenv("FORCE_BCL2FASTQ", "True")
+
+    assert makeFastq.bcl2fq() == ["bcl2fastq", "2.20.0"]
+
+    assert len(calls) == 2
+    assert "--barcode-mismatches" not in calls[0]
+    assert calls[1][-2:] == ["--barcode-mismatches", "0"]
+    log_content = (log_dir / "flowcell.log").read_text()
+    assert "BarcodeCollisionError" in log_content
+    assert "Retrying with --barcode-mismatches 0" in log_content
+    assert "retry succeeded" in log_content
+
+
+def test_force_bcl2fastq_ignores_legacy_executable_setting(tmp_path, monkeypatch):
+    flowcell_path = tmp_path / "flowcell"
+    (flowcell_path / "InterOp").mkdir(parents=True)
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    cfg = SimpleNamespace(
+        output_path=output_path,
+        run=SimpleNamespace(
+            flowcell_path=flowcell_path,
+            sample_sheet=flowcell_path / "SampleSheet.csv",
+            libprep="Illumina DNA Prep",
+            run_id=flowcell_path.name,
+        ),
+        static=SimpleNamespace(
+            paths=SimpleNamespace(log_dir=log_dir),
+            commands={
+                "bcl2fastq": "/legacy/custom/bcl2fastq",
+                "bcl2fastq_options": "--no-lane-splitting -p 8",
+            },
+        ),
+    )
+    check_call = Mock()
+    monkeypatch.setattr(makeFastq.PipelineConfig, "get", Mock(return_value=cfg))
+    monkeypatch.setattr(makeFastq.subprocess, "check_call", check_call)
+    monkeypatch.setenv("FORCE_BCL2FASTQ", "True")
+
+    assert makeFastq.bcl2fq() == ["bcl2fastq", "2.20.0"]
+
+    command = check_call.call_args.args[0]
+    assert command[:4] == ["bcl2fastq", "--no-lane-splitting", "-p", "8"]
+    assert "/legacy/custom/bcl2fastq" not in command
+
+
+@pytest.mark.parametrize(
+    ("libprep", "executable", "version"),
+    [
+        (
+            "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3",
+            "cellranger",
+            "10.1.0",
+        ),
+        (
+            "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1",
+            "cellranger-atac",
+            "2.2.0",
+        ),
+        (
+            "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit",
+            "spaceranger",
+            "4.0.1",
+        ),
+    ],
+)
+def test_10x_demultiplexing_ignores_legacy_executable_settings(
+    tmp_path, monkeypatch, libprep, executable, version
+):
+    flowcell_path = tmp_path / "flowcell"
+    (flowcell_path / "InterOp").mkdir(parents=True)
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    cfg = SimpleNamespace(
+        output_path=output_path,
+        run=SimpleNamespace(
+            flowcell_path=flowcell_path,
+            sample_sheet=flowcell_path / "SampleSheet.csv",
+            libprep=libprep,
+            run_id=flowcell_path.name,
+        ),
+        static=SimpleNamespace(
+            paths=SimpleNamespace(log_dir=log_dir),
+            commands={
+                "cellranger_mkfastq": "/legacy/custom/cellranger mkfastq",
+                "cellranger_atac_mkfastq": "/legacy/custom/cellranger-atac mkfastq",
+                "cellranger_spatial_mkfastq": "/legacy/custom/spaceranger mkfastq",
+                "cellranger_mkfastq_options": "--jobmode=local --localcores=8",
+            },
+        ),
+    )
+    check_call = Mock()
+    monkeypatch.setattr(makeFastq.PipelineConfig, "get", Mock(return_value=cfg))
+    monkeypatch.setattr(makeFastq.subprocess, "check_call", check_call)
+
+    assert makeFastq.bcl2fq() == [f"{executable} mkfastq", version]
+
+    command = check_call.call_args.args[0]
+    assert command[:2] == [executable, "mkfastq"]
+    assert all(not argument.startswith("/legacy/") for argument in command)
+
+
+def test_multiqc_ignores_legacy_executable_setting(tmp_path, monkeypatch):
+    flowcell_path = tmp_path / "flowcell"
+    flowcell_path.mkdir()
+    (flowcell_path / "RunInfo.xml").touch()
+    (flowcell_path / "RunParameters.xml").touch()
+    output_path = tmp_path / "output"
+    (output_path / "Stats").mkdir(parents=True)
+    (output_path / ".multiqc_config_project.yaml").write_text(
+        "custom_data:\n  general_statistics:\n    data: {}\n"
+    )
+    cfg = SimpleNamespace(
+        output_path=output_path,
+        run=SimpleNamespace(flowcell_path=flowcell_path),
+        static=SimpleNamespace(
+            commands={
+                "multiqc_command": "/legacy/custom/multiqc",
+                "multiqc_options": "--force --quiet",
+            }
+        ),
+    )
+    check_call = Mock()
+    monkeypatch.setattr(afterFastq, "run_interop_csv", Mock())
+    monkeypatch.setattr(afterFastq, "prepare_index_metrics", Mock())
+    monkeypatch.setattr(afterFastq, "get_project_names", Mock(return_value={"GCF-2026-001"}))
+    monkeypatch.setattr(afterFastq, "get_project_dirs", Mock(return_value=set()))
+    monkeypatch.setattr(afterFastq.subprocess, "check_call", check_call)
+    monkeypatch.delenv("FORCE_BCL2FASTQ", raising=False)
+    monkeypatch.delenv("BFQ_TEST", raising=False)
+
+    afterFastq.multiqc_stats(cfg)
+
+    command = check_call.call_args.args[0]
+    assert command[:3] == ["multiqc", "--force", "--quiet"]
+    assert "/legacy/custom/multiqc" not in command
 
 
 def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeypatch):
