@@ -1,3 +1,4 @@
+from configparser import ConfigParser
 from pathlib import Path
 
 import pytest
@@ -85,3 +86,33 @@ def test_run_tool_preserves_argument_boundaries(tmp_path, monkeypatch):
             "--id=run with spaces",
         ]
     ]
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "tool"),
+    [
+        (containers.bcl_convert_main, "bcl-convert"),
+        (containers.bcl2fastq_main, "bcl2fastq"),
+        (containers.cellranger_main, "cellranger"),
+        (containers.cellranger_atac_main, "cellranger-atac"),
+        (containers.multiqc_main, "multiqc"),
+        (containers.spaceranger_main, "spaceranger"),
+    ],
+)
+def test_tool_entrypoints_forward_arguments(entrypoint, tool, monkeypatch):
+    monkeypatch.setattr(containers, "run_tool", lambda name, arguments: (name, arguments))
+    monkeypatch.setattr(containers.sys, "argv", [tool, "--flag", "value with spaces"])
+
+    assert entrypoint() == (tool, ["--flag", "value with spaces"])
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    ["files/bcl2fastq.ini", "bcl2fastq_pipeline/bcl2fastq.ini"],
+)
+def test_shipped_configs_use_container_wrappers(relative_path):
+    config = ConfigParser()
+    config.read(Path(__file__).parents[1] / relative_path)
+
+    assert config["Commands"]["multiqc_command"] == "multiqc"
+    assert config["Commands"]["bcl2fastq"] == "bcl2fastq"
