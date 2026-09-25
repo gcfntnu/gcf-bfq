@@ -19,6 +19,26 @@ MKFASTQ_10X = {
     "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3": "cellranger",
 }
 
+DEMULTIPLEX_LOG_TAIL_LINES = 50
+
+
+def demultiplexing_error(error, log_path):
+    """Build an error that points to the full log and includes useful context."""
+    try:
+        log_lines = log_path.read_text(errors="replace").splitlines()
+    except OSError as log_error:
+        log_tail = f"Unable to read demultiplexing log: {log_error}"
+    else:
+        log_tail = "\n".join(log_lines[-DEMULTIPLEX_LOG_TAIL_LINES:])
+        if not log_tail:
+            log_tail = "Demultiplexing log is empty."
+
+    return RuntimeError(
+        f"Demultiplexing failed with exit code {error.returncode}. "
+        f"Full log: {log_path}\n"
+        f"Last {DEMULTIPLEX_LOG_TAIL_LINES} log lines:\n{log_tail}"
+    )
+
 
 def rename_fastqs():
     """
@@ -117,23 +137,31 @@ def bcl2fq():
         log.info(f"[convert bcl] Running: {shlex.join(cmd)}\n")
         with log_pth.open("w") as logOut:
             subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, cwd=cfg.output_path)
-    except Exception:
+    except subprocess.CalledProcessError as error:
         if "10X Genomics" not in cfg.run.libprep and force_bcl2fastq:
-            with log_pth.open("r") as logIn:
-                log_content = logIn.read()
+            log_content = log_pth.read_text(errors="replace")
             if "<bcl2fastq::layout::BarcodeCollisionError>" in log_content:
                 cmd.extend(["--barcode-mismatches", "0"])
-                with log_pth.open("w") as logOut:
-                    log.info(
-                        "[bcl2fq] Retrying with --barcode-mismatches 0: %s\n",
-                        shlex.join(cmd),
-                    )
-                    subprocess.check_call(
-                        cmd,
-                        stdout=logOut,
-                        stderr=subprocess.STDOUT,
-                        cwd=cfg.output_path,
-                    )
+                try:
+                    with log_pth.open("a") as logOut:
+                        logOut.write("\nRetrying with --barcode-mismatches 0\n")
+                        logOut.flush()
+                        log.info(
+                            "[bcl2fq] Retrying with --barcode-mismatches 0: %s\n",
+                            shlex.join(cmd),
+                        )
+                        subprocess.check_call(
+                            cmd,
+                            stdout=logOut,
+                            stderr=subprocess.STDOUT,
+                            cwd=cfg.output_path,
+                        )
+                except subprocess.CalledProcessError as retry_error:
+                    raise demultiplexing_error(retry_error, log_pth) from retry_error
+            else:
+                raise demultiplexing_error(error, log_pth) from error
+        else:
+            raise demultiplexing_error(error, log_pth) from error
 
     src = cfg.output_path / "Reports" / "legacy" / "Stats"
     if src.exists():
