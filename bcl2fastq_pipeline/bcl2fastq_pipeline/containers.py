@@ -109,6 +109,17 @@ def apptainer_image(image: str) -> str:
     return image if "://" in image else f"docker://{image}"
 
 
+def image_version(tool: str, config_path: Path | None = None) -> str:
+    """Return the tag or digest recorded for a tool in ``docker.config``."""
+    image = resolve_image(tool, config_path).split("://", maxsplit=1)[-1]
+    if "@" in image:
+        return image.rsplit("@", maxsplit=1)[-1]
+
+    image_name = image.rsplit("/", maxsplit=1)[-1]
+    _name, separator, tag = image_name.rpartition(":")
+    return tag if separator else "latest"
+
+
 def build_command(
     tool: str,
     arguments: Sequence[str] = (),

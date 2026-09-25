@@ -10,7 +10,6 @@ ENV PYTHON_VERSION=3.11 \
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        alien \
         ca-certificates \
         curl \
         git \
@@ -69,35 +68,11 @@ RUN mkdir images
 COPY files/ntnu.png images/
 COPY files/logo_ntnu.png /opt/images/
 
-ENV BCL2FASTQ_VERSION=2.20.0.422
-COPY files/bcl2fastq2-v$BCL2FASTQ_VERSION-Linux-x86_64.rpm /tmp
-RUN alien -i /tmp/bcl2fastq2-v$BCL2FASTQ_VERSION-Linux-x86_64.rpm
-
-ENV BCL_CONVERT_VERSION=4.2.4
-COPY files/bcl-convert-$BCL_CONVERT_VERSION-2.el7.x86_64.rpm /tmp
-RUN alien -i /tmp/bcl-convert-$BCL_CONVERT_VERSION-2.el7.x86_64.rpm
-
 RUN mkdir /bfq
 WORKDIR /bfq
 RUN mkdir output seq_share data log
 
 WORKDIR /opt
-
-ENV CR_VERSION=10.1.0
-COPY files/cellranger-$CR_VERSION.tar.gz /tmp/cellranger-$CR_VERSION.tar.gz
-RUN tar -C /opt/ -zxvf /tmp/cellranger-$CR_VERSION.tar.gz
-ENV PATH=$PATH:/opt/cellranger-$CR_VERSION
-RUN rm /tmp/cellranger-$CR_VERSION.tar.gz
-
-COPY files/cellranger-atac-1.2.0.tar.gz /tmp/cellranger-atac-1.2.0.tar.gz
-RUN tar -C /opt/ -xvf /tmp/cellranger-atac-1.2.0.tar.gz
-ENV PATH=$PATH:/opt/cellranger-atac-1.2.0
-RUN rm /tmp/cellranger-atac-1.2.0.tar.gz
-
-COPY files/spaceranger-1.2.1.tar.gz /tmp/spaceranger-1.2.1.tar.gz
-RUN tar -C /opt/ -xvf /tmp/spaceranger-1.2.1.tar.gz
-ENV PATH=$PATH:/opt/spaceranger-1.2.1
-RUN rm /tmp/spaceranger-1.2.1.tar.gz
 
 #FIX for qiime2 cli: need access to cache files in /home of q2 image
 RUN chmod -R a+w /home

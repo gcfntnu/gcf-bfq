@@ -45,6 +45,20 @@ def test_config_path_can_be_overridden_for_development(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
+    ("image", "version"),
+    [
+        ("gcfntnu/bcl-convert:4.2.4", "4.2.4"),
+        ("docker://gcfntnu/bcl2fastq", "latest"),
+        ("oras://registry/tool@sha256:abc123", "sha256:abc123"),
+    ],
+)
+def test_image_version_is_derived_from_workflow_config(tmp_path, image, version):
+    config = write_config(tmp_path / "docker.config", f"docker:\n  bcl-convert: {image}\n")
+
+    assert containers.image_version("bcl-convert", config) == version
+
+
+@pytest.mark.parametrize(
     ("content", "message"),
     [
         ("not_docker: {}\n", "must contain a 'docker' mapping"),
@@ -127,3 +141,18 @@ def test_base_image_enables_writable_container_overlays():
 
     assert "ENV SINGULARITY_WRITABLE_TMPFS=true" in dockerfile
     assert "ENV APPTAINER_WRITABLE_TMPFS=$SINGULARITY_WRITABLE_TMPFS" in dockerfile
+
+
+def test_images_do_not_install_containerized_tools_natively():
+    repository = Path(__file__).parents[1]
+    base = (repository / "dockerfile-base").read_text()
+    test_image = (repository / "dockerfile-test").read_text()
+    prod_image = (repository / "dockerfile-prod").read_text()
+
+    assert "alien" not in base
+    assert "COPY files/bcl2fastq" not in base
+    assert "COPY files/bcl-convert" not in base
+    assert "COPY files/cellranger" not in base
+    assert "COPY files/spaceranger" not in base
+    assert "gcfntnu/MultiQC" not in test_image
+    assert "gcfntnu/MultiQC" not in prod_image

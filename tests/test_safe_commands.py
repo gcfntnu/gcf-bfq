@@ -14,6 +14,18 @@ from flowcell_manager import flowcell_manager
 from bcl2fastq_pipeline import afterFastq, makeFastq
 
 
+@pytest.fixture(autouse=True)
+def configured_container_versions(monkeypatch):
+    versions = {
+        "bcl-convert": "4.2.4",
+        "bcl2fastq": "2.20.0",
+        "cellranger": "10.1.0",
+        "cellranger-atac": "2.2.0",
+        "spaceranger": "4.0.1",
+    }
+    monkeypatch.setattr(makeFastq, "image_version", versions.__getitem__)
+
+
 def test_configured_commands_are_split_without_losing_quoted_values():
     assert afterFastq.command_args(
         "/opt/tools/multiqc", "--title 'Project with spaces' --force"
@@ -47,8 +59,6 @@ def test_bcl_convert_keeps_dynamic_paths_as_single_arguments(tmp_path, monkeypat
     monkeypatch.setattr(makeFastq.PipelineConfig, "get", Mock(return_value=cfg))
     monkeypatch.setattr(makeFastq.subprocess, "check_call", check_call)
     monkeypatch.delenv("FORCE_BCL2FASTQ", raising=False)
-    monkeypatch.setenv("BCL_CONVERT_VERSION", "4.2.4")
-
     assert makeFastq.bcl2fq() == ["bcl-convert", "4.2.4"]
 
     command = check_call.call_args.args[0]
@@ -134,7 +144,7 @@ def test_bcl2fastq_barcode_collision_retry_is_preserved(tmp_path, monkeypatch):
     monkeypatch.setattr(makeFastq.subprocess, "check_call", collision_then_success)
     monkeypatch.setenv("FORCE_BCL2FASTQ", "True")
 
-    makeFastq.bcl2fq()
+    assert makeFastq.bcl2fq() == ["bcl2fastq", "2.20.0"]
 
     assert len(calls) == 2
     assert "--barcode-mismatches" not in calls[0]
@@ -173,7 +183,7 @@ def test_force_bcl2fastq_ignores_legacy_executable_setting(tmp_path, monkeypatch
     monkeypatch.setattr(makeFastq.subprocess, "check_call", check_call)
     monkeypatch.setenv("FORCE_BCL2FASTQ", "True")
 
-    makeFastq.bcl2fq()
+    assert makeFastq.bcl2fq() == ["bcl2fastq", "2.20.0"]
 
     command = check_call.call_args.args[0]
     assert command[:4] == ["bcl2fastq", "--no-lane-splitting", "-p", "8"]
@@ -181,21 +191,27 @@ def test_force_bcl2fastq_ignores_legacy_executable_setting(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize(
-    ("libprep", "executable"),
+    ("libprep", "executable", "version"),
     [
         (
             "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3",
             "cellranger",
+            "10.1.0",
         ),
         (
             "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1",
             "cellranger-atac",
+            "2.2.0",
         ),
-        ("10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit", "spaceranger"),
+        (
+            "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit",
+            "spaceranger",
+            "4.0.1",
+        ),
     ],
 )
 def test_10x_demultiplexing_ignores_legacy_executable_settings(
-    tmp_path, monkeypatch, libprep, executable
+    tmp_path, monkeypatch, libprep, executable, version
 ):
     flowcell_path = tmp_path / "flowcell"
     (flowcell_path / "InterOp").mkdir(parents=True)
@@ -225,7 +241,7 @@ def test_10x_demultiplexing_ignores_legacy_executable_settings(
     monkeypatch.setattr(makeFastq.PipelineConfig, "get", Mock(return_value=cfg))
     monkeypatch.setattr(makeFastq.subprocess, "check_call", check_call)
 
-    makeFastq.bcl2fq()
+    assert makeFastq.bcl2fq() == [f"{executable} mkfastq", version]
 
     command = check_call.call_args.args[0]
     assert command[:2] == [executable, "mkfastq"]

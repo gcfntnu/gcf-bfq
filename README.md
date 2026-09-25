@@ -311,12 +311,15 @@ displayed target carefully before confirming either destructive operation.
 | `APPTAINER_WRITABLE_TMPFS` | Makes container filesystems temporarily writable. Set to `true` by the base image. |
 | `SINGULARITY_WRITABLE_TMPFS` | Backwards-compatible equivalent of `APPTAINER_WRITABLE_TMPFS`. |
 | `TMPDIR` | Root for per-project workflow work directories and QC archive sources. Set by the base image. |
-| `BCL_CONVERT_VERSION`, `BCL2FASTQ_VERSION`, `CR_VERSION` | Version strings recorded in `bcl.done`. Set by the image. |
 
 Apptainer/Singularity cache, temporary-directory, and bind-path variables are
 also provided by the base image for the downstream Snakemake workflows. The
 writable tmpfs overlay is discarded after each container command; output that
 must persist still needs to be written to a bind-mounted path.
+
+The demultiplexer name and image tag (or digest) are recorded in `bcl.done`.
+They are resolved from the active `gcf-workflows/docker.config`; BFQ no longer
+maintains separate version environment variables for these tools.
 
 ## Output overview
 

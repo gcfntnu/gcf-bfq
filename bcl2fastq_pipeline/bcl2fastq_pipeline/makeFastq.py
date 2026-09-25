@@ -10,6 +10,7 @@ import shutil
 import subprocess
 
 from bcl2fastq_pipeline.config import PipelineConfig
+from bcl2fastq_pipeline.containers import image_version
 
 log = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ def bcl2fq():
             ]
         )
         cmd.extend(shlex.split(cellranger_options))
-        bcl_done = ["cellranger mkfastq", os.environ.get("CR_VERSION")]
+        bcl_done = [f"{cellranger_cmd} mkfastq", image_version(cellranger_cmd)]
     elif force_bcl2fastq:
         bcl2fastq_opts = cfg.static.commands["bcl2fastq_options"]
         cmd = ["bcl2fastq", *shlex.split(bcl2fastq_opts)]
@@ -112,7 +113,7 @@ def bcl2fq():
                 str(cfg.output_path / "InterOp"),
             ]
         )
-        bcl_done = ["bcl2fastq", os.environ.get("BCL2FASTQ_VERSION")]
+        bcl_done = ["bcl2fastq", image_version("bcl2fastq")]
     else:
         cmd = [
             "bcl-convert",
@@ -130,7 +131,7 @@ def bcl2fq():
             "--output-legacy-stats",
             "true",
         ]
-        bcl_done = ["bcl-convert", os.environ.get("BCL_CONVERT_VERSION")]
+        bcl_done = ["bcl-convert", image_version("bcl-convert")]
 
     log_pth = cfg.static.paths.log_dir / f"{cfg.run.run_id}.log"
     try:
