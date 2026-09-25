@@ -55,7 +55,7 @@ jobs:
       - name: Run Ruff lint with annotations
         id: ruff
         run: |
-          ruff check . --output-format=github
+          ruff check --no-fix . --output-format=github
 
       # Enforce formatting consistency
       - name: Verify Ruff formatting
