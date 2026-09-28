@@ -404,6 +404,40 @@ python -m build
 Unit tests use temporary files and do not require sequencing data, mounted
 instrument storage, external services, or bioinformatics applications.
 
+### Server-side integration testing for state management
+
+Issue #104 changes filesystem authority and destructive restart behavior, so the
+automated suite is necessary but not sufficient for production rollout. Before
+deployment, exercise the branch on the BFQ test server with real mounts,
+Apptainer images, workflow work directories, SMTP/report paths, and the
+production-style `manager_dir`.
+
+The integration pass should verify at least:
+
+- a completely new standard Illumina run creates JSON state before output work,
+  completes every stage, and never creates legacy restart markers;
+- a state-backed run already present in `flowcells.processed` follows JSON
+  authority when an explicit rerun is queued;
+- inventory-only historical runs remain skipped and searchable;
+- explicitly restored legacy FASTQs bootstrap at `analysis`, while incomplete
+  or ambiguous restored output is refused;
+- `rerun --dry-run` and each of the four restart boundaries invalidate exactly
+  the displayed products, preserve curated inputs/FASTQs as documented, and
+  `--refresh-inputs` replaces inputs only when requested;
+- killing BFQ during each stage leaves a recoverable interrupted state rather
+  than a false completion, and two daemon processes cannot execute the same run;
+- an unavailable or unwritable `manager_dir` prevents any untracked
+  processing;
+- completion updates `flowcells.processed` without duplicate project/run rows,
+  and archive/rerun state survives output cleanup;
+- standard bcl-convert, forced bcl2fastq, supported 10x demultiplexers, and every
+  configured downstream workflow complete successfully from a clean start.
+
+Run the full supported-workflow matrix as an overnight integration test before
+production deployment. These checks intentionally are not simulated by the unit
+test suite because they depend on server mounts, real external tools, and
+deployment configuration.
+
 For a version supporting Illumina bcl2fastq v1, see the historical
 [`bcl2fastqV1`](https://github.com/maxplanck-ie/bcl2fastq_pipeline/tree/bcl2fastqV1)
 branch of the upstream project.
