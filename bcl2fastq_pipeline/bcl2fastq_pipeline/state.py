@@ -707,7 +707,6 @@ def cleanup_plan(output_path: Path | str, from_stage: str) -> list[Path]:
             targets.update(output.glob(".multiqc_config_*.yaml"))
             targets.update(output.glob("QC_*"))
             targets.update(output.glob("GCF-*_samplesheet.tsv"))
-            targets.update(output.glob("md5sum_*_fastq.txt"))
 
     # Remove descendants if an ancestor is already scheduled, keeping dry-run output concise.
     ordered = sorted(targets, key=lambda path: (len(path.parts), str(path)))

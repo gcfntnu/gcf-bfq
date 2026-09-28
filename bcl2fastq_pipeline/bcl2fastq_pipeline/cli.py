@@ -112,10 +112,14 @@ def _run_state_backed_flowcell(cfg, store, log):
                 store.start_stage(run_id, stage)
 
             try:
+                if index == start_index and stage != "demultiplexing":
+                    log.info("Checking FASTQ manifests before %s: %s", stage, run_id)
+                    bcl2fastq_pipeline.afterFastq.md5sum_worker(cfg)
                 if stage == "demultiplexing":
                     log.info("Starting demultiplexing: %s", run_id)
                     tool, version = bcl2fastq_pipeline.makeFastq.bcl2fq()
                     bcl2fastq_pipeline.makeFastq.rename_fastqs()
+                    bcl2fastq_pipeline.afterFastq.md5sum_worker(cfg, force=True)
                     store.complete_stage(
                         run_id,
                         stage,
