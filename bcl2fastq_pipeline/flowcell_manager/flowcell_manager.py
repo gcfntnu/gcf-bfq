@@ -90,9 +90,7 @@ def add_flowcell(**args):
 
 def list_processed(**args):
     inventory = _read_inventory(get_cfg())
-    return inventory.loc[
-        (inventory["timestamp"] != "0") | (inventory["archived"] != "0")
-    ]
+    return inventory.loc[(inventory["timestamp"] != "0") | (inventory["archived"] != "0")]
 
 
 def list_all(**args):
@@ -101,9 +99,7 @@ def list_all(**args):
 
 def list_project(project):
     inventory = _read_inventory(get_cfg())
-    return inventory.loc[
-        (inventory["project"] == project) & (inventory["timestamp"] != "0")
-    ]
+    return inventory.loc[(inventory["project"] == project) & (inventory["timestamp"] != "0")]
 
 
 def list_flowcell(flowcell):
@@ -343,9 +339,7 @@ def archive_flowcell(**args):
         _ensure_not_active(store, run_id, state, force)
         flowcell = Path(state["output_path"])
         projects = state.get("projects") or [
-            child.name
-            for child in flowcell.glob("GCF-*")
-            if child.is_dir()
+            child.name for child in flowcell.glob("GCF-*") if child.is_dir()
         ]
     else:
         if legacy.empty:
