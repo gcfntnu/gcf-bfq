@@ -60,7 +60,7 @@ jobs:
       # Enforce formatting consistency
       - name: Verify Ruff formatting
         run: |
-          ruff format --diff bcl2fastq_pipeline/bcl2fastq_pipeline/cli.py bcl2fastq_pipeline/bcl2fastq_pipeline/state.py bcl2fastq_pipeline/flowcell_manager/flowcell_manager.py tests/test_state_integration.py
+          ruff format --check .
 
       # Optional: summary step (visible in job summary tab)
       - name: Summarize Ruff results
