@@ -2,6 +2,8 @@ import logging
 import subprocess
 import sys
 
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -268,3 +270,85 @@ def test_failure_signature_includes_command_diagnostics():
     assert misc.error_failure_signature(
         "analysis", (type(first), first, None), "x"
     ) != misc.error_failure_signature("analysis", (type(second), second, None), "x")
+
+
+def test_suppressed_test_failure_can_notify_when_later_run_in_production(
+    notification_run, monkeypatch
+):
+    cfg, store, smtp = notification_run
+    monkeypatch.setenv("BFQ_ENV", "test")
+    first = fail_run(cfg, store).read_text()
+    monkeypatch.setenv("BFQ_ENV", "production")
+    second = fail_run(cfg, store).read_text()
+    assert first == second
+    smtp.assert_called_once()
+
+
+def test_concurrent_notification_attempts_send_once(notification_run):
+    cfg, store, smtp = notification_run
+    signature = "same failure"
+    store.fail_stage(
+        cfg.run.run_id, "analysis", summary="bad", report_path=None, failure_signature=signature
+    )
+    send = Mock()
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(
+            pool.map(
+                lambda _: FlowcellStateStore(store.manager_dir).deliver_failure_notification(
+                    cfg.run.run_id, signature, send
+                ),
+                range(4),
+            )
+        )
+    assert results.count(True) == 1
+    send.assert_called_once()
+    smtp.assert_not_called()
+
+
+def test_crash_after_claim_does_not_resend(notification_run):
+    cfg, store, smtp = notification_run
+    signature = "same failure"
+    store.fail_stage(
+        cfg.run.run_id, "analysis", summary="bad", report_path=None, failure_signature=signature
+    )
+    with pytest.raises(KeyboardInterrupt):
+        store.deliver_failure_notification(
+            cfg.run.run_id, signature, Mock(side_effect=KeyboardInterrupt)
+        )
+    fresh = FlowcellStateStore(store.manager_dir)
+    send = Mock()
+    assert fresh.deliver_failure_notification(cfg.run.run_id, signature, send) is False
+    send.assert_not_called()
+    assert fresh.read(cfg.run.run_id)["notification"]["attempted_at"]
+    assert fresh.read(cfg.run.run_id)["notification"]["notified"] is False
+    smtp.assert_not_called()
+
+
+def test_notification_claim_write_failure_never_opens_smtp(notification_run, monkeypatch):
+    cfg, store, smtp = notification_run
+    original = store._atomic_write_unlocked
+
+    def fail_claim(state):
+        if state["notification"].get("attempted_at"):
+            raise OSError("cannot persist claim")
+        return original(state)
+
+    monkeypatch.setattr(store, "_atomic_write_unlocked", fail_claim)
+    assert fail_run(cfg, store).exists()
+    smtp.assert_not_called()
+    cfg.run.reset.assert_called_once()
+
+
+def test_stale_notification_cannot_send_after_failure_changes(notification_run):
+    cfg, store, smtp = notification_run
+    store.fail_stage(cfg.run.run_id, "analysis", summary="new failure", report_path=None)
+    send = Mock()
+    assert store.deliver_failure_notification(cfg.run.run_id, "old signature", send) is False
+    send.assert_not_called()
+    smtp.assert_not_called()
+
+
+def test_images_set_explicit_error_notification_mode():
+    root = Path(__file__).resolve().parents[1]
+    assert "ENV BFQ_ENV=production" in (root / "dockerfile-prod").read_text()
+    assert "ENV BFQ_ENV=test" in (root / "dockerfile-test").read_text()

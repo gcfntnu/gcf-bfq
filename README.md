@@ -85,7 +85,7 @@ minSpace = 50
 host = smtp.example.org
 from_address = bfq-no-reply@example.org
 finished_to = sequencing@example.org
-error_to = pipeline-errors@example.org
+error_to = pipeline-errors@example.org, sequencing-oncall@example.org
 
 [Version]
 pipeline = 0.3.1
@@ -137,17 +137,78 @@ when they are absent.
 ### `[Email]`
 
 All four options are required when the normal notification paths are used.
-Recipient values are passed to the local SMTP server as configured strings.
+Error recipients support comma-separated addresses, including display names; empty
+entries and duplicate addresses are ignored. All error recipients receive one message.
 
 | Option | Purpose |
 | --- | --- |
 | `host` | SMTP relay hostname. |
 | `from_address` | Sender used for completion and error messages. |
 | `finished_to` | Recipient for the processing-complete email and attached reports. |
-| `error_to` | Recipient for the final archive-completion message. Runtime error details are currently written below `reportDir`. |
+| `error_to` | Comma-separated recipients for production error notifications. Also retains the existing final archive-completion notification routing. |
 
 Current SMTP handling does not configure authentication or TLS. Access control
 must therefore be provided by the deployment environment or relay.
+
+### Production error notifications
+
+`dockerfile-prod` sets `BFQ_ENV=production`; `dockerfile-test` sets `BFQ_ENV=test`.
+Only the exact value `production` enables **error** email. Missing, empty, or
+unrecognized values suppress it. This setting does not change the existing
+processing-complete and successful-finalization email behavior. In particular,
+finalization still uses `error_to`; moving it requires a separate routing decision.
+Do not override `BFQ_ENV` to production in ordinary test/development runs.
+
+On a pipeline-stage failure, BFQ first writes `<reportDir>/<run-id>.error`, then
+records the failure in canonical JSON state, and only then attempts notification.
+`write_error_report()` and `send_error_report()` are separate operations;
+`errorEmail()` remains a report-only compatibility alias. The email subject contains
+the run ID and stage. Its plain-text body includes the exception, UTC timestamp,
+host, and absolute report path, with the saved report attached as `text/plain`.
+Captured command diagnostics remain included in the report. SMTP uses the configured
+`host` and `from_address`, with a 30-second socket timeout and no added TLS or auth.
+
+Notification protection lives in `<manager_dir>/states/<run-id>.json`, not the
+output tree. A signature covers the stage, qualified exception type/message, and
+captured command output when present; report timestamps and traceback line numbers
+are excluded. Identical failures remain suppressed across daemon restarts and
+explicit reruns. A changed failure starts a new notification, and successful run
+completion clears the failure/notification record. Attempts retain failure history.
+
+Delivery is **at most once per failure**: BFQ atomically saves `attempted_at` under
+the per-run lock before opening SMTP. Success sets `notified` and `notified_at`;
+SMTP errors (including partial recipient refusal) are logged and saved as
+`delivery_error`, and do not prevent run-context reset or processing other runs.
+The original report and pipeline failure remain intact. Relay failure or a crash
+after claiming delivery is not automatically retried, since the relay may already
+have accepted the mail. `attempted_at` without `notified` indicates an unsuccessful
+or interrupted attempt; inspect the report and relay logs. Changed failures or a
+successful run followed by another failure enable another notification.
+
+If report writing or durable failure/notification recording fails, no email is
+sent. Empty `error_to` suppresses delivery with a log message. Non-production
+suppression does not consume a delivery attempt. Discovery-only diagnostic reports
+for ambiguous output remain local: they have no initialized pipeline-stage state.
+
+#### Server-side checks for issue #103
+
+Automated tests mock SMTP; they cannot validate the deployed image, relay, or mailbox.
+Before rollout:
+
+1. Build the test image from the issue branch and confirm `BFQ_ENV=test` inside it.
+   Trigger a controlled stage failure: verify the `.error` report, failed JSON state,
+   logged email suppression, and absence of an error-email connection in relay logs.
+2. In a controlled production-mode deployment using approved test recipients, verify
+   one message reaches every comma-separated `error_to` address, the subject/stage
+   and body context are correct, and the attachment matches the saved report.
+   `dockerfile-prod` installs `master`; testing unmerged code requires a test build
+   containing this branch with an explicit production-mode override.
+3. Restart the daemon and explicitly rerun the same failing stage: no duplicate mail.
+   Change the failure and verify one new notification. Complete a successful run,
+   then reproduce the original failure and verify it is notified again.
+4. Simulate an unavailable/refusing relay and verify the report survives, state records
+   the original failure plus delivery error, and the daemon can process another run.
+   Retrying the same failure must not repeatedly contact the relay.
 
 ### `[Version]`
 
