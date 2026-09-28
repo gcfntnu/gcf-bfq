@@ -1,7 +1,6 @@
 import gzip
 import json
 import multiprocessing as mp
-
 from pathlib import Path
 
 import pytest
