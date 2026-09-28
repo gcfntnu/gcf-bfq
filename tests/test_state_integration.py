@@ -3,13 +3,13 @@ import logging
 
 from unittest.mock import Mock
 
+import flowcell_manager.flowcell_manager as manager
 import pytest
 
-import flowcell_manager.flowcell_manager as manager
-
-from bcl2fastq_pipeline import afterFastq, cli, findFlowCells, makeFastq, misc
 from bcl2fastq_pipeline.config import Paths, PipelineConfig, RunContext, StaticConfig
 from bcl2fastq_pipeline.state import FlowcellStateStore, StateConflictError, new_state
+
+from bcl2fastq_pipeline import afterFastq, cli, findFlowCells, makeFastq, misc
 
 
 RUN_ID = "260918_MN00686_0026_A000HCMFHF"
