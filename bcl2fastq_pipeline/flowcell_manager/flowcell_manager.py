@@ -403,7 +403,7 @@ def combined_list(status=None, stage=None):
             continue
         archived_values = [value for value in group["archived"] if value != "0"]
         legacy_status = "archived" if archived_values else "completed"
-        if status and status != "legacy" and status != legacy_status:
+        if status and status not in ("legacy", legacy_status):
             continue
         rows.append(
             {
