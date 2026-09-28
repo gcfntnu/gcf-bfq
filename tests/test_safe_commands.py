@@ -6,7 +6,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-import pandas as pd
 import pytest
 
 from flowcell_manager import flowcell_manager
