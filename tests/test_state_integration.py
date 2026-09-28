@@ -319,7 +319,7 @@ def test_stage_filtered_list_does_not_include_legacy_inventory(tmp_path):
     assert list(listed["run_id"]) == [RUN_ID]
 
 
-def test_archive_preserves_state_and_refuses_active_run_without_force(tmp_path):
+def test_archive_preserves_canonical_state(tmp_path):
     cfg, source, output = configured_bfq(tmp_path)
     store = FlowcellStateStore(cfg.static.paths.manager_dir)
     state = completed_state(cfg, source, output)
@@ -335,6 +335,59 @@ def test_archive_preserves_state_and_refuses_active_run_without_force(tmp_path):
     assert archived["status"] == "archived"
     assert store.state_path(RUN_ID).exists()
     assert not project.exists()
+
+
+def test_archive_refuses_active_run_without_force(tmp_path):
+    cfg, source, output = configured_bfq(tmp_path)
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    store.create(
+        new_state(
+            RUN_ID,
+            source,
+            output,
+            origin="new",
+            start_stage="demultiplexing",
+            cfg=cfg,
+        )
+    )
+    store.begin_attempt(RUN_ID)
+
+    with store.execution_lease(RUN_ID):
+        with pytest.raises(StateConflictError, match="currently running"):
+            manager.archive_flowcell(flowcell=RUN_ID, force=False, dry_run=False)
+
+
+def test_invalid_restart_is_refused_before_cleanup(tmp_path):
+    cfg, source, output = configured_bfq(tmp_path)
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    store.create(
+        new_state(
+            RUN_ID,
+            source,
+            output,
+            origin="new",
+            start_stage="demultiplexing",
+            cfg=cfg,
+        )
+    )
+    store.begin_attempt(RUN_ID)
+    store.fail_stage(RUN_ID, "demultiplexing", summary="failed demux", report_path=None)
+    output.mkdir()
+    archive = output / "downstream.7za"
+    archive.touch()
+
+    with pytest.raises(StateConflictError, match="upstream stages are not complete"):
+        manager.rerun_flowcell(
+            flowcell=RUN_ID,
+            from_stage="analysis",
+            force=True,
+            dry_run=False,
+            refresh_inputs=False,
+            reason=None,
+        )
+
+    assert archive.exists()
+    assert store.read(RUN_ID)["status"] == "failed"
 
 
 def test_rerun_confirmation_decline_does_not_change_state_or_files(tmp_path, monkeypatch):
