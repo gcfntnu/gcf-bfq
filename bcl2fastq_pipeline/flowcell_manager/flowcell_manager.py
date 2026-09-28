@@ -399,6 +399,8 @@ def combined_list(status=None, stage=None):
     for flowcell_path, group in inventory.groupby("flowcell_path", sort=True):
         if flowcell_path in state_paths:
             continue
+        if stage and stage != "legacy":
+            continue
         if status and status not in {"completed", "archived", "legacy"}:
             continue
         archived_values = [value for value in group["archived"] if value != "0"]
