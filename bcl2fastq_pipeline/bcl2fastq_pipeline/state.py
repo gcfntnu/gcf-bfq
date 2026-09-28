@@ -399,11 +399,6 @@ class FlowcellStateStore:
             state["completed_at"] = None
             state["failed_at"] = None
             state["last_error"] = None
-            state["notification"] = {
-                "failure_signature": None,
-                "notified": False,
-                "notified_at": None,
-            }
             return state
 
         return self.mutate(run_id, update)
@@ -509,7 +504,7 @@ class FlowcellStateStore:
 
         return self.mutate(run_id, update)
 
-    def fail_stage(
+    def fail_stage(  # noqa: PLR0913
         self,
         run_id: str,
         stage: str,
@@ -517,6 +512,7 @@ class FlowcellStateStore:
         summary: str,
         report_path: Path | str | None,
         interrupted: bool = False,
+        failure_signature: str | None = None,
     ) -> dict:
         if stage not in STAGES:
             raise StateValidationError(f"Unsupported stage: {stage}")
@@ -524,7 +520,7 @@ class FlowcellStateStore:
         def update(state: dict) -> dict:
             now = utcnow()
             signature_source = f"{stage}\0{summary}".encode()
-            signature = hashlib.sha256(signature_source).hexdigest()
+            signature = failure_signature or hashlib.sha256(signature_source).hexdigest()
             state["status"] = "interrupted" if interrupted else "failed"
             state["current_stage"] = stage
             state["failed_at"] = now
@@ -536,11 +532,12 @@ class FlowcellStateStore:
                 "report_path": str(report_path) if report_path else None,
                 "failure_signature": signature,
             }
-            state["notification"] = {
-                "failure_signature": signature,
-                "notified": False,
-                "notified_at": None,
-            }
+            if state["notification"].get("failure_signature") != signature:
+                state["notification"] = {
+                    "failure_signature": signature,
+                    "notified": False,
+                    "notified_at": None,
+                }
             if state["attempts"] and state["attempts"][-1].get("outcome") == "running":
                 attempt = state["attempts"][-1]
                 attempt["outcome"] = "interrupted" if interrupted else "failed"
@@ -549,6 +546,39 @@ class FlowcellStateStore:
             return state
 
         return self.mutate(run_id, update)
+
+    def deliver_failure_notification(self, run_id: str, signature: str, send) -> bool:
+        """Make at most one delivery attempt per failure, including across crashes.
+
+        Persist the claim before SMTP and serialize against restart/success updates.
+        A crash after claiming may lose mail; automatic retries could duplicate mail
+        already accepted by the relay. The on-server report remains authoritative.
+        """
+        with self.lock(run_id):
+            state = self.read(run_id)
+            notification = state["notification"]
+            if (
+                notification.get("failure_signature") != signature
+                or notification.get("notified")
+                or notification.get("attempted_at")
+            ):
+                return False
+            notification["attempted_at"] = utcnow()
+            state["updated_at"] = utcnow()
+            self._atomic_write_unlocked(state)
+            try:
+                send()
+            except Exception as error:
+                notification["delivery_error"] = f"{type(error).__name__}: {error}"
+                state["updated_at"] = utcnow()
+                self._atomic_write_unlocked(state)
+                raise
+            notification["notified"] = True
+            notification["notified_at"] = utcnow()
+            notification["delivery_error"] = None
+            state["updated_at"] = utcnow()
+            self._atomic_write_unlocked(state)
+            return True
 
     def complete_run(self, run_id: str, projects: list[str]) -> dict:
         def update(state: dict) -> dict:
@@ -562,6 +592,12 @@ class FlowcellStateStore:
             state["current_stage"] = "finalization"
             state["completed_at"] = now
             state["failed_at"] = None
+            state["last_error"] = None
+            state["notification"] = {
+                "failure_signature": None,
+                "notified": False,
+                "notified_at": None,
+            }
             state["projects"] = sorted(set(projects))
             if state["attempts"] and state["attempts"][-1].get("outcome") == "running":
                 state["attempts"][-1]["outcome"] = "completed"

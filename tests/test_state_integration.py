@@ -497,7 +497,7 @@ def test_daemon_failure_is_recorded_in_state(tmp_path, monkeypatch):
         afterFastq, "analysis_steps", Mock(side_effect=RuntimeError("workflow bad"))
     )
     report = cfg.static.paths.report_dir / f"{RUN_ID}.error"
-    monkeypatch.setattr(misc, "errorEmail", lambda *_args: report)
+    monkeypatch.setattr(misc, "write_error_report", lambda *_args: report)
 
     cli._run_state_backed_flowcell(cfg, store, logging.getLogger("test"))
 

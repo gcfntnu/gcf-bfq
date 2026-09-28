@@ -2,18 +2,24 @@
 Misc. functions
 """
 
+import hashlib
+import json
 import logging
+import os
 import shutil
 import smtplib
+import socket
 import tempfile as tmp
 import traceback
 import xml.etree.ElementTree as ET
 
 from argparse import Namespace
+from datetime import UTC, datetime
+from email.message import EmailMessage
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formatdate
+from email.utils import formatdate, getaddresses
 
 import configmaker.configmaker as cm
 import pandas as pd
@@ -204,7 +210,7 @@ def enoughFreeSpace():
     return free_gb >= need
 
 
-def errorEmail(errTuple, msg):
+def write_error_report(errTuple, msg):
     cfg = PipelineConfig.get()
     report_dir = cfg.static.paths.report_dir
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -218,8 +224,77 @@ def errorEmail(errTuple, msg):
             msg += f"\nCaptured command output (last 400 lines):\n{command_output}"
 
     report_path = report_dir / f"{cfg.run.run_id}.error"
-    report_path.write_text(msg)
+    report_path.write_text(msg, encoding="utf-8")
     return report_path
+
+
+def errorEmail(errTuple, msg):
+    """Compatibility alias: write a report only; never send email."""
+    return write_error_report(errTuple, msg)
+
+
+def error_failure_signature(stage, error_info, message):
+    """Identify failures without volatile report paths, timestamps or traceback lines."""
+    error = error_info[1]
+    error_type = type(error)
+    details = [stage, f"{error_type.__module__}.{error_type.__qualname__}", str(error)]
+    if error is None:
+        details.append(message)
+    output = getattr(error, "output", None)
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", errors="replace")
+    if output:
+        details.append(output)
+    return hashlib.sha256(json.dumps(details, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def send_error_report(cfg, report_path, stage, error_info, store, signature):  # noqa: PLR0913
+    """Deliver a saved report in production, using persistent duplicate protection."""
+    log = logging.getLogger(__name__)
+    if os.environ.get("BFQ_ENV") != "production":
+        log.info("Error email suppressed for %s: BFQ_ENV is not production", cfg.run.run_id)
+        return False
+    if store is None:
+        log.error("Error email suppressed: durable flowcell state is unavailable")
+        return False
+    recipients = list(
+        dict.fromkeys(
+            address
+            for _name, address in getaddresses([cfg.static.email.get("error_to", "")])
+            if address
+        )
+    )
+    if not recipients:
+        log.error("Error email suppressed for %s: error_to has no recipients", cfg.run.run_id)
+        return False
+
+    # Read and construct the message before claiming delivery. No report, no mail.
+    report = report_path.read_text(encoding="utf-8")
+    message = EmailMessage()
+    message["Subject"] = f"[BFQ ERROR] {cfg.run.run_id} — {stage}"
+    message["From"] = cfg.static.email["from_address"]
+    message["To"] = ", ".join(recipients)
+    message["Date"] = formatdate(localtime=True)
+    error = error_info[1]
+    message.set_content(
+        f"Flowcell: {cfg.run.run_id}\nFailure stage: {stage}\n"
+        f"Exception: {type(error).__name__}: {error}\n"
+        f"Timestamp: {datetime.now(UTC).isoformat()}\n"
+        f"Host: {socket.gethostname()}\nReport: {report_path.resolve()}\n"
+    )
+    message.add_attachment(report, subtype="plain", filename=report_path.name)
+
+    def deliver():
+        with smtplib.SMTP(cfg.static.email["host"], timeout=30) as smtp:
+            refused = smtp.send_message(
+                message, from_addr=cfg.static.email["from_address"], to_addrs=recipients
+            )
+            if refused:
+                raise smtplib.SMTPRecipientsRefused(refused)
+
+    sent = store.deliver_failure_notification(cfg.run.run_id, signature, deliver)
+    log.info("Error email %s for %s", "sent" if sent else "duplicate suppressed", cfg.run.run_id)
+    return sent
 
 
 def finishedEmail(msg, runTime, extra_html=True):
