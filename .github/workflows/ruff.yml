@@ -55,7 +55,7 @@ jobs:
       - name: Run Ruff lint with annotations
         id: ruff
         run: |
-          ruff check --fix --diff tests/test_state.py tests/test_state_integration.py
+          ruff check --no-fix . --output-format=github
 
       # Enforce formatting consistency
       - name: Verify Ruff formatting
