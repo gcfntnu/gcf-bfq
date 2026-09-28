@@ -11,7 +11,6 @@ from bcl2fastq_pipeline.state import FlowcellStateStore, StateConflictError, new
 
 from bcl2fastq_pipeline import afterFastq, cli, findFlowCells, makeFastq, misc
 
-
 RUN_ID = "260918_MN00686_0026_A000HCMFHF"
 
 
