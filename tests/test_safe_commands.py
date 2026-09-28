@@ -8,8 +8,6 @@ from unittest.mock import Mock
 
 import pytest
 
-from flowcell_manager import flowcell_manager
-
 from bcl2fastq_pipeline import afterFastq, makeFastq
 
 
