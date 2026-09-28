@@ -52,9 +52,7 @@ def configured_bfq(tmp_path):
 def write_inputs(directory, suffix=""):
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "SampleSheet.csv").write_text(
-        "[CustomOptions]\n"
-        "Libprep,Illumina DNA Prep\n"
-        f"User,test{suffix}\n",
+        f"[CustomOptions]\nLibprep,Illumina DNA Prep\nUser,test{suffix}\n",
         encoding="utf-8",
     )
     (directory / "Sample-Submission-Form.xlsx").write_bytes(f"form{suffix}".encode())
