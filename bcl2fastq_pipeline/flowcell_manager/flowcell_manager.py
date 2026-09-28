@@ -19,6 +19,7 @@ from bcl2fastq_pipeline.state import (
     locate_source_run,
     new_state,
     refresh_run_inputs,
+    validate_restart_boundary,
     validate_restored_fastqs,
 )
 
@@ -228,6 +229,7 @@ def rerun_flowcell(**args):
         _ensure_not_active(store, run_id, state, force)
         creating = False
 
+    validate_restart_boundary(state, from_stage)
     paths = _cleanup_for_state(state, from_stage)
     _print_plan("Rerun", run_id, from_stage, paths, refresh_inputs)
     if dry_run:
