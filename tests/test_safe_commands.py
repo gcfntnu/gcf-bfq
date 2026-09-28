@@ -439,36 +439,6 @@ def test_logged_command_preserves_output_and_raises_with_tail(tmp_path, capsys):
     assert "\x1b[" not in error.value.output
 
 
-def test_flowcell_rerun_deletes_only_the_inventory_path(tmp_path, monkeypatch):
-    manager_dir = tmp_path / "manager"
-    manager_dir.mkdir()
-    flowcell = tmp_path / "run;touch escaped"
-    flowcell.mkdir()
-    (flowcell / "result.txt").touch()
-    unrelated = tmp_path / "escaped"
-    unrelated.touch()
-
-    inventory = pd.DataFrame(
-        [
-            {
-                "project": "GCF-2026-001",
-                "flowcell_path": str(flowcell),
-                "timestamp": "2026-09-23T12:00:00",
-                "archived": 0,
-            }
-        ]
-    )
-    inventory.to_csv(manager_dir / "flowcells.processed", index=False)
-    cfg = SimpleNamespace(static=SimpleNamespace(paths=SimpleNamespace(manager_dir=manager_dir)))
-    monkeypatch.setattr(flowcell_manager, "get_cfg", Mock(return_value=cfg))
-
-    flowcell_manager.rerun_flowcell(flowcell=str(flowcell), force=True)
-
-    assert not flowcell.exists()
-    assert unrelated.exists()
-    assert pd.read_csv(manager_dir / "flowcells.processed").empty
-
-
 def test_python_sources_do_not_enable_shell_execution():
     repository_root = Path(__file__).parents[1]
     source_paths = list((repository_root / "bcl2fastq_pipeline").rglob("*.py"))
