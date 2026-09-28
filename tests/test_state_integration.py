@@ -84,6 +84,23 @@ def completed_state(cfg, source, output):
     return state
 
 
+def test_daemon_candidate_list_includes_explicitly_queued_state(tmp_path):
+    cfg, source, output = configured_bfq(tmp_path)
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    store.create(
+        new_state(
+            RUN_ID,
+            source,
+            output,
+            origin="legacy_rerun",
+            start_stage="analysis",
+            cfg=cfg,
+        )
+    )
+
+    assert cli.candidate_flowcells(cfg, store) == [source]
+
+
 def test_discovery_json_overrides_inventory_and_legacy_markers(tmp_path):
     cfg, source, output = configured_bfq(tmp_path)
     store = FlowcellStateStore(cfg.static.paths.manager_dir)
@@ -284,6 +301,63 @@ def test_active_flowcell_rerun_is_refused_without_force(tmp_path):
                 refresh_inputs=False,
                 reason=None,
             )
+
+
+def test_stage_filtered_list_does_not_include_legacy_inventory(tmp_path):
+    cfg, source, output = configured_bfq(tmp_path)
+    other = cfg.static.paths.output_dir / "legacy-run"
+    manager.add_flowcell(project="GCF-2026-999", path=str(other))
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    state = completed_state(cfg, source, output)
+    state["status"] = "failed"
+    state["current_stage"] = "analysis"
+    state["stages"]["analysis"]["status"] = "failed"
+    store.create(state)
+
+    listed = manager.combined_list(stage="analysis")
+
+    assert list(listed["run_id"]) == [RUN_ID]
+
+
+def test_archive_preserves_state_and_refuses_active_run_without_force(tmp_path):
+    cfg, source, output = configured_bfq(tmp_path)
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    state = completed_state(cfg, source, output)
+    store.create(state)
+    write_inputs(output)
+    project = output / "GCF-2026-001"
+    write_fastq(project / "sample_R1.fastq.gz")
+    manager.add_flowcell(project="GCF-2026-001", path=str(output))
+
+    archived = manager.archive_flowcell(flowcell=RUN_ID, force=True, dry_run=False)
+
+    assert archived["archive"]["status"] == "archived"
+    assert archived["status"] == "archived"
+    assert store.state_path(RUN_ID).exists()
+    assert not project.exists()
+
+
+def test_rerun_confirmation_decline_does_not_change_state_or_files(tmp_path, monkeypatch):
+    cfg, source, output = configured_bfq(tmp_path)
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    store.create(completed_state(cfg, source, output))
+    write_inputs(output)
+    archive = output / "GCF-2026-001_260918.7za"
+    archive.touch()
+    before = store.read(RUN_ID)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "no")
+
+    manager.rerun_flowcell(
+        flowcell=RUN_ID,
+        from_stage="finalization",
+        force=False,
+        dry_run=False,
+        refresh_inputs=False,
+        reason=None,
+    )
+
+    assert store.read(RUN_ID) == before
+    assert archive.exists()
 
 
 def test_daemon_executes_only_from_queued_analysis_boundary(tmp_path, monkeypatch):
