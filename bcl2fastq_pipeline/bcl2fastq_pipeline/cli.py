@@ -16,8 +16,8 @@ import bcl2fastq_pipeline.makeFastq
 import bcl2fastq_pipeline.misc
 
 from bcl2fastq_pipeline.config import PipelineConfig
+from bcl2fastq_pipeline.state import ExecutionLeaseError, FlowcellStateStore
 
-# Disable excess warning messages if we disable SSL checks
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 gotHUP = Event()
 
@@ -32,21 +32,116 @@ def sleep(cfg):
 
 
 def setup_logging(verbosity: int = 1) -> None:
-    """Initialize global logging configuration."""
     level = logging.DEBUG if verbosity > 1 else logging.INFO
     fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     logging.basicConfig(level=level, format=fmt, datefmt="%Y-%m-%d %H:%M:%S")
 
 
-def report_run_error(cfg, log, message):
-    """Log and persist a run failure before clearing its flowcell context."""
+def report_run_error(cfg, log, message, store=None, stage=None):
+    """Log, persist, and state-track a run failure before clearing its context."""
     error_info = sys.exc_info()
     log.exception(message)
+    report_path = None
     try:
-        bcl2fastq_pipeline.misc.errorEmail(error_info, message)
+        report_path = bcl2fastq_pipeline.misc.errorEmail(error_info, message)
     except Exception:
         log.exception("Unable to write the flowcell error report")
-    finally:
+
+    if store is not None and stage is not None and cfg.run.run_id:
+        try:
+            store.fail_stage(
+                cfg.run.run_id,
+                stage,
+                summary=message,
+                report_path=report_path,
+            )
+        except Exception:
+            log.exception("Unable to record the flowcell failure in state")
+    cfg.run.reset()
+    return report_path
+
+
+def _run_reporting(cfg, start_time):
+    message = bcl2fastq_pipeline.afterFastq.reporting_steps()
+    message += bcl2fastq_pipeline.misc.getFCmetricsImproved()
+    run_time = datetime.datetime.now() - start_time
+
+    retry_email = False
+    try:
+        bcl2fastq_pipeline.misc.finishedEmail(message, run_time)
+    except Exception:
+        if cfg.run.libprep.startswith(
+            ("10X Genomics Chromium Single Cell", "Parse Biosciences")
+        ):
+            retry_email = True
+        else:
+            raise
+
+    if retry_email:
+        logging.getLogger("bfq").info("Retry completion email without extra html")
+        bcl2fastq_pipeline.misc.finishedEmail(message, run_time, False)
+
+
+def _run_state_backed_flowcell(cfg, store, log):
+    run_id = cfg.run.run_id
+    with store.execution_lease(run_id):
+        state = store.begin_attempt(run_id, cfg=cfg)
+        first_stage = state["current_stage"]
+        start_time = datetime.datetime.now()
+
+        if not bcl2fastq_pipeline.misc.enoughFreeSpace():
+            raise RuntimeError("Insufficient free space!")
+
+        stages = ("demultiplexing", "analysis", "reporting", "finalization")
+        start_index = stages.index(first_stage)
+
+        for index, stage in enumerate(stages[start_index:], start=start_index):
+            current = store.read(run_id)
+            if current["stages"][stage]["status"] == "queued":
+                store.start_stage(run_id, stage)
+
+            try:
+                if stage == "demultiplexing":
+                    log.info("Starting demultiplexing: %s", run_id)
+                    tool, version = bcl2fastq_pipeline.makeFastq.bcl2fq()
+                    bcl2fastq_pipeline.makeFastq.rename_fastqs()
+                    store.complete_stage(
+                        run_id,
+                        stage,
+                        {"tool": tool, "version": version},
+                    )
+                elif stage == "analysis":
+                    log.info("Starting analysis: %s", run_id)
+                    bcl2fastq_pipeline.afterFastq.analysis_steps()
+                    store.complete_stage(run_id, stage)
+                elif stage == "reporting":
+                    log.info("Starting reporting: %s", run_id)
+                    _run_reporting(cfg, start_time)
+                    store.complete_stage(run_id, stage)
+                elif stage == "finalization":
+                    log.info("Starting finalization: %s", run_id)
+                    before_finalize = datetime.datetime.now()
+                    bcl2fastq_pipeline.afterFastq.finalize()
+                    finalize_time = datetime.datetime.now() - before_finalize
+                    run_time = datetime.datetime.now() - start_time
+                    bcl2fastq_pipeline.misc.finalizedEmail("", finalize_time, run_time)
+                    projects = bcl2fastq_pipeline.findFlowCells.markFinished()
+                    store.complete_run(run_id, projects)
+            except Exception as error:
+                report_run_error(
+                    cfg,
+                    log,
+                    f"Got an error during {stage}: {error}",
+                    store=store,
+                    stage=stage,
+                )
+                return
+
+            # complete_run finalizes the final stage itself.
+            if index == len(stages) - 1:
+                break
+
+        log.info("bfq finished processing for %s", cfg.output_path)
         cfg.run.reset()
 
 
@@ -61,18 +156,23 @@ def main():
     PipelineConfig.load("/config/bcl2fastq.ini")
 
     while True:
-        # Reimport to allow reloading a new version
         importlib.reload(bcl2fastq_pipeline.findFlowCells)
         importlib.reload(bcl2fastq_pipeline.makeFastq)
         importlib.reload(bcl2fastq_pipeline.afterFastq)
         importlib.reload(bcl2fastq_pipeline.misc)
 
-        # Read the config file
         cfg = PipelineConfig.get()
         if not cfg:
-            # There's no recovering from this!
             log.error("Unable to read configfile")
             sys.exit(1)
+
+        store = FlowcellStateStore(cfg.static.paths.manager_dir)
+        try:
+            store.ensure_writable()
+        except Exception:
+            log.exception("Flowcell state directory is unavailable; refusing to process")
+            sleep(cfg)
+            continue
 
         in_pths = [cfg.static.paths.nova_base_dir, cfg.static.paths.ekista_base_dir]
         completion_files = {
@@ -86,112 +186,47 @@ def main():
             "A01990": "CopyComplete.txt",
             "MN00686": "CopyComplete.txt",
         }
-        dirs = list()
-        # Get the next flow cell to process, or sleep
-        for pth in in_pths:
-            for machine, fin_file in completion_files.items():
-                dirs += list(pth.glob(f"*_{machine}_*/{fin_file}"))
+        dirs = []
+        for path in in_pths:
+            for machine, finish_file in completion_files.items():
+                dirs += list(path.glob(f"*_{machine}_*/{finish_file}"))
 
-        for d in sorted(dirs):
-            cfg.run.begin(d.parent, cfg.static.paths)
-            log.debug(f"Initiate {d.parent}")
-            if bcl2fastq_pipeline.findFlowCells.flowCellProcessed():
-                log.debug(f"Already processed {d.parent}")
+        for completion in sorted(dirs):
+            cfg.run.begin(completion.parent, cfg.static.paths)
+            log.debug("Initiate %s", completion.parent)
+            try:
+                if bcl2fastq_pipeline.findFlowCells.flowCellProcessed():
+                    log.debug("Already processed or not queued: %s", completion.parent)
+                    cfg.run.reset()
+                    continue
+            except Exception:
+                log.exception("Flowcell discovery failed for %s", completion.parent)
                 cfg.run.reset()
                 continue
 
             bcl2fastq_pipeline.findFlowCells.newFlowCell()
             if not cfg.run.run_id:
                 continue
-            # Ensure we have sufficient space
-            if not bcl2fastq_pipeline.misc.enoughFreeSpace():
-                log.error("Insufficient free space!")
-                bcl2fastq_pipeline.misc.errorEmail(sys.exc_info(), "Insufficient free space!")
+            cfg.run.set_pipeline_from_yaml(
+                os.environ.get("BFQ_LIBPREP_CONFIG", "/opt/gcf-workflows/libprep.config")
+            )
+
+            try:
+                _run_state_backed_flowcell(cfg, store, log)
+            except ExecutionLeaseError:
+                log.info("Skipping active flowcell %s", cfg.run.run_id)
                 cfg.run.reset()
-                break
+            except Exception as error:
+                state = store.read(cfg.run.run_id)
+                stage = state["current_stage"]
+                report_run_error(
+                    cfg,
+                    log,
+                    f"Got an unexpected error during {stage}: {error}",
+                    store=store,
+                    stage=stage,
+                )
 
-            startTime = datetime.datetime.now()
-
-            # Make the fastq files, if not already done
-            if not (cfg.output_path / "bcl.done").exists():
-                try:
-                    log.info(f"Starting demultiplexing: {cfg.run.run_id}")
-                    bcl_done = bcl2fastq_pipeline.makeFastq.bcl2fq()
-                    (cfg.output_path / "bcl.done").write_text("\t".join(bcl_done))
-                except Exception as e:
-                    report_run_error(cfg, log, f"Got an error in bcl2fq: {e}")
-                    continue
-            else:
-                log.info(f"Demultiplexing already done for {cfg.output_path}")
-
-            if not (cfg.output_path / "files.renamed").exists():
-                try:
-                    log.info("Renaming files")
-                    bcl2fastq_pipeline.makeFastq.rename_fastqs()
-                    (cfg.output_path / "files.renamed").write_text("")
-                except Exception as e:
-                    report_run_error(cfg, log, f"Got an error in rename_fastqs: {e}")
-                    continue
-
-            # Run post-processing steps
-            try:
-                log.info("Starting post-processing")
-                message = bcl2fastq_pipeline.afterFastq.postMakeSteps()
-            except Exception as e:
-                report_run_error(cfg, log, f"Got an error during postMakeSteps: {e}")
-                continue
-
-            # Get more statistics and create PDFs
-            try:
-                message += bcl2fastq_pipeline.misc.getFCmetricsImproved()
-            except Exception as e:
-                report_run_error(cfg, log, f"Got an error during getFCmetrics: {e}")
-                continue
-            endTime = datetime.datetime.now()
-            runTime = endTime - startTime
-
-            # Email finished message
-            retry_email = None
-            try:
-                bcl2fastq_pipeline.misc.finishedEmail(message, runTime)
-            except Exception as e:
-                if cfg.run.libprep.startswith(
-                    ("10X Genomics Chromium Single Cell", "Parse Biosciences")
-                ):
-                    retry_email = True
-                    log.info("Got an error during finishedEmail().")
-                else:
-                    report_run_error(cfg, log, f"Got an error during finishedEmail(): {e}")
-                    continue
-
-            if retry_email:
-                try:
-                    log.info("Retry without extra html")
-                    extra_html = False
-                    bcl2fastq_pipeline.misc.finishedEmail(message, runTime, extra_html)
-                except Exception as e:
-                    report_run_error(cfg, log, f"Retry failed during finishedEmail(): {e}")
-                    continue
-
-            # Finalize
-            try:
-                bcl2fastq_pipeline.afterFastq.finalize()
-            except Exception as e:
-                report_run_error(cfg, log, f"Got an error during finalize(): {e}")
-                continue
-            finalizeTime = datetime.datetime.now() - endTime
-            runTime += finalizeTime
-            try:
-                bcl2fastq_pipeline.misc.finalizedEmail("", finalizeTime, runTime)
-            except Exception as e:
-                report_run_error(cfg, log, f"Got an error during finalizedEmail(): {e}")
-                continue
-            # Mark the flow cell as having been processed
-            bcl2fastq_pipeline.findFlowCells.markFinished()
-            log.info(f"bfq finished processing for {cfg.output_path}")
-            cfg.run.reset()
-
-        # done processing, no more flowcells in queue
         sleep(cfg)
 
 
