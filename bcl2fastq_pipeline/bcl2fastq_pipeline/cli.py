@@ -44,10 +44,12 @@ def report_run_error(cfg, log, message, store=None, stage=None):
     log.exception(message)
     report_path = None
     try:
-        report_path = bcl2fastq_pipeline.misc.errorEmail(error_info, message)
+        report_path = bcl2fastq_pipeline.misc.write_error_report(error_info, message)
     except Exception:
         log.exception("Unable to write the flowcell error report")
 
+    signature = bcl2fastq_pipeline.misc.error_failure_signature(stage, error_info, message)
+    recorded = False
     if store is not None and stage is not None and cfg.run.run_id:
         try:
             store.fail_stage(
@@ -55,10 +57,20 @@ def report_run_error(cfg, log, message, store=None, stage=None):
                 stage,
                 summary=message,
                 report_path=report_path,
+                failure_signature=signature,
             )
+            recorded = True
         except Exception:
             log.exception("Unable to record the flowcell failure in state")
-    cfg.run.reset()
+    try:
+        if report_path is not None and recorded:
+            bcl2fastq_pipeline.misc.send_error_report(
+                cfg, report_path, stage, error_info, store, signature
+            )
+    except Exception:
+        log.exception("Unable to deliver the flowcell error email; original failure retained")
+    finally:
+        cfg.run.reset()
     return report_path
 
 

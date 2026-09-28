@@ -1,5 +1,7 @@
 FROM gcfntnu/bfq:base-260925
 
+ENV BFQ_ENV=test
+
 ARG GCF_TOOLS_BRANCH=bfq-dev
 ADD https://api.github.com/repos/gcfntnu/gcf-tools/git/refs/heads/$GCF_TOOLS_BRANCH conf_version
 RUN pip install https://github.com/gcfntnu/gcf-tools/archive/$GCF_TOOLS_BRANCH.zip
