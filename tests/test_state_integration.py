@@ -103,6 +103,26 @@ def test_daemon_candidate_list_includes_explicitly_queued_state(tmp_path):
     assert cli.candidate_flowcells(cfg, store) == [source]
 
 
+def test_daemon_candidate_list_includes_stale_running_state(tmp_path):
+    cfg, source, output = configured_bfq(tmp_path)
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    store.create(
+        new_state(
+            RUN_ID,
+            source,
+            output,
+            origin="new",
+            start_stage="demultiplexing",
+            cfg=cfg,
+        )
+    )
+    store.begin_attempt(RUN_ID)
+
+    assert cli.candidate_flowcells(cfg, store) == [source]
+    assert findFlowCells.flowCellProcessed() is True
+    assert store.read(RUN_ID)["status"] == "interrupted"
+
+
 def test_discovery_json_overrides_inventory_and_legacy_markers(tmp_path):
     cfg, source, output = configured_bfq(tmp_path)
     store = FlowcellStateStore(cfg.static.paths.manager_dir)
