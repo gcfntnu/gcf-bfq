@@ -472,59 +472,49 @@ def full_align(cfg):
         )
 
     # os.chdir(old_wd)
-    (cfg.output_path / "analysis.made").write_text("")
     return True
 
 
-# All steps that should be run after `make` go here
-def postMakeSteps():
-    """
-    Current steps are:
-      1) Run FastQC on each fastq.gz file
-      2) Run md5sum on the files in each project directory
-    Other steps could easily be added to follow those. Note that this function
-    will try to use a pool of threads. The size of the pool is set by config.postMakeThreads
-    """
-    cfg = PipelineConfig.get()
-
-    cfg.run.set_pipeline_from_yaml(Path("/opt/gcf-workflows/libprep.config"))
-
-    # md5sum fastqs
-    md5sum_worker(cfg)
-
-    if not (cfg.output_path / "analysis.made").exists():
-        full_align(cfg)
-    else:
-        log.info("Analysis already made")
-
-    # multiqc_stats
-    multiqc_stats(cfg)
-
-    # disk usage
-    tot, used, free = shutil.disk_usage(cfg.static.paths.output_dir)
-    tot /= 1024**3  # Convert to GiB
-    used /= 1024**3
+def _disk_usage_message(cfg):
+    """Build the operational disk-usage summary used by completion mail."""
+    total, _used, free = shutil.disk_usage(cfg.static.paths.output_dir)
+    total /= 1024**3
     free /= 1024**3
-
     message = (
-        f"Current free space for output: {free:.0f} of {tot:.0f} GiB "
-        f"({100 * free / tot:5.2f}%)\n<br>"
+        f"Current free space for output: {free:.0f} of {total:.0f} GiB "
+        f"({100 * free / total:5.2f}%)\\n<br>"
     )
 
-    tot, used, free = shutil.disk_usage(cfg.run.flowcell_path.parent)
-    tot /= 1024**3  # Convert to GiB
-    used /= 1024**3
+    total, _used, free = shutil.disk_usage(cfg.run.flowcell_path.parent)
+    total /= 1024**3
     free /= 1024**3
-
     message += (
-        f"Current free space for instruments: {free:.0f} of {tot:.0f} GiB "
-        f"({100 * free / tot:5.2f}%)\n<br>\n<br>"
+        f"Current free space for instruments: {free:.0f} of {total:.0f} GiB "
+        f"({100 * free / total:5.2f}%)\\n<br>\\n<br>"
     )
-    # save configfile to flowcell
-    cfg.to_file(cfg.output_path / "bcl2fastq.ini")
-
     return message
 
+
+def analysis_steps():
+    """Run work invalidated by the public analysis restart boundary."""
+    cfg = PipelineConfig.get()
+    cfg.run.set_pipeline_from_yaml(Path("/opt/gcf-workflows/libprep.config"))
+    md5sum_worker(cfg)
+    full_align(cfg)
+
+
+def reporting_steps():
+    """Generate reporting products while preserving completed workflow results."""
+    cfg = PipelineConfig.get()
+    multiqc_stats(cfg)
+    cfg.to_file(cfg.output_path / "bcl2fastq.ini")
+    return _disk_usage_message(cfg)
+
+
+def postMakeSteps():
+    """Compatibility wrapper for callers that still expect the combined operation."""
+    analysis_steps()
+    return reporting_steps()
 
 def finalize():
     cfg = PipelineConfig.get()
