@@ -14,11 +14,11 @@ BFQ runs as a long-lived process:
 
 1. Load `/config/bcl2fastq.ini`.
 2. Search the configured Nova and Ekista roots for completed sequencing runs.
-3. Ignore flowcells already present in the flowcell-manager inventory.
+3. Use JSON state to select queued runs; protect inventory-only legacy runs.
 4. Require a sample sheet with `[CustomOptions]` and a sample submission form.
 5. Demultiplex, run the selected Snakemake workflow, and generate MultiQC output.
 6. Create delivery archives and checksums.
-7. Write completion markers and add each project to the inventory.
+7. Record completion in JSON state and update the compatibility inventory.
 8. Sleep for the configured interval before scanning again.
 
 Static configuration is loaded once when BFQ starts. Restart the process after
@@ -46,6 +46,57 @@ The installation provides two commands:
 
 The legacy executable names `bfq.py` and `flowcell_manager.py` are not
 installed.
+
+## Development and production releases
+
+`bfq-dev` is the default development branch; `master` is the production branch.
+
+1. Create an issue branch from current `bfq-dev` (including when using an issue's
+   **Development** section), and target its feature PR at `bfq-dev`. Link the issue
+   with `Closes #NUMBER` in the PR description so merging closes it.
+2. Run the relevant automated and integration checks, then merge the feature PR.
+3. When the tested development changes are ready for production, open a promotion
+   PR from `bfq-dev` to `master` with a short summary of the included changes.
+   Review and merge that PR deliberately before building the production image.
+4. From the updated `master` checkout, build and push with the existing script,
+   manually choosing the next `prod-N` tag. For example, **if the previous release
+   was `prod-60`**, the next release is:
+
+   ```bash
+   bash build-tag-push.sh prod prod-61
+   ```
+
+The script builds and immediately pushes `gcfntnu/bfq:prod-61` in this example;
+it does not deploy the image. Release numbers are selected manually. No separate
+release manifest or coordinated version increment for supporting tools is required.
+
+Production sources are selected explicitly, independently of repository defaults:
+
+| Repository | Production branch |
+| --- | --- |
+| `gcf-bfq` | `master` |
+| `gcf-tools` | `master` |
+| `gcf-workflows` | `main` |
+
+Resolving the current production dependency branches for each new image build is
+intentional. The test Dockerfile defaults the tools and workflows to `bfq-dev`
+and installs BFQ from the local build context.
+
+### Interpreting analysis versions
+
+The **Analysis pipeline** entry in each project QC report records the
+`gcf-workflows` commit that produced that analysis. This is the primary analysis
+version for project deliverables. BFQ JSON `versions` describes the current
+attempt's execution environment; `attempts[].versions` retains that metadata
+for earlier attempts.
+
+`rerun --from analysis` executes the complete analysis workflow using the installed
+workflow checkout and regenerates project reports before reporting/finalization.
+`rerun --from reporting` regenerates sequencer reporting and downstream delivery
+products while preserving project analysis results and reports, including their
+original workflow commit. A finalization-only rerun likewise preserves those
+reports. Consequently, a later reporting/finalization attempt's runtime revision
+can differ from the analysis revision correctly recorded in the preserved report.
 
 ## Starting BFQ
 
