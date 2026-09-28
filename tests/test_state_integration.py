@@ -495,7 +495,7 @@ def test_daemon_failure_is_recorded_in_state(tmp_path, monkeypatch):
         )
     )
     monkeypatch.setattr(misc, "enoughFreeSpace", lambda: True)
-    monkeypatch.setattr(afterFastq, "analysis_steps", Mock(side_effect=RuntimeError("workflow bad")))
+    monkeypatch.setattr(\n        afterFastq, "analysis_steps", Mock(side_effect=RuntimeError("workflow bad"))\n    )
     report = cfg.static.paths.report_dir / f"{RUN_ID}.error"
     monkeypatch.setattr(misc, "errorEmail", lambda *_args: report)
 
