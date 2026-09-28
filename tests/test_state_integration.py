@@ -2,6 +2,7 @@ import gzip
 import logging
 
 from unittest.mock import Mock
+
 import pytest
 
 import flowcell_manager.flowcell_manager as manager
