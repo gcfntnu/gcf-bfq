@@ -267,7 +267,7 @@ def initialize_flowcell(**args):
     if store.exists(run_id):
         raise StateConflictError(f"State already exists for {run_id}; use rerun instead")
     if not _legacy_row_for_run(cfg, run_id).empty:
-        raise StateConflictError(f"{run_id} is protected by the legacy inventory; use rerun instead")
+        raise StateConflictError(\n            f"{run_id} is protected by the legacy inventory; use rerun instead"\n        )
 
     output_path = cfg.static.paths.output_dir / run_id
     source_path = locate_source_run(run_id, cfg)
