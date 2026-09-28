@@ -168,7 +168,7 @@ def candidate_flowcells(cfg, store):
     # Explicitly queued state remains discoverable even if its completion marker
     # is no longer visible. JSON is authoritative, so its source path wins.
     for state in store.list_states():
-        if state["status"] == "queued":
+        if state["status"] in {"queued", "running"}:
             candidates[state["run_id"]] = Path(state["source_path"])
 
     return [candidates[run_id] for run_id in sorted(candidates)]
