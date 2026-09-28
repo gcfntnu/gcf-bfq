@@ -130,7 +130,7 @@ def new_state(  # noqa: PLR0913
     run_id = _safe_run_id(run_id)
     if origin not in ORIGINS:
         raise StateValidationError(f"Unsupported origin: {origin}")
-    inferred = origin in {"restored_legacy_fastq", "legacy_rerun"} and start_stage != "demultiplexing"
+    inferred = (\n        origin in {"restored_legacy_fastq", "legacy_rerun"} and start_stage != "demultiplexing"\n    )
     now = utcnow()
     state = {
         "schema_version": SCHEMA_VERSION,
@@ -618,7 +618,7 @@ def validate_restored_fastqs(output_path: Path | str) -> tuple[bool, str]:  # no
         return False, "Sample sheet does not contain a usable [CustomOptions] Libprep"
 
     fastqs = find_fastqs(output_path)
-    project_fastqs = [path for path in fastqs if any(part.startswith("GCF-") for part in path.parts)]
+    project_fastqs = [\n        path for path in fastqs if any(part.startswith("GCF-") for part in path.parts)\n    ]
     if not project_fastqs:
         return False, "No FASTQs were found in recognized GCF project directories"
 
