@@ -17,11 +17,13 @@ import shutil
 import socket
 import subprocess
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
-from typing import Iterator
+
+from bcl2fastq_pipeline.config import parse_custom_options
 
 SCHEMA_VERSION = 1
 STAGES = ("demultiplexing", "analysis", "reporting", "finalization")
@@ -115,7 +117,7 @@ def collect_versions(cfg=None) -> dict[str, str | None]:
     return {"bfq": bfq_version, "gcf_workflows": workflows_revision}
 
 
-def new_state(
+def new_state(  # noqa: PLR0913
     run_id: str,
     source_path: Path | str,
     output_path: Path | str,
@@ -600,16 +602,13 @@ def find_fastqs(output_path: Path | str) -> list[Path]:
     return sorted(set(fastqs))
 
 
-def validate_restored_fastqs(output_path: Path | str) -> tuple[bool, str]:
+def validate_restored_fastqs(output_path: Path | str) -> tuple[bool, str]:  # noqa: PLR0911
     """Recognize an explicitly restored legacy FASTQ tree conservatively."""
     output_path = Path(output_path)
     sample_sheet = output_path / "SampleSheet.csv"
     submission = output_path / "Sample-Submission-Form.xlsx"
     if not sample_sheet.is_file() or not submission.is_file():
         return False, "SampleSheet.csv and Sample-Submission-Form.xlsx are required"
-
-    # Avoid importing config at module import time, which keeps state primitives standalone.
-    from bcl2fastq_pipeline.config import parse_custom_options
 
     try:
         options, _ = parse_custom_options(sample_sheet)
@@ -707,8 +706,6 @@ def refresh_run_inputs(source_path: Path | str, output_path: Path | str) -> tupl
     submission_forms = sorted(source.glob("*Sample-Submission-Form*.xlsx"))
     if not sample_sheets or not submission_forms:
         raise StateError(f"Cannot refresh inputs from {source}: required run inputs are missing")
-
-    from bcl2fastq_pipeline.config import parse_custom_options
 
     selected_sheet = None
     for sheet in sample_sheets:
