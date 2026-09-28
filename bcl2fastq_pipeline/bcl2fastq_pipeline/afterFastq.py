@@ -186,6 +186,14 @@ def md5sum_archive_worker(cfg):
 
 
 def multiqc_stats(cfg):
+    in_confs = sorted(cfg.output_path.glob(".multiqc_config*.yaml"))
+    if not in_confs:
+        raise RuntimeError(
+            "Missing analysis-generated MultiQC configuration in "
+            f"{cfg.output_path}; recover with flowcell-manager rerun "
+            f"{cfg.output_path.name} --from analysis"
+        )
+
     cwd = cfg.output_path / "Stats"
 
     shutil.copy2(cfg.run.flowcell_path / "RunInfo.xml", cfg.output_path / "RunInfo.xml")
@@ -205,7 +213,6 @@ def multiqc_stats(cfg):
     log.info(f"[multiqc_worker] Interop index summary on {cfg.output_path}")
     run_interop_csv("interop_index-summary", cfg.output_path, out_f, cwd)
 
-    in_confs = list(cfg.output_path.glob(".multiqc_config*.yaml"))
     samples_custom_data = dict()
     for c in in_confs:
         with c.open() as c_fh:

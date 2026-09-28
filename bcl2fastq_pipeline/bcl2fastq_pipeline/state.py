@@ -656,9 +656,6 @@ def cleanup_plan(output_path: Path | str, from_stage: str) -> list[Path]:
         targets.update(output.glob("md5sum_*_archive.txt"))
 
         if from_stage in {"analysis", "reporting"}:
-            targets.update(output.glob("multiqc_*.html"))
-            targets.update(output.glob("all_samples_web_summary_*.html"))
-            targets.update(output.glob(".multiqc_config_*.yaml"))
             targets.update(output.glob("bcl2fastq.ini"))
             stats = output / "Stats"
             if stats.exists():
@@ -668,11 +665,12 @@ def cleanup_plan(output_path: Path | str, from_stage: str) -> list[Path]:
                 targets.update(stats.glob(".multiqc_config.yaml"))
 
         if from_stage == "analysis":
+            # full_align creates these inputs/results; reporting consumes them.
+            targets.update(output.glob("multiqc_*.html"))
+            targets.update(output.glob("all_samples_web_summary_*.html"))
+            targets.update(output.glob(".multiqc_config_*.yaml"))
             targets.update(output.glob("QC_*"))
             targets.update(output.glob("GCF-*_samplesheet.tsv"))
-            targets.update(output.glob("md5sum_*_fastq.txt"))
-
-        if from_stage == "finalization":
             targets.update(output.glob("md5sum_*_fastq.txt"))
 
     # Remove descendants if an ancestor is already scheduled, keeping dry-run output concise.

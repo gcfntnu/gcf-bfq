@@ -329,8 +329,8 @@ The supported restart boundaries invalidate these products:
 | --- | --- | --- |
 | `demultiplexing` | `SampleSheet.csv`, `Sample-Submission-Form.xlsx` | FASTQs and all downstream products |
 | `analysis` | FASTQs and run inputs | workflow/QC output, reports, archives, checksums, matching workflow work directories |
-| `reporting` | FASTQs and workflow results | generated reports/metrics, archives, completion products |
-| `finalization` | FASTQs, workflow results, reports | delivery archives and checksums |
+| `reporting` | FASTQs, FASTQ checksums, workflow results, project HTML reports and project MultiQC configurations | sequencer reports/metrics, aggregate MultiQC configuration, archives, completion products |
+| `finalization` | FASTQs, FASTQ checksums, workflow results, reports | delivery archives and archive checksums |
 
 A state record is put into `preparing` before restart cleanup begins and is
 queued only after cleanup succeeds. This prevents partial destructive work from
