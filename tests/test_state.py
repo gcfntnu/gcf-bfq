@@ -223,7 +223,9 @@ def test_rerun_preparation_and_queue_records_operator_request(tmp_path):
     store = make_store(tmp_path)
     store.create(make_state(tmp_path))
     store.begin_attempt(RUN_ID)
-    store.fail_stage(RUN_ID, "demultiplexing", summary="bad", report_path=None)
+    store.complete_stage(RUN_ID, "demultiplexing")
+    store.start_stage(RUN_ID, "analysis")
+    store.fail_stage(RUN_ID, "analysis", summary="bad", report_path=None)
 
     state = store.set_preparing(
         RUN_ID,
@@ -242,6 +244,16 @@ def test_rerun_preparation_and_queue_records_operator_request(tmp_path):
     assert state["status"] == "queued"
     assert state["stages"]["analysis"]["status"] == "queued"
     assert state["stages"]["reporting"]["status"] == "pending"
+
+
+def test_queue_rejects_restart_past_failed_upstream_stage(tmp_path):
+    store = make_store(tmp_path)
+    store.create(make_state(tmp_path))
+    store.begin_attempt(RUN_ID)
+    store.fail_stage(RUN_ID, "demultiplexing", summary="bad", report_path=None)
+
+    with pytest.raises(StateConflictError, match="upstream stages are not complete"):
+        store.queue(RUN_ID, "analysis")
 
 
 def test_validate_restored_fastqs_accepts_recognized_tree(tmp_path):
