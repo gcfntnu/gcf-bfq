@@ -440,9 +440,38 @@ The supported restart boundaries invalidate these products:
 | Restart boundary | Preserved | Invalidated |
 | --- | --- | --- |
 | `demultiplexing` | `SampleSheet.csv`, `Sample-Submission-Form.xlsx` | FASTQs and all downstream products |
-| `analysis` | FASTQs and run inputs | workflow/QC output, reports, archives, checksums, matching workflow work directories |
+| `analysis` | FASTQs, FASTQ checksums and run inputs | workflow/QC output, reports, archives, archive checksums, matching workflow work directories |
 | `reporting` | FASTQs, FASTQ checksums, workflow results, project HTML reports and project MultiQC configurations | sequencer reports/metrics, aggregate MultiQC configuration, archives, completion products |
 | `finalization` | FASTQs, FASTQ checksums, workflow results, reports | delivery archives and archive checksums |
+
+FASTQ manifests (`md5sum_<project>_fastq.txt`) belong to demultiplexing.
+BFQ generates them after FASTQ renaming, before marking demultiplexing complete.
+A checksum failure therefore fails demultiplexing and prevents analysis from
+starting. Each manifest is written to a temporary file and atomically replaced
+only after every checksum has been written and flushed to disk.
+
+Analysis, reporting and finalization reruns preserve complete FASTQ manifests
+without re-reading FASTQ contents. A demultiplexing rerun invalidates them and
+regenerates checksums for the newly produced FASTQs. Archive checksums remain
+part of finalization and are invalidated whenever their archives are rebuilt.
+
+For older runs, restored FASTQs or an interrupted legacy checksum write, queue
+the desired downstream boundary as usual, for example:
+
+```bash
+flowcell-manager rerun RUN_ID --from analysis
+```
+
+Before the requested stage, BFQ checks each project's manifest syntax and exact
+coverage of the current FASTQ filenames. Missing, malformed, duplicate or
+incomplete entries cause that project's manifest to be rebuilt once; complete
+manifests are reused unchanged. This compatibility repair does not rerun BCL
+conversion and runs under the flowcell execution lease. If repair fails, BFQ
+stops at the requested restart boundary and reports a FASTQ checksum error;
+retry that boundary after correcting the underlying problem. Temporary files
+left by an abrupt interruption are never treated as completed manifests.
+This check validates manifest completeness, not file integrity: it does not
+detect manual edits to FASTQ contents with unchanged filenames.
 
 A state record is put into `preparing` before restart cleanup begins and is
 queued only after cleanup succeeds. This prevents partial destructive work from

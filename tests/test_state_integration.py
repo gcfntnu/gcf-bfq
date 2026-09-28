@@ -560,3 +560,48 @@ def test_demultiplexing_hashes_renamed_fastqs_before_completion(tmp_path, monkey
     else:
         assert calls == ["rename", "checksum", "analysis"]
         assert state["status"] == "completed"
+
+
+@pytest.mark.parametrize("stage", ["analysis", "reporting", "finalization"])
+@pytest.mark.parametrize("failure", [False, True])
+def test_downstream_entry_repairs_legacy_checksums_before_work(
+    tmp_path, monkeypatch, stage, failure
+):
+    cfg, source, output = configured_bfq(tmp_path)
+    write_inputs(output)
+    write_fastq(output / "GCF-2026-001/sample_R1.fastq.gz")
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    store.create(
+        new_state(
+            RUN_ID, source, output, origin="restored_legacy_fastq", start_stage=stage, cfg=cfg
+        )
+    )
+    manifest = output / "md5sum_GCF-2026-001_fastq.txt"
+    calls = []
+
+    def work(*_args):
+        assert manifest.exists()
+        calls.append("work")
+
+    monkeypatch.setattr(misc, "enoughFreeSpace", lambda: True)
+    monkeypatch.setattr(makeFastq, "bcl2fq", Mock(side_effect=AssertionError("BCL conversion")))
+    monkeypatch.setattr(afterFastq, "analysis_steps", work)
+    monkeypatch.setattr(cli, "_run_reporting", work)
+    monkeypatch.setattr(afterFastq, "finalize", work)
+    monkeypatch.setattr(misc, "finalizedEmail", lambda *_: None)
+    monkeypatch.setattr(findFlowCells, "markFinished", lambda: ["GCF-2026-001"])
+    monkeypatch.setattr(
+        misc, "write_error_report", lambda *_: cfg.static.paths.report_dir / "test.error"
+    )
+    if failure:
+        monkeypatch.setattr(afterFastq, "file_md5", Mock(side_effect=OSError("disk error")))
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("test"))
+    state = store.read(RUN_ID)
+    if failure:
+        assert not calls
+        assert not manifest.exists()
+        assert state["stages"][stage]["status"] == "failed"
+        assert "FASTQ checksum generation failed" in state["last_error"]["summary"]
+    else:
+        assert calls
+        assert state["status"] == "completed"
