@@ -4,7 +4,6 @@ import argparse
 import datetime
 import json
 import os
-import shutil
 import socket
 
 from pathlib import Path
