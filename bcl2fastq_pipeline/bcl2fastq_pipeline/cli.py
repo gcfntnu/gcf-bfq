@@ -71,9 +71,7 @@ def _run_reporting(cfg, start_time):
     try:
         bcl2fastq_pipeline.misc.finishedEmail(message, run_time)
     except Exception:
-        if cfg.run.libprep.startswith(
-            ("10X Genomics Chromium Single Cell", "Parse Biosciences")
-        ):
+        if cfg.run.libprep.startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences")):
             retry_email = True
         else:
             raise
@@ -172,6 +170,7 @@ def candidate_flowcells(cfg, store):
             candidates[state["run_id"]] = Path(state["source_path"])
 
     return [candidates[run_id] for run_id in sorted(candidates)]
+
 
 def main():
     signal.signal(signal.SIGHUP, breakSleep)
