@@ -3,6 +3,7 @@
 import argparse
 import datetime
 import json
+import os
 import shutil
 import socket
 
@@ -179,7 +180,7 @@ def _cleanup_for_state(state, from_stage):
                 for child in output.iterdir()
                 if child.is_dir() and child.name.startswith("GCF-")
             }
-        work_root = Path(__import__("os").environ.get("TMPDIR", "/bfq-tmp"))
+        work_root = Path(os.environ.get("TMPDIR", "/bfq-tmp"))
         run_date = state["run_id"].split("_", 1)[0]
         for project in projects:
             work = work_root / f"{project}_{run_date}"
