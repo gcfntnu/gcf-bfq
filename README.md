@@ -113,7 +113,7 @@ only and does not have to exist.
 | `nova_baseDir` | `/mnt/seq/nova` | Root searched for runs from Nova-mounted instrument storage. |
 | `outputDir` | `/mnt/output` | Parent directory for one BFQ output directory per flowcell. |
 | `logDir` | `/mnt/logs` | Destination for demultiplexing command logs. |
-| `manager_dir` | `/mnt/manager` | Directory containing `flowcells.processed`. |
+| `manager_dir` | `/mnt/manager` | Durable flowcell state root (`states/`, `locks/`) and compatibility `flowcells.processed` inventory. |
 | `reportDir` | `/mnt/reports` | Destination for `<run-id>.error` reports. |
 | `analysisDir` | `/mnt/analysis` | Reserved analysis path recorded in the run configuration snapshot. Current workflow execution uses `TMPDIR`. |
 
@@ -178,10 +178,7 @@ Each candidate flowcell directory must contain:
   `[CustomOptions]` section.
 - At least one file matching `*Sample-Submission-Form*.xlsx`.
 
-If an output directory already exists, BFQ first looks there for the sample
-sheet and submission form. Otherwise it copies the selected files from the
-instrument run into the new output directory as `SampleSheet.csv` and
-`Sample-Submission-Form.xlsx`.
+For a queued state-backed run, BFQ prefers preserved output-side run inputs. If they are unavailable, it copies the selected files from the instrument run into the output directory as `SampleSheet.csv` and `Sample-Submission-Form.xlsx`. Pre-existing output is first subject to the discovery precedence above; ambiguous output is never guessed into a processing stage.
 
 If several sample sheets exist, BFQ uses the first one returned by the
 filesystem that contains non-empty custom options. The ordering is not
@@ -247,26 +244,41 @@ At the end of post-processing, BFQ writes a human-readable YAML snapshot to
 `<outputDir>/<run-id>/bcl2fastq.ini`. Despite its historical `.ini` suffix,
 this generated file is YAML and is not an input configuration file.
 
-## Processing and restart markers
+## Versioned flowcell state
 
-BFQ uses empty marker files to skip completed stages when an interrupted run is
-encountered again:
+BFQ stores one canonical schema-v1 JSON record per state-backed run at
+`<manager_dir>/states/<run-id>.json`. State is deliberately outside the run
+output tree so archival and restart cleanup cannot erase processing history.
+Writes are protected by per-run advisory locks and published with atomic file
+replacement. BFQ also takes an execution lease while a run is active.
 
-| Marker | Meaning |
-| --- | --- |
-| `bcl.done` | Demultiplexing completed. The file records the converter and version. |
-| `files.renamed` | FASTQ renaming completed. |
-| `analysis.made` | Project-level Snakemake analysis completed. |
-| `fastq.made` | The full BFQ process completed. |
+The JSON record is authoritative for state-backed runs and records the current
+stage, stage timestamps, attempts, projects, BFQ and workflow revisions when
+available, demultiplexer/version, failures and report paths, notification fields,
+operator restart requests, and archive state. Previous attempts remain in
+history rather than being overwritten.
 
-The authoritative discovery-time processed check is currently the
-flowcell-manager inventory, not `fastq.made`. On successful completion BFQ
-writes `fastq.made` and adds one inventory row per detected GCF project.
+BFQ no longer reads or writes the legacy `bcl.done`, `files.renamed`,
+`analysis.made`, or `fastq.made` files. Existing copies may remain on disk
+but have no effect on discovery or restart decisions.
 
-For an interrupted run that has not yet entered the inventory, deleting an
-individual marker causes its corresponding stage to run again. Once the run is
-present in the inventory, discovery skips it before inspecting these markers.
-For a full, explicit rerun, use the flowcell manager as described below.
+Discovery uses this precedence:
+
+1. If a state JSON exists, it is authoritative even if the compatibility
+   inventory also contains the run.
+2. Without JSON, an entry in `flowcells.processed` protects a completed or
+   archived legacy run from automatic reprocessing.
+3. Without either, a complete restored FASTQ tree with BFQ run inputs is
+   initialized as `restored_legacy_fastq` and queued from `analysis`.
+4. With no state, inventory entry, or output directory, BFQ creates state
+   immediately and queues a new run from `demultiplexing`.
+5. Other pre-existing output is ambiguous. BFQ writes an actionable
+   `<reportDir>/<run-id>.error` report and requires an explicit
+   `flowcell-manager initialize` decision.
+
+A stage left `running` without an execution lease is treated as interrupted on
+the next inspection. It is not silently resumed; the operator must queue a safe
+restart boundary with `flowcell-manager rerun`.
 
 ## Waking and restarting
 
@@ -283,21 +295,58 @@ followed by a process restart.
 
 ## Flowcell manager
 
-Common inventory operations are:
+`flowcell-manager` is the operator-facing interface for both state-backed runs
+and legacy inventory-only runs. It changes state and performs defined cleanup;
+it does not execute pipeline stages. The normal BFQ daemon executes queued work.
+
+Common commands are:
 
 ```console
 flowcell-manager list
+flowcell-manager list --status failed
+flowcell-manager list --stage analysis
+flowcell-manager show RUN_ID
+flowcell-manager status RUN_ID
+flowcell-manager rerun RUN_ID --from demultiplexing
+flowcell-manager rerun RUN_ID --from analysis --reason "repeat workflow"
+flowcell-manager rerun RUN_ID --from reporting
+flowcell-manager rerun RUN_ID --from finalization
+flowcell-manager initialize RUN_ID --from demultiplexing
+flowcell-manager initialize RUN_ID --from analysis
+flowcell-manager archive RUN_ID
 flowcell-manager list-processed
-flowcell-manager add GCF-2026-001 /bfq/output/RUN_ID 2026-09-23T12:00:00
-flowcell-manager archive /bfq/output/RUN_ID
-flowcell-manager rerun /bfq/output/RUN_ID
 ```
 
-`archive` removes project directories, BAM files, FASTQ files, and 7-Zip
-archives while retaining the flowcell directory and marking the inventory row
-as archived. `rerun` removes the entire flowcell output directory and its
-inventory rows. Both commands prompt unless `--force` is supplied. Review the
-displayed target carefully before confirming either destructive operation.
+Destructive operations show their cleanup plan and prompt by default. Use
+`--dry-run` to preview without changing files or state, and `--force` only
+for deliberate non-interactive operation. `--reason` is retained in state.
+`--refresh-inputs` explicitly recopies the sample sheet and submission form
+from the instrument source; without it, output-side run inputs are preserved.
+
+The supported restart boundaries invalidate these products:
+
+| Restart boundary | Preserved | Invalidated |
+| --- | --- | --- |
+| `demultiplexing` | `SampleSheet.csv`, `Sample-Submission-Form.xlsx` | FASTQs and all downstream products |
+| `analysis` | FASTQs and run inputs | workflow/QC output, reports, archives, checksums, matching workflow work directories |
+| `reporting` | FASTQs and workflow results | generated reports/metrics, archives, completion products |
+| `finalization` | FASTQs, workflow results, reports | delivery archives and checksums |
+
+A state record is put into `preparing` before restart cleanup begins and is
+queued only after cleanup succeeds. This prevents partial destructive work from
+being mistaken for a runnable state. Active runs are refused unless `--force`
+is explicitly supplied.
+
+`archive` remains separate from pipeline finalization. It removes delivery data
+from the output tree while preserving canonical JSON state. The compatibility
+`flowcells.processed` inventory is still maintained for legacy protection,
+project-to-flowcell search, and external consumers; successful state-backed
+completion updates it without duplicate project/run rows.
+
+BFQ never extracts legacy `.7za` archives automatically. To resume a legacy
+run from restored FASTQs, extract them explicitly and retain
+`SampleSheet.csv` plus `Sample-Submission-Form.xlsx`; readable FASTQs must
+exist in recognized `GCF-*` project directories.
 
 ## Environment controls
 
@@ -317,9 +366,7 @@ also provided by the base image for the downstream Snakemake workflows. The
 writable tmpfs overlay is discarded after each container command; output that
 must persist still needs to be written to a bind-mounted path.
 
-The demultiplexer name and image tag (or digest) are recorded in `bcl.done`.
-They are resolved from the active `gcf-workflows/docker.config`; BFQ no longer
-maintains separate version environment variables for these tools.
+The demultiplexer name and image tag (or digest) are recorded in the flowcell state JSON. They are resolved from the active `gcf-workflows/docker.config`; BFQ no longer maintains separate version environment variables for these tools.
 
 ## Output overview
 
@@ -329,7 +376,7 @@ Each run is written below `<outputDir>/<run-id>`. Important products include:
 - `Stats`, `InterOp`, `RunInfo.xml`, and `RunParameters.xml`.
 - Per-project sample information, MultiQC reports, archives, and archive MD5s.
 - `QC_<project>` workflow outputs and `QC_<project>_<date>.7za` archives.
-- A static/run configuration snapshot and the restart markers listed above.
+- A static/run configuration snapshot. Durable processing state is stored under `manager_dir`, not in this output tree.
 - `encryption.*` password files when `SensitiveData` is true.
 
 The exact project analysis content is defined by the selected workflow in
