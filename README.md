@@ -14,11 +14,11 @@ BFQ runs as a long-lived process:
 
 1. Load `/config/bcl2fastq.ini`.
 2. Search the configured Nova and Ekista roots for completed sequencing runs.
-3. Ignore flowcells already present in the flowcell-manager inventory.
+3. Use JSON state to select queued runs; protect inventory-only legacy runs.
 4. Require a sample sheet with `[CustomOptions]` and a sample submission form.
 5. Demultiplex, run the selected Snakemake workflow, and generate MultiQC output.
 6. Create delivery archives and checksums.
-7. Write completion markers and add each project to the inventory.
+7. Record completion in JSON state and update the compatibility inventory.
 8. Sleep for the configured interval before scanning again.
 
 Static configuration is loaded once when BFQ starts. Restart the process after
@@ -46,6 +46,57 @@ The installation provides two commands:
 
 The legacy executable names `bfq.py` and `flowcell_manager.py` are not
 installed.
+
+## Development and production releases
+
+`bfq-dev` is the default development branch; `master` is the production branch.
+
+1. Create an issue branch from current `bfq-dev` (including when using an issue's
+   **Development** section), and target its feature PR at `bfq-dev`. Link the issue
+   with `Closes #NUMBER` in the PR description so merging closes it.
+2. Run the relevant automated and integration checks, then merge the feature PR.
+3. When the tested development changes are ready for production, open a promotion
+   PR from `bfq-dev` to `master` with a short summary of the included changes.
+   Review and merge that PR deliberately before building the production image.
+4. From the updated `master` checkout, build and push with the existing script,
+   manually choosing the next `prod-N` tag. For example, **if the previous release
+   was `prod-60`**, the next release is:
+
+   ```bash
+   bash build-tag-push.sh prod prod-61
+   ```
+
+The script builds and immediately pushes `gcfntnu/bfq:prod-61` in this example;
+it does not deploy the image. Release numbers are selected manually. No separate
+release manifest or coordinated version increment for supporting tools is required.
+
+Production sources are selected explicitly, independently of repository defaults:
+
+| Repository | Production branch |
+| --- | --- |
+| `gcf-bfq` | `master` |
+| `gcf-tools` | `master` |
+| `gcf-workflows` | `main` |
+
+Resolving the current production dependency branches for each new image build is
+intentional. The test Dockerfile defaults the tools and workflows to `bfq-dev`
+and installs BFQ from the local build context.
+
+### Interpreting analysis versions
+
+The **Analysis pipeline** entry in each project QC report records the
+`gcf-workflows` commit that produced that analysis. This is the primary analysis
+version for project deliverables. BFQ JSON `versions` describes the current
+attempt's execution environment; `attempts[].versions` retains that metadata
+for earlier attempts.
+
+`rerun --from analysis` executes the complete analysis workflow using the installed
+workflow checkout and regenerates project reports before reporting/finalization.
+`rerun --from reporting` regenerates sequencer reporting and downstream delivery
+products while preserving project analysis results and reports, including their
+original workflow commit. A finalization-only rerun likewise preserves those
+reports. Consequently, a later reporting/finalization attempt's runtime revision
+can differ from the analysis revision correctly recorded in the preserved report.
 
 ## Starting BFQ
 
@@ -85,7 +136,7 @@ minSpace = 50
 host = smtp.example.org
 from_address = bfq-no-reply@example.org
 finished_to = sequencing@example.org
-error_to = pipeline-errors@example.org
+error_to = pipeline-errors@example.org, sequencing-oncall@example.org
 
 [Version]
 pipeline = 0.3.1
@@ -113,7 +164,7 @@ only and does not have to exist.
 | `nova_baseDir` | `/mnt/seq/nova` | Root searched for runs from Nova-mounted instrument storage. |
 | `outputDir` | `/mnt/output` | Parent directory for one BFQ output directory per flowcell. |
 | `logDir` | `/mnt/logs` | Destination for demultiplexing command logs. |
-| `manager_dir` | `/mnt/manager` | Directory containing `flowcells.processed`. |
+| `manager_dir` | `/mnt/manager` | Durable flowcell state root (`states/`, `locks/`) and compatibility `flowcells.processed` inventory. |
 | `reportDir` | `/mnt/reports` | Destination for `<run-id>.error` reports. |
 | `analysisDir` | `/mnt/analysis` | Reserved analysis path recorded in the run configuration snapshot. Current workflow execution uses `TMPDIR`. |
 
@@ -137,17 +188,78 @@ when they are absent.
 ### `[Email]`
 
 All four options are required when the normal notification paths are used.
-Recipient values are passed to the local SMTP server as configured strings.
+Error recipients support comma-separated addresses, including display names; empty
+entries and duplicate addresses are ignored. All error recipients receive one message.
 
 | Option | Purpose |
 | --- | --- |
 | `host` | SMTP relay hostname. |
 | `from_address` | Sender used for completion and error messages. |
 | `finished_to` | Recipient for the processing-complete email and attached reports. |
-| `error_to` | Recipient for the final archive-completion message. Runtime error details are currently written below `reportDir`. |
+| `error_to` | Comma-separated recipients for production error notifications. Also retains the existing final archive-completion notification routing. |
 
 Current SMTP handling does not configure authentication or TLS. Access control
 must therefore be provided by the deployment environment or relay.
+
+### Production error notifications
+
+`dockerfile-prod` sets `BFQ_ENV=production`; `dockerfile-test` sets `BFQ_ENV=test`.
+Only the exact value `production` enables **error** email. Missing, empty, or
+unrecognized values suppress it. This setting does not change the existing
+processing-complete and successful-finalization email behavior. In particular,
+finalization still uses `error_to`; moving it requires a separate routing decision.
+Do not override `BFQ_ENV` to production in ordinary test/development runs.
+
+On a pipeline-stage failure, BFQ first writes `<reportDir>/<run-id>.error`, then
+records the failure in canonical JSON state, and only then attempts notification.
+`write_error_report()` and `send_error_report()` are separate operations;
+`errorEmail()` remains a report-only compatibility alias. The email subject contains
+the run ID and stage. Its plain-text body includes the exception, UTC timestamp,
+host, and absolute report path, with the saved report attached as `text/plain`.
+Captured command diagnostics remain included in the report. SMTP uses the configured
+`host` and `from_address`, with a 30-second socket timeout and no added TLS or auth.
+
+Notification protection lives in `<manager_dir>/states/<run-id>.json`, not the
+output tree. A signature covers the stage, qualified exception type/message, and
+captured command output when present; report timestamps and traceback line numbers
+are excluded. Identical failures remain suppressed across daemon restarts and
+explicit reruns. A changed failure starts a new notification, and successful run
+completion clears the failure/notification record. Attempts retain failure history.
+
+Delivery is **at most once per failure**: BFQ atomically saves `attempted_at` under
+the per-run lock before opening SMTP. Success sets `notified` and `notified_at`;
+SMTP errors (including partial recipient refusal) are logged and saved as
+`delivery_error`, and do not prevent run-context reset or processing other runs.
+The original report and pipeline failure remain intact. Relay failure or a crash
+after claiming delivery is not automatically retried, since the relay may already
+have accepted the mail. `attempted_at` without `notified` indicates an unsuccessful
+or interrupted attempt; inspect the report and relay logs. Changed failures or a
+successful run followed by another failure enable another notification.
+
+If report writing or durable failure/notification recording fails, no email is
+sent. Empty `error_to` suppresses delivery with a log message. Non-production
+suppression does not consume a delivery attempt. Discovery-only diagnostic reports
+for ambiguous output remain local: they have no initialized pipeline-stage state.
+
+#### Server-side checks for issue #103
+
+Automated tests mock SMTP; they cannot validate the deployed image, relay, or mailbox.
+Before rollout:
+
+1. Build the test image from the issue branch and confirm `BFQ_ENV=test` inside it.
+   Trigger a controlled stage failure: verify the `.error` report, failed JSON state,
+   logged email suppression, and absence of an error-email connection in relay logs.
+2. In a controlled production-mode deployment using approved test recipients, verify
+   one message reaches every comma-separated `error_to` address, the subject/stage
+   and body context are correct, and the attachment matches the saved report.
+   `dockerfile-prod` installs `master`; testing unmerged code requires a test build
+   containing this branch with an explicit production-mode override.
+3. Restart the daemon and explicitly rerun the same failing stage: no duplicate mail.
+   Change the failure and verify one new notification. Complete a successful run,
+   then reproduce the original failure and verify it is notified again.
+4. Simulate an unavailable/refusing relay and verify the report survives, state records
+   the original failure plus delivery error, and the daemon can process another run.
+   Retrying the same failure must not repeatedly contact the relay.
 
 ### `[Version]`
 
@@ -178,10 +290,7 @@ Each candidate flowcell directory must contain:
   `[CustomOptions]` section.
 - At least one file matching `*Sample-Submission-Form*.xlsx`.
 
-If an output directory already exists, BFQ first looks there for the sample
-sheet and submission form. Otherwise it copies the selected files from the
-instrument run into the new output directory as `SampleSheet.csv` and
-`Sample-Submission-Form.xlsx`.
+For a queued state-backed run, BFQ prefers preserved output-side run inputs. If they are unavailable, it copies the selected files from the instrument run into the output directory as `SampleSheet.csv` and `Sample-Submission-Form.xlsx`. Pre-existing output is first subject to the discovery precedence above; ambiguous output is never guessed into a processing stage.
 
 If several sample sheets exist, BFQ uses the first one returned by the
 filesystem that contains non-empty custom options. The ordering is not
@@ -247,26 +356,41 @@ At the end of post-processing, BFQ writes a human-readable YAML snapshot to
 `<outputDir>/<run-id>/bcl2fastq.ini`. Despite its historical `.ini` suffix,
 this generated file is YAML and is not an input configuration file.
 
-## Processing and restart markers
+## Versioned flowcell state
 
-BFQ uses empty marker files to skip completed stages when an interrupted run is
-encountered again:
+BFQ stores one canonical schema-v1 JSON record per state-backed run at
+`<manager_dir>/states/<run-id>.json`. State is deliberately outside the run
+output tree so archival and restart cleanup cannot erase processing history.
+Writes are protected by per-run advisory locks and published with atomic file
+replacement. BFQ also takes an execution lease while a run is active.
 
-| Marker | Meaning |
-| --- | --- |
-| `bcl.done` | Demultiplexing completed. The file records the converter and version. |
-| `files.renamed` | FASTQ renaming completed. |
-| `analysis.made` | Project-level Snakemake analysis completed. |
-| `fastq.made` | The full BFQ process completed. |
+The JSON record is authoritative for state-backed runs and records the current
+stage, stage timestamps, attempts, projects, BFQ and workflow revisions when
+available, demultiplexer/version, failures and report paths, notification fields,
+operator restart requests, and archive state. Previous attempts remain in
+history rather than being overwritten.
 
-The authoritative discovery-time processed check is currently the
-flowcell-manager inventory, not `fastq.made`. On successful completion BFQ
-writes `fastq.made` and adds one inventory row per detected GCF project.
+BFQ no longer reads or writes the legacy `bcl.done`, `files.renamed`,
+`analysis.made`, or `fastq.made` files. Existing copies may remain on disk
+but have no effect on discovery or restart decisions.
 
-For an interrupted run that has not yet entered the inventory, deleting an
-individual marker causes its corresponding stage to run again. Once the run is
-present in the inventory, discovery skips it before inspecting these markers.
-For a full, explicit rerun, use the flowcell manager as described below.
+Discovery uses this precedence:
+
+1. If a state JSON exists, it is authoritative even if the compatibility
+   inventory also contains the run.
+2. Without JSON, an entry in `flowcells.processed` protects a completed or
+   archived legacy run from automatic reprocessing.
+3. Without either, a complete restored FASTQ tree with BFQ run inputs is
+   initialized as `restored_legacy_fastq` and queued from `analysis`.
+4. With no state, inventory entry, or output directory, BFQ creates state
+   immediately and queues a new run from `demultiplexing`.
+5. Other pre-existing output is ambiguous. BFQ writes an actionable
+   `<reportDir>/<run-id>.error` report and requires an explicit
+   `flowcell-manager initialize` decision.
+
+A stage left `running` without an execution lease is treated as interrupted on
+the next inspection. It is not silently resumed; the operator must queue a safe
+restart boundary with `flowcell-manager rerun`.
 
 ## Waking and restarting
 
@@ -283,21 +407,58 @@ followed by a process restart.
 
 ## Flowcell manager
 
-Common inventory operations are:
+`flowcell-manager` is the operator-facing interface for both state-backed runs
+and legacy inventory-only runs. It changes state and performs defined cleanup;
+it does not execute pipeline stages. The normal BFQ daemon executes queued work.
+
+Common commands are:
 
 ```console
 flowcell-manager list
+flowcell-manager list --status failed
+flowcell-manager list --stage analysis
+flowcell-manager show RUN_ID
+flowcell-manager status RUN_ID
+flowcell-manager rerun RUN_ID --from demultiplexing
+flowcell-manager rerun RUN_ID --from analysis --reason "repeat workflow"
+flowcell-manager rerun RUN_ID --from reporting
+flowcell-manager rerun RUN_ID --from finalization
+flowcell-manager initialize RUN_ID --from demultiplexing
+flowcell-manager initialize RUN_ID --from analysis
+flowcell-manager archive RUN_ID
 flowcell-manager list-processed
-flowcell-manager add GCF-2026-001 /bfq/output/RUN_ID 2026-09-23T12:00:00
-flowcell-manager archive /bfq/output/RUN_ID
-flowcell-manager rerun /bfq/output/RUN_ID
 ```
 
-`archive` removes project directories, BAM files, FASTQ files, and 7-Zip
-archives while retaining the flowcell directory and marking the inventory row
-as archived. `rerun` removes the entire flowcell output directory and its
-inventory rows. Both commands prompt unless `--force` is supplied. Review the
-displayed target carefully before confirming either destructive operation.
+Destructive operations show their cleanup plan and prompt by default. Use
+`--dry-run` to preview without changing files or state, and `--force` only
+for deliberate non-interactive operation. `--reason` is retained in state.
+`--refresh-inputs` explicitly recopies the sample sheet and submission form
+from the instrument source; without it, output-side run inputs are preserved.
+
+The supported restart boundaries invalidate these products:
+
+| Restart boundary | Preserved | Invalidated |
+| --- | --- | --- |
+| `demultiplexing` | `SampleSheet.csv`, `Sample-Submission-Form.xlsx` | FASTQs and all downstream products |
+| `analysis` | FASTQs and run inputs | workflow/QC output, reports, archives, checksums, matching workflow work directories |
+| `reporting` | FASTQs, FASTQ checksums, workflow results, project HTML reports and project MultiQC configurations | sequencer reports/metrics, aggregate MultiQC configuration, archives, completion products |
+| `finalization` | FASTQs, FASTQ checksums, workflow results, reports | delivery archives and archive checksums |
+
+A state record is put into `preparing` before restart cleanup begins and is
+queued only after cleanup succeeds. This prevents partial destructive work from
+being mistaken for a runnable state. Active runs are refused unless `--force`
+is explicitly supplied.
+
+`archive` remains separate from pipeline finalization. It removes delivery data
+from the output tree while preserving canonical JSON state. The compatibility
+`flowcells.processed` inventory is still maintained for legacy protection,
+project-to-flowcell search, and external consumers; successful state-backed
+completion updates it without duplicate project/run rows.
+
+BFQ never extracts legacy `.7za` archives automatically. To resume a legacy
+run from restored FASTQs, extract them explicitly and retain
+`SampleSheet.csv` plus `Sample-Submission-Form.xlsx`; readable FASTQs must
+exist in recognized `GCF-*` project directories.
 
 ## Environment controls
 
@@ -317,9 +478,7 @@ also provided by the base image for the downstream Snakemake workflows. The
 writable tmpfs overlay is discarded after each container command; output that
 must persist still needs to be written to a bind-mounted path.
 
-The demultiplexer name and image tag (or digest) are recorded in `bcl.done`.
-They are resolved from the active `gcf-workflows/docker.config`; BFQ no longer
-maintains separate version environment variables for these tools.
+The demultiplexer name and image tag (or digest) are recorded in the flowcell state JSON. They are resolved from the active `gcf-workflows/docker.config`; BFQ no longer maintains separate version environment variables for these tools.
 
 ## Output overview
 
@@ -329,7 +488,7 @@ Each run is written below `<outputDir>/<run-id>`. Important products include:
 - `Stats`, `InterOp`, `RunInfo.xml`, and `RunParameters.xml`.
 - Per-project sample information, MultiQC reports, archives, and archive MD5s.
 - `QC_<project>` workflow outputs and `QC_<project>_<date>.7za` archives.
-- A static/run configuration snapshot and the restart markers listed above.
+- A static/run configuration snapshot. Durable processing state is stored under `manager_dir`, not in this output tree.
 - `encryption.*` password files when `SensitiveData` is true.
 
 The exact project analysis content is defined by the selected workflow in
@@ -356,6 +515,40 @@ python -m build
 
 Unit tests use temporary files and do not require sequencing data, mounted
 instrument storage, external services, or bioinformatics applications.
+
+### Server-side integration testing for state management
+
+Issue #104 changes filesystem authority and destructive restart behavior, so the
+automated suite is necessary but not sufficient for production rollout. Before
+deployment, exercise the branch on the BFQ test server with real mounts,
+Apptainer images, workflow work directories, SMTP/report paths, and the
+production-style `manager_dir`.
+
+The integration pass should verify at least:
+
+- a completely new standard Illumina run creates JSON state before output work,
+  completes every stage, and never creates legacy restart markers;
+- a state-backed run already present in `flowcells.processed` follows JSON
+  authority when an explicit rerun is queued;
+- inventory-only historical runs remain skipped and searchable;
+- explicitly restored legacy FASTQs bootstrap at `analysis`, while incomplete
+  or ambiguous restored output is refused;
+- `rerun --dry-run` and each of the four restart boundaries invalidate exactly
+  the displayed products, preserve curated inputs/FASTQs as documented, and
+  `--refresh-inputs` replaces inputs only when requested;
+- killing BFQ during each stage leaves a recoverable interrupted state rather
+  than a false completion, and two daemon processes cannot execute the same run;
+- an unavailable or unwritable `manager_dir` prevents any untracked
+  processing;
+- completion updates `flowcells.processed` without duplicate project/run rows,
+  and archive/rerun state survives output cleanup;
+- standard bcl-convert, forced bcl2fastq, supported 10x demultiplexers, and every
+  configured downstream workflow complete successfully from a clean start.
+
+Run the full supported-workflow matrix as an overnight integration test before
+production deployment. These checks intentionally are not simulated by the unit
+test suite because they depend on server mounts, real external tools, and
+deployment configuration.
 
 For a version supporting Illumina bcl2fastq v1, see the historical
 [`bcl2fastqV1`](https://github.com/maxplanck-ie/bcl2fastq_pipeline/tree/bcl2fastqV1)

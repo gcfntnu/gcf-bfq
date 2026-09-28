@@ -6,10 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-import pandas as pd
 import pytest
 
-from flowcell_manager import flowcell_manager
+from bcl2fastq_pipeline.state import apply_cleanup, cleanup_plan
 
 from bcl2fastq_pipeline import afterFastq, makeFastq
 
@@ -248,7 +247,8 @@ def test_10x_demultiplexing_ignores_legacy_executable_settings(
     assert all(not argument.startswith("/legacy/") for argument in command)
 
 
-def test_multiqc_ignores_legacy_executable_setting(tmp_path, monkeypatch):
+@pytest.mark.parametrize("restart", [False, True])
+def test_multiqc_ignores_legacy_executable_setting(tmp_path, monkeypatch, restart):
     flowcell_path = tmp_path / "flowcell"
     flowcell_path.mkdir()
     (flowcell_path / "RunInfo.xml").touch()
@@ -277,14 +277,29 @@ def test_multiqc_ignores_legacy_executable_setting(tmp_path, monkeypatch):
     monkeypatch.delenv("FORCE_BCL2FASTQ", raising=False)
     monkeypatch.delenv("BFQ_TEST", raising=False)
 
+    project_report = output_path / "multiqc_GCF-2026-001_260918.html"
+    extra_report = output_path / "all_samples_web_summary_GCF-2026-001_260918.html"
+    for report in (project_report, extra_report):
+        report.write_text("analysis report")
+    if restart:
+        aggregate = output_path / "Stats" / ".multiqc_config.yaml"
+        aggregate.write_text("stale aggregate")
+        apply_cleanup(cleanup_plan(output_path, "reporting"))
+        assert not aggregate.exists()
+
     afterFastq.multiqc_stats(cfg)
+
+    for report in (project_report, extra_report):
+        assert report.read_text() == "analysis report"
+    assert (output_path / "Stats" / ".multiqc_config.yaml").is_file()
 
     command = check_call.call_args.args[0]
     assert command[:3] == ["multiqc", "--force", "--quiet"]
     assert "/legacy/custom/multiqc" not in command
 
 
-def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeypatch):
+@pytest.mark.parametrize("restart", [False, True])
+def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeypatch, restart):
     output_path = tmp_path / "output with spaces;not-a-command"
     project = "GCF-2026-001 project;not-a-command"
     (output_path / project).mkdir(parents=True)
@@ -315,7 +330,13 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
     monkeypatch.setattr(afterFastq.subprocess, "check_call", check_call)
     monkeypatch.setenv("TMPDIR", str(work_root))
 
+    if restart:
+        apply_cleanup(cleanup_plan(output_path, "finalization"))
     afterFastq.archive_worker(cfg)
+
+    # Every input passed to the archiver must survive restart cleanup.
+    for call in check_call.call_args_list:
+        assert all(Path(path).exists() for path in call.args[0][3:])
 
     fastq_command = check_call.call_args_list[0].args[0]
     qc_command = check_call.call_args_list[1].args[0]
@@ -439,36 +460,6 @@ def test_logged_command_preserves_output_and_raises_with_tail(tmp_path, capsys):
     assert "\x1b[" not in error.value.output
 
 
-def test_flowcell_rerun_deletes_only_the_inventory_path(tmp_path, monkeypatch):
-    manager_dir = tmp_path / "manager"
-    manager_dir.mkdir()
-    flowcell = tmp_path / "run;touch escaped"
-    flowcell.mkdir()
-    (flowcell / "result.txt").touch()
-    unrelated = tmp_path / "escaped"
-    unrelated.touch()
-
-    inventory = pd.DataFrame(
-        [
-            {
-                "project": "GCF-2026-001",
-                "flowcell_path": str(flowcell),
-                "timestamp": "2026-09-23T12:00:00",
-                "archived": 0,
-            }
-        ]
-    )
-    inventory.to_csv(manager_dir / "flowcells.processed", index=False)
-    cfg = SimpleNamespace(static=SimpleNamespace(paths=SimpleNamespace(manager_dir=manager_dir)))
-    monkeypatch.setattr(flowcell_manager, "get_cfg", Mock(return_value=cfg))
-
-    flowcell_manager.rerun_flowcell(flowcell=str(flowcell), force=True)
-
-    assert not flowcell.exists()
-    assert unrelated.exists()
-    assert pd.read_csv(manager_dir / "flowcells.processed").empty
-
-
 def test_python_sources_do_not_enable_shell_execution():
     repository_root = Path(__file__).parents[1]
     source_paths = list((repository_root / "bcl2fastq_pipeline").rglob("*.py"))
@@ -485,3 +476,12 @@ def test_python_sources_do_not_enable_shell_execution():
                     and isinstance(keyword.value, ast.Constant)
                     and keyword.value.value is True
                 ), f"shell=True remains in {source_path}:{node.lineno}"
+
+
+def test_reporting_missing_analysis_config_has_recovery_instruction(tmp_path, monkeypatch):
+    cfg = SimpleNamespace(output_path=tmp_path)
+    interop = Mock()
+    monkeypatch.setattr(afterFastq, "run_interop_csv", interop)
+    with pytest.raises(RuntimeError, match="flowcell-manager rerun .* --from analysis"):
+        afterFastq.multiqc_stats(cfg)
+    interop.assert_not_called()
