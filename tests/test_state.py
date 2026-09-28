@@ -18,7 +18,6 @@ from bcl2fastq_pipeline.state import (
     validate_state,
 )
 
-
 RUN_ID = "260918_MN00686_0026_A000HCMFHF"
 
 
