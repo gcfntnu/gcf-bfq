@@ -1,10 +1,7 @@
 import gzip
 import logging
 
-from pathlib import Path
 from unittest.mock import Mock
-
-import pandas as pd
 import pytest
 
 import flowcell_manager.flowcell_manager as manager
