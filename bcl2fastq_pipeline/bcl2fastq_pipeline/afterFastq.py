@@ -482,7 +482,7 @@ def _disk_usage_message(cfg):
     free /= 1024**3
     message = (
         f"Current free space for output: {free:.0f} of {total:.0f} GiB "
-        f"({100 * free / total:5.2f}%)\\n<br>"
+        f"({100 * free / total:5.2f}%)\n<br>"
     )
 
     total, _used, free = shutil.disk_usage(cfg.run.flowcell_path.parent)
@@ -490,7 +490,7 @@ def _disk_usage_message(cfg):
     free /= 1024**3
     message += (
         f"Current free space for instruments: {free:.0f} of {total:.0f} GiB "
-        f"({100 * free / total:5.2f}%)\\n<br>\\n<br>"
+        f"({100 * free / total:5.2f}%)\n<br>\n<br>"
     )
     return message
 
@@ -515,6 +515,7 @@ def postMakeSteps():
     """Compatibility wrapper for callers that still expect the combined operation."""
     analysis_steps()
     return reporting_steps()
+
 
 def finalize():
     cfg = PipelineConfig.get()
