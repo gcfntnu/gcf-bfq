@@ -1,3 +1,4 @@
+import gzip
 import json
 import multiprocessing as mp
 
@@ -46,8 +47,6 @@ def write_restored_inputs(output):
 
 
 def write_fastq(path):
-    import gzip
-
     path.parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(path, "wt") as handle:
         handle.write("@read\nACGT\n+\n!!!!\n")
