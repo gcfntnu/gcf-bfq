@@ -128,7 +128,7 @@ def new_state(
     run_id = _safe_run_id(run_id)
     if origin not in ORIGINS:
         raise StateValidationError(f"Unsupported origin: {origin}")
-    inferred = origin == "restored_legacy_fastq" and start_stage == "analysis"
+    inferred = origin in {"restored_legacy_fastq", "legacy_rerun"} and start_stage != "demultiplexing"
     now = utcnow()
     state = {
         "schema_version": SCHEMA_VERSION,
@@ -214,6 +214,23 @@ def validate_state(state: dict) -> None:
     for stage, detail in state["stages"].items():
         if not isinstance(detail, dict) or detail.get("status") not in STAGE_STATUSES:
             raise StateValidationError(f"Invalid stage state for {stage}")
+
+
+def validate_restart_boundary(state: dict, start_stage: str) -> None:
+    """Require preserved upstream stages to be trustworthy before cleanup begins."""
+    if start_stage not in STAGES:
+        raise StateValidationError(f"Unsupported stage: {start_stage}")
+    start_index = STAGES.index(start_stage)
+    invalid = [
+        stage
+        for stage in STAGES[:start_index]
+        if state["stages"][stage]["status"] not in {"completed", "skipped"}
+    ]
+    if invalid:
+        raise StateConflictError(
+            f"Cannot restart from {start_stage}; upstream stages are not complete: "
+            + ", ".join(invalid)
+        )
 
 
 class FlowcellStateStore:
@@ -392,6 +409,7 @@ class FlowcellStateStore:
             raise StateValidationError(f"Unsupported stage: {start_stage}")
 
         def update(state: dict) -> dict:
+            validate_restart_boundary(state, start_stage)
             start_index = STAGES.index(start_stage)
             for index, stage in enumerate(STAGES):
                 detail = state["stages"][stage]
