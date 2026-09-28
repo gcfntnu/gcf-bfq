@@ -5,7 +5,7 @@ import logging
 import os
 import signal
 import sys
-
+from pathlib import Path
 from threading import Event
 
 import urllib3
@@ -145,6 +145,33 @@ def _run_state_backed_flowcell(cfg, store, log):
         cfg.run.reset()
 
 
+def candidate_flowcells(cfg, store):
+    """Combine instrument discoveries with explicitly queued state records."""
+    completion_files = {
+        "SN7001334": "ImageAnalysis_Netcopy_complete.txt",
+        "NB501038": "RunCompletionStatus.xml",
+        "M026575": "ImageAnalysis_Netcopy_complete.txt",
+        "M03942": "ImageAnalysis_Netcopy_complete.txt",
+        "M05617": "ImageAnalysis_Netcopy_complete.txt",
+        "M71102": "ImageAnalysis_Netcopy_complete.txt",
+        "K00251": "SequencingComplete.txt",
+        "A01990": "CopyComplete.txt",
+        "MN00686": "CopyComplete.txt",
+    }
+    candidates = {}
+    for base in (cfg.static.paths.nova_base_dir, cfg.static.paths.ekista_base_dir):
+        for machine, finish_file in completion_files.items():
+            for completion in base.glob(f"*_{machine}_*/{finish_file}"):
+                candidates[completion.parent.name] = completion.parent
+
+    # Explicitly queued state remains discoverable even if its completion marker
+    # is no longer visible. JSON is authoritative, so its source path wins.
+    for state in store.list_states():
+        if state["status"] == "queued":
+            candidates[state["run_id"]] = Path(state["source_path"])
+
+    return [candidates[run_id] for run_id in sorted(candidates)]
+
 def main():
     signal.signal(signal.SIGHUP, breakSleep)
 
@@ -174,33 +201,16 @@ def main():
             sleep(cfg)
             continue
 
-        in_pths = [cfg.static.paths.nova_base_dir, cfg.static.paths.ekista_base_dir]
-        completion_files = {
-            "SN7001334": "ImageAnalysis_Netcopy_complete.txt",
-            "NB501038": "RunCompletionStatus.xml",
-            "M026575": "ImageAnalysis_Netcopy_complete.txt",
-            "M03942": "ImageAnalysis_Netcopy_complete.txt",
-            "M05617": "ImageAnalysis_Netcopy_complete.txt",
-            "M71102": "ImageAnalysis_Netcopy_complete.txt",
-            "K00251": "SequencingComplete.txt",
-            "A01990": "CopyComplete.txt",
-            "MN00686": "CopyComplete.txt",
-        }
-        dirs = []
-        for path in in_pths:
-            for machine, finish_file in completion_files.items():
-                dirs += list(path.glob(f"*_{machine}_*/{finish_file}"))
-
-        for completion in sorted(dirs):
-            cfg.run.begin(completion.parent, cfg.static.paths)
-            log.debug("Initiate %s", completion.parent)
+        for flowcell_path in candidate_flowcells(cfg, store):
+            cfg.run.begin(flowcell_path, cfg.static.paths)
+            log.debug("Initiate %s", flowcell_path)
             try:
                 if bcl2fastq_pipeline.findFlowCells.flowCellProcessed():
-                    log.debug("Already processed or not queued: %s", completion.parent)
+                    log.debug("Already processed or not queued: %s", flowcell_path)
                     cfg.run.reset()
                     continue
             except Exception:
-                log.exception("Flowcell discovery failed for %s", completion.parent)
+                log.exception("Flowcell discovery failed for %s", flowcell_path)
                 cfg.run.reset()
                 continue
 
