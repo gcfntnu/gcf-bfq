@@ -36,7 +36,7 @@ Install the Python application from the repository root with the in-house
 
 ```console
 python -m pip install . \
-  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/master.zip"
+  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/3b6593905dbf5484514ffa725a0693aa3c9c3660.zip"
 ```
 
 The installation provides two commands:
@@ -407,10 +407,27 @@ SensitiveData,False
 letter case. Other custom keys are preserved in the run snapshot for downstream
 or future use but are not interpreted by BFQ itself.
 
-Workflow lookup is case-insensitive. BFQ first tries the exact `Libprep` value,
-then the same value with ` SE` and ` PE` appended. A missing or unmatched
-`libprep.config` results in pipeline value `UNKNOWN` and will normally prevent
-successful workflow execution.
+`/opt/gcf-workflows/libprep.config` is authoritative. `BFQ_LIBPREP_CONFIG` is
+retired and ignored with a warning. BFQ captures the exact file bytes once per
+execution, including uncommitted edits, and copies those bytes into each project's
+workflow tree. Configmaker verifies the snapshot hash, selected entry and read
+geometry before generating the Snakefile.
+
+Lookup is case-insensitive and uses actual non-index read lengths from
+`Stats/Stats.json`: one read selects SE, two select PE. The matching suffixed kit
+entry takes precedence over an unsuffixed entry. Explicit SE/PE suffixes must
+agree with the read geometry. Missing/malformed configuration and unknown kits
+raise actionable errors; there is no `UNKNOWN` or implicit default fallback.
+For intentional generic QC, explicitly choose a configured kit with
+`workflow: default`, for example `Libprep,Custom` with the existing `Custom SE` /
+`Custom PE` entries.
+
+Source, SHA-256, selected kit entry, read geometry and workflow are logged and
+recorded in `bfq-libprep.json` beside the exact `bfq-libprep.config` snapshot in
+the flowcell output. Project `config.yaml` also contains `libprep_selection`.
+Analysis restarts select a fresh authoritative snapshot; reporting/finalization
+retries reuse the retained analysis selection. See
+[configuration testing and deployment](docs/libprep-configuration.md).
 
 ## Configuration model
 
@@ -612,8 +629,12 @@ Create an editable environment from the repository root:
 
 ```console
 python -m pip install -e ".[dev]" \
-  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/master.zip"
+  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/3b6593905dbf5484514ffa725a0693aa3c9c3660.zip"
 ```
+
+The tools revision above is the companion configuration API from
+[gcf-tools PR #57](https://github.com/gcfntnu/gcf-tools/pull/57). BFQ requires
+`gcf-tools>=0.2`; keep the configmaker subprocess environment in sync.
 
 Run the local checks:
 
