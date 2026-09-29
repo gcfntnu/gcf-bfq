@@ -339,7 +339,7 @@ def test_daemon_normalizes_before_preparation_with_one_execution_lease(tmp_path,
         prepare()
 
     monkeypatch.setattr(findFlowCells, "newFlowCell", check_preparation)
-    monkeypatch.setattr(cli.workflow_config, "prepare_execution", lambda *_args: None)
+    monkeypatch.setattr(cli, "_prepare_workflow", lambda *_args: None)
     monkeypatch.setattr(notifications, "send_notification", lambda *_args: None)
     cli._run_state_backed_flowcell(cfg, store, logging.getLogger("test"), prepare=True)
     assert store.read(RUN_ID)["status"] == "completed"

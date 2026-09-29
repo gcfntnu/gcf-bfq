@@ -358,9 +358,6 @@ class PipelineConfig:
             else None,
             "libprep": self.run.libprep,
             "pipeline": self.run.pipeline,
-            "libprep_selection": self.run.workflow_selection.diagnostics()
-            if self.run.workflow_selection
-            else None,
             "user": self.run.user,
             "rerun": self.run.rerun,
             "custom": self.run.custom or {},

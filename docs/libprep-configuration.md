@@ -22,21 +22,32 @@ the captured configuration bytes then replace the copied `libprep.config`.
    snapshot or geometry changes, it fails rather than generating a different
    analysis. Nested kit settings, including `filter.trim`, are retained alongside
    configmaker's project options such as `filter.subsample_fastq`.
-4. The flowcell output retains `bfq-libprep.config` and `bfq-libprep.json` with
-   source, hash, input kit, entry, geometry and workflow. The same selection is
-   visible in BFQ logs and `bcl2fastq.ini`; each project `config.yaml` also records
-   the snapshot it consumed under `libprep_selection`.
-5. `rerun --from analysis` captures the current authoritative configuration again.
-   Reporting/finalization restarts restore the prior analysis selection, even if
-   the authoritative source is subsequently edited or removed. Corrupt or partial
-   retained snapshot pairs fail with a repair/restart instruction.
+4. BFQ keeps the capture in memory. Each project's workflow copy contains the
+   exact `libprep.config`, and its generated `config.yaml` contains the
+   `libprep_selection` diagnostics (source, SHA-256, kit, entry, geometry and
+   workflow). The original authoritative source and selection are also logged.
+   There are no separate libprep configuration or manifest files in flowcell
+   output. #124 owns retention of the actual successful analysis workdir.
+5. On successful analysis, BFQ records only the selected workflow name in the
+   existing `stages.analysis.metadata.workflow` state field. No state-schema
+   version change is needed. Reporting/finalization retries use this name without
+   loading `libprep.config` or reconstructing a kit selection. They therefore work
+   even if the authoritative configuration has subsequently changed or disappeared.
+6. `rerun --from analysis` captures the current authoritative configuration again.
+   Existing restart invalidation clears analysis metadata for demultiplexing or
+   analysis reruns, and preserves it for reporting/finalization reruns. The new
+   workflow is recorded only once the new analysis succeeds.
 
-Existing results without either snapshot file are bootstrapped from the current
-authoritative configuration and existing Stats.json with an explicit warning.
-Check that the logged workflow matches those legacy results; use an analysis
-restart if configuration changes should apply. There is no retained history of
-every configuration attempt, and workflow code is still copied per project.
-A complete workflow/provenance snapshot remains separate future work.
+Older state without a recorded workflow can recover the name from the actual
+project `config.yaml` files under `TMPDIR`, then record it in state. Every
+identified project's configuration must be readable and agree on the workflow.
+Missing, malformed or conflicting project configurations produce an actionable
+error: restore the original configs or restart from analysis. BFQ never uses the
+current `/opt` configuration to guess how an earlier analysis ran.
+
+The first revision of this PR wrote `bfq-libprep.config` / `bfq-libprep.json` into
+flowcell output. Those files are no longer written or read; any files left by an
+earlier test build can be removed. They are not required for recovery.
 
 Unknown kits never fall back to an unrelated workflow. For intentional generic
 QC, choose a configured entry whose `workflow` is `default`, such as
@@ -57,15 +68,13 @@ BFQ CI pins the tested companion commit so it can verify this PR before merging
 the dependency. Production promotion must include gcf-tools in `master` before
 building BFQ's updated production image.
 
-From this BFQ issue branch, build locally for server testing:
+From BFQ branch `123-authoritative-libprep-config`, use the existing build-and-push
+helper with your chosen test tag:
 
 ```bash
-docker build -f dockerfile-test -t gcfntnu/bfq:issue-123 \
-  --build-arg GCF_TOOLS_BRANCH=bfq-123-shared-libprep-config .
+bash build-tag-push.sh test YOUR_TEST_TAG -t bfq-123-shared-libprep-config
 ```
 
-Alternatively, the existing build-and-push helper accepts the branch via
-`bash build-tag-push.sh test YOUR_TEST_TAG -t bfq-123-shared-libprep-config`.
 Keep the image's normal `BFQ_ENV=test` setting. Within the image, check:
 
 ```bash
@@ -87,11 +96,13 @@ configuration before editing it.
    that edit uncommitted. Optionally set `BFQ_LIBPREP_CONFIG` to a deliberately
    different valid file; expect a warning that it is ignored.
 2. Run a fresh test flowcell and inspect the logged source, SHA-256, entry and
-   workflow. Check flowcell `bfq-libprep.json` / `bfq-libprep.config`, each analysis
-   project's `src/gcf-workflows/libprep.config`, and generated `config.yaml`.
+   workflow. Check each analysis project's `src/gcf-workflows/libprep.config`
+   and generated `config.yaml` (including `libprep_selection`).
    The chosen fastp parameter must appear in `filter.trim.fastp.params`; the
    copied config hash must match the logged hash. Check the actual Snakemake
    fastp command as well, since workflow-level defaults may also affect it.
+   After analysis succeeds, check `stages.analysis.metadata.workflow` in the
+   flowcell state; no separate `bfq-libprep.*` files should be created.
 3. Change the parameter again, then queue a direct analysis rerun:
 
    ```bash
@@ -101,10 +112,9 @@ configuration before editing it.
    Confirm the new hash and parameter reach the regenerated configuration and
    reports. Also check that an existing project's FASTQ directory is reused on
    this rerun (the `--skip-create-fastq-dir` check now uses the project directory).
-4. For a run with two projects, edit the source after the capture log appears.
-   Both projects must retain the captured configuration. A later analysis rerun
-   must pick up the edit. A reporting/finalization retry must retain the completed
-   analysis's workflow even if the source now specifies a different workflow.
+4. A reporting/finalization retry must use the completed analysis's recorded
+   workflow, even if `/opt/gcf-workflows/libprep.config` has since changed or is
+   unavailable. It must not read or create a separate retained libprep file.
 5. On the disposable run, exercise an unknown kit and malformed/missing config.
    Expect an actionable error report and no affected analysis subprocess launch.
    Restore valid inputs/configuration and retry through normal manager commands.

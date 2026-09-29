@@ -3,15 +3,16 @@
 import json
 import logging
 import os
+import re
 
 from pathlib import Path
+
+import yaml
 
 from configmaker.libprep import LibprepConfig, LibprepConfigError, find_read_geometry
 
 log = logging.getLogger(__name__)
 AUTHORITATIVE_CONFIG = Path("/opt/gcf-workflows/libprep.config")
-SNAPSHOT_NAME = "bfq-libprep.config"
-SELECTION_NAME = "bfq-libprep.json"
 
 
 def capture_config(cfg):
@@ -28,64 +29,60 @@ def capture_config(cfg):
     return cfg.run.libprep_config
 
 
-def _atomic_write(path, content):
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_bytes(content)
-    temporary.replace(path)
-
-
 def select_workflow(cfg):
     """Select once from actual demultiplexer geometry, shared with configmaker."""
     if cfg.run.workflow_selection is None:
         snapshot = capture_config(cfg)
         selection = snapshot.select(cfg.run.libprep, find_read_geometry([cfg.output_path]))
-        # Retain enough configuration to resume reporting/finalization without
-        # reinterpreting completed analysis through a newly edited source file.
-        cfg.output_path.mkdir(parents=True, exist_ok=True)
-        _atomic_write(cfg.output_path / SNAPSHOT_NAME, snapshot.content)
-        _atomic_write(
-            cfg.output_path / SELECTION_NAME,
-            (json.dumps(selection.diagnostics(), indent=2) + "\n").encode(),
-        )
         cfg.run.workflow_selection = selection
     cfg.run.pipeline = cfg.run.workflow_selection.workflow
     log.info("Libprep selection: %s", json.dumps(cfg.run.workflow_selection.diagnostics()))
     return cfg.run.workflow_selection
 
 
-def prepare_execution(cfg, stage):
-    """Start a fresh snapshot under the execution lease, or restore completed analysis."""
+def _checked_workflow(workflow, source):
+    if not isinstance(workflow, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", workflow):
+        raise LibprepConfigError(
+            f"Missing or invalid completed analysis workflow in {source}. "
+            "Restore the original analysis configuration or restart from analysis."
+        )
+    return workflow
+
+
+def workflow_from_projects(cfg, projects):
+    """Recover older state from actual generated configs, never from current /opt."""
+    workflows = set()
+    run_date = cfg.run.run_id.split("_", 1)[0]
+    work_root = Path(os.environ.get("TMPDIR", "/bfq-tmp"))
+    for project in sorted(projects):
+        path = work_root / f"{project}_{run_date}" / "config.yaml"
+        try:
+            config = yaml.safe_load(path.read_text(encoding="utf-8"))
+            workflow = _checked_workflow(config.get("workflow"), path)
+        except (OSError, ValueError, AttributeError, yaml.YAMLError) as error:
+            raise LibprepConfigError(
+                f"Cannot recover completed analysis workflow from {path}: {error}. "
+                "Restore the original project config.yaml or restart from analysis."
+            ) from error
+        workflows.add(workflow)
+    if len(workflows) != 1:
+        raise LibprepConfigError(
+            f"Cannot recover one completed analysis workflow for {cfg.run.run_id}: "
+            f"found {sorted(workflows)}. Restore the original project configurations "
+            "or restart from analysis."
+        )
+    workflow = workflows.pop()
+    log.info("Recovered completed analysis workflow=%s from project config.yaml", workflow)
+    return workflow
+
+
+def prepare_execution(cfg, stage, *, workflow=None):
+    """Capture analysis inputs in memory or restore only the completed workflow name."""
     cfg.run.libprep_config = None
     cfg.run.workflow_selection = None
     cfg.run.pipeline = None
     if stage in ("demultiplexing", "analysis"):
         capture_config(cfg)
-        return
-
-    snapshot_path = cfg.output_path / SNAPSHOT_NAME
-    selection_path = cfg.output_path / SELECTION_NAME
-    if not snapshot_path.exists() and not selection_path.exists():
-        # Legacy results predate this feature. Make the necessary bootstrap explicit.
-        log.warning(
-            "No retained libprep selection for %s; resolving legacy results from %s. "
-            "Verify the selected workflow matches the existing analysis.",
-            cfg.run.run_id,
-            AUTHORITATIVE_CONFIG,
-        )
-        select_workflow(cfg)
-        return
-    try:
-        saved = json.loads(selection_path.read_bytes())
-        snapshot = LibprepConfig(saved["source"], snapshot_path.read_bytes())
-        selection = snapshot.select(saved["kit"], saved["read_geometry"])
-        if selection.diagnostics() != saved:
-            raise ValueError("retained configuration and selection/hash disagree")
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        raise LibprepConfigError(
-            f"Cannot restore libprep selection from {selection_path}: {error}. "
-            "Restore the matching snapshot files or restart from analysis."
-        ) from error
-    cfg.run.libprep_config = snapshot
-    cfg.run.workflow_selection = selection
-    cfg.run.pipeline = selection.workflow
-    log.info("Restored libprep selection: %s", json.dumps(selection.diagnostics()))
+    else:
+        cfg.run.pipeline = _checked_workflow(workflow, "flowcell state")
+        log.info("Restored completed analysis workflow=%s from state", cfg.run.pipeline)

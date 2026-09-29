@@ -10,7 +10,13 @@ import yaml
 from bcl2fastq_pipeline.state import FlowcellStateStore, new_state
 from configmaker.configmaker import add_workflow
 from configmaker.libprep import LibprepConfigError
-from test_state_integration import RUN_ID, configured_bfq, write_fastq, write_inputs
+from test_state_integration import (
+    RUN_ID,
+    completed_state,
+    configured_bfq,
+    write_fastq,
+    write_inputs,
+)
 
 from bcl2fastq_pipeline import (
     afterFastq,
@@ -92,9 +98,9 @@ def test_daemon_and_configmaker_share_snapshot_through_source_edits(  # noqa: PL
     write_stats(output, geometry)
     real_prepare = workflow_config.prepare_execution
 
-    def prepare(cfg, stage):
+    def prepare(cfg, stage, **kwargs):
         assert store.execution_active(RUN_ID)
-        real_prepare(cfg, stage)
+        real_prepare(cfg, stage, **kwargs)
         # Edit after capture, before workflow copying/selection.
         authoritative.write_bytes(CONTENT.replace(b"-q 19", b"-q 88"))
 
@@ -149,12 +155,14 @@ def test_daemon_and_configmaker_share_snapshot_through_source_edits(  # noqa: PL
     cli._run_state_backed_flowcell(cfg, store, logging.getLogger("test"), prepare=True)
     assert store.read(RUN_ID)["status"] == "completed"
     assert len(generated) == 2
-    assert (output / workflow_config.SNAPSHOT_NAME).read_bytes() == CONTENT
-    saved = json.loads((output / workflow_config.SELECTION_NAME).read_text())
-    assert saved["source"] == str(authoritative)
-    assert saved["entry"].endswith(" SE" if len(geometry) == 1 else " PE")
+    assert not (output / "bfq-libprep.config").exists()
+    assert not (output / "bfq-libprep.json").exists()
+    assert store.read(RUN_ID)["stages"]["analysis"]["metadata"] == {"workflow": workflow}
+    selection = generated[0]["libprep_selection"]
+    assert selection["entry"].endswith(" SE" if len(geometry) == 1 else " PE")
+    assert str(authoritative) in caplog.text
     assert "retired and ignored" in caplog.text
-    assert saved["sha256"] in caplog.text
+    assert selection["sha256"] in caplog.text
 
 
 @pytest.mark.parametrize("problem", ["missing", "malformed", "unknown"])
@@ -175,15 +183,17 @@ def test_configuration_errors_prevent_analysis_launch(workflow_run, monkeypatch,
     launch.assert_not_called()
 
 
-def test_analysis_restart_refreshes_but_later_stages_restore(workflow_run):
+def test_analysis_restart_refreshes_but_later_stages_restore_only_workflow(workflow_run):
     cfg, _source, output, authoritative = workflow_run
     write_stats(output, [150, 150])
     first = workflow_config.select_workflow(cfg)
-    authoritative.write_bytes(CONTENT.replace(b"metagenome", b"rnaseq"))
+    authoritative.unlink()
     for stage in ("reporting", "finalization"):
-        workflow_config.prepare_execution(cfg, stage)
+        workflow_config.prepare_execution(cfg, stage, workflow=first.workflow)
         assert cfg.run.pipeline == "metagenome"
-        assert cfg.run.libprep_config.sha256 == first.config.sha256
+        assert cfg.run.libprep_config is None
+        assert cfg.run.workflow_selection is None
+    authoritative.write_bytes(CONTENT.replace(b"metagenome", b"rnaseq"))
     workflow_config.prepare_execution(cfg, "analysis")
     second = workflow_config.select_workflow(cfg)
     assert second.workflow == "rnaseq"
@@ -193,18 +203,97 @@ def test_analysis_restart_refreshes_but_later_stages_restore(workflow_run):
     assert cfg.run.workflow_selection is None
 
 
-def test_corrupt_retained_snapshot_fails_closed(workflow_run):
-    cfg, _source, output, _authoritative = workflow_run
-    write_stats(output, [150, 150])
-    workflow_config.select_workflow(cfg)
-    (output / workflow_config.SNAPSHOT_NAME).write_bytes(CONTENT.replace(b"-q 19", b"-q 20"))
-    with pytest.raises(LibprepConfigError, match="snapshot files or restart from analysis"):
-        workflow_config.prepare_execution(cfg, "finalization")
+@pytest.mark.parametrize("stage", ["reporting", "finalization"])
+@pytest.mark.parametrize("recorded", [False, True])
+def test_downstream_daemon_recovers_only_workflow(workflow_run, monkeypatch, stage, recorded):
+    cfg, source, output, authoritative = workflow_run
+    authoritative.unlink()
+    projects = ["GCF-2026-001", "GCF-2026-002"]
+    for project in projects:
+        write_fastq(output / project / "sample_R1.fastq.gz")
+        if not recorded:
+            work = cfg.static.paths.analysis_dir / f"{project}_260918"
+            work.mkdir(parents=True)
+            (work / "config.yaml").write_text("workflow: metagenome\n")
+    # Artifacts from the first PR revision must neither be read nor be needed.
+    for name in ("bfq-libprep.config", "bfq-libprep.json"):
+        (output / name).write_text("obsolete: [")
+    state = new_state(RUN_ID, source, output, origin="legacy_rerun", start_stage=stage, cfg=cfg)
+    if recorded:
+        state["stages"]["analysis"]["metadata"]["workflow"] = "metagenome"
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    store.create(state)
+    calls = []
+
+    def check_workflow(*_args):
+        assert store.execution_active(RUN_ID)
+        assert cfg.run.pipeline == "metagenome"
+        assert cfg.run.libprep_config is None
+        assert cfg.run.workflow_selection is None
+        calls.append("work")
+        return projects
+
+    monkeypatch.setattr(misc, "enoughFreeSpace", lambda: True)
+    monkeypatch.setattr(afterFastq, "analysis_steps", Mock(side_effect=AssertionError("analysis")))
+    monkeypatch.setattr(cli, "_run_reporting", check_workflow)
+    monkeypatch.setattr(afterFastq, "finalize", check_workflow)
+    monkeypatch.setattr(findFlowCells, "markFinished", lambda: projects)
+    monkeypatch.setattr(notifications, "send_notification", lambda *_args: None)
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("test"), prepare=True)
+    assert store.read(RUN_ID)["status"] == "completed"
+    assert store.read(RUN_ID)["stages"]["analysis"]["metadata"] == {"workflow": "metagenome"}
+    assert len(calls) == (2 if stage == "reporting" else 1)
+    for name in ("bfq-libprep.config", "bfq-libprep.json"):
+        assert (output / name).read_text() == "obsolete: ["
 
 
-def test_legacy_later_stage_bootstrap_is_explicit(workflow_run, caplog):
-    cfg, _source, output, _authoritative = workflow_run
-    write_stats(output, [150, 150])
-    workflow_config.prepare_execution(cfg, "reporting")
-    assert cfg.run.pipeline == "metagenome"
-    assert "resolving legacy results" in caplog.text
+@pytest.mark.parametrize("problem", ["missing", "malformed", "conflicting", "no-workflow"])
+def test_legacy_recovery_does_not_guess_from_current_source(workflow_run, problem):
+    cfg, source, output, _authoritative = workflow_run
+    projects = ["GCF-2026-001", "GCF-2026-002"]
+    for project in projects:
+        work = cfg.static.paths.analysis_dir / f"{project}_260918"
+        work.mkdir(parents=True)
+        (work / "config.yaml").write_text("workflow: metagenome\n")
+    path = work / "config.yaml"
+    if problem == "missing":
+        path.unlink()
+    elif problem == "malformed":
+        path.write_text("workflow: [")
+    elif problem == "no-workflow":
+        path.write_text("{}")
+    else:
+        path.write_text("workflow: rnaseq")
+    state = new_state(
+        RUN_ID, source, output, origin="legacy_rerun", start_stage="reporting", cfg=cfg
+    )
+    state["projects"] = projects
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    store.create(state)
+    with (
+        store.execution_lease(RUN_ID),
+        pytest.raises(LibprepConfigError, match="restart from analysis"),
+    ):
+        cli._prepare_workflow(cfg, store, state)
+    assert store.read(RUN_ID) == state
+    assert cfg.run.libprep_config is None
+
+
+@pytest.mark.parametrize("workflow", [None, "../other", "", 7])
+def test_missing_or_invalid_recorded_workflow_fails_closed(workflow_run, workflow):
+    cfg, _source, _output, _authoritative = workflow_run
+    with pytest.raises(LibprepConfigError, match="flowcell state"):
+        workflow_config.prepare_execution(cfg, "finalization", workflow=workflow)
+    assert cfg.run.libprep_config is None
+
+
+@pytest.mark.parametrize("stage", ["demultiplexing", "analysis", "reporting", "finalization"])
+def test_restart_invalidates_workflow_only_when_analysis_will_rerun(workflow_run, stage):
+    cfg, source, output, _authoritative = workflow_run
+    state = completed_state(cfg, source, output)
+    state["stages"]["analysis"]["metadata"]["workflow"] = "metagenome"
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    store.create(state)
+    queued = store.queue(RUN_ID, stage)
+    expected = {} if stage in ("demultiplexing", "analysis") else {"workflow": "metagenome"}
+    assert queued["stages"]["analysis"]["metadata"] == expected

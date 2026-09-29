@@ -422,11 +422,16 @@ For intentional generic QC, explicitly choose a configured kit with
 `workflow: default`, for example `Libprep,Custom` with the existing `Custom SE` /
 `Custom PE` entries.
 
-Source, SHA-256, selected kit entry, read geometry and workflow are logged and
-recorded in `bfq-libprep.json` beside the exact `bfq-libprep.config` snapshot in
-the flowcell output. Project `config.yaml` also contains `libprep_selection`.
-Analysis restarts select a fresh authoritative snapshot; reporting/finalization
-retries reuse the retained analysis selection. See
+Source, SHA-256, selected kit entry, read geometry and workflow are logged;
+project `config.yaml` contains `libprep_selection`. The exact configuration lives
+in each project's copied `src/gcf-workflows/libprep.config`. BFQ keeps the
+execution capture in memory and creates no separate libprep files in the flowcell
+output. Retaining the actual analysis workdir is the separate scope of #124.
+
+Analysis restarts capture the current authoritative configuration again.
+Reporting/finalization retries use only the completed workflow name, recorded in
+`stages.analysis.metadata.workflow` in the existing flowcell state. Older state
+can recover that name from the original project `config.yaml` files. See
 [configuration testing and deployment](docs/libprep-configuration.md).
 
 ## Configuration model
