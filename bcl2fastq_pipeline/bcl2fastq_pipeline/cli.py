@@ -17,7 +17,7 @@ import bcl2fastq_pipeline.findFlowCells
 import bcl2fastq_pipeline.makeFastq
 import bcl2fastq_pipeline.misc
 
-from bcl2fastq_pipeline import notification_delivery, notifications, workflow_config
+from bcl2fastq_pipeline import notification_delivery, notifications, preflight, workflow_config
 from bcl2fastq_pipeline.config import PipelineConfig
 from bcl2fastq_pipeline.state import (
     ExecutionLeaseError,
@@ -119,7 +119,6 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
             bcl2fastq_pipeline.findFlowCells.newFlowCell()
             if not cfg.run.run_id:
                 return
-            _prepare_workflow(cfg, store, current)
         state = store.begin_attempt(run_id, cfg=cfg)
         first_stage = state["current_stage"]
         start_time = datetime.datetime.now()
@@ -138,6 +137,12 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                 store.start_stage(run_id, stage)
 
             try:
+                if stage in {"demultiplexing", "analysis"}:
+                    preflight.run_preflight(cfg, store, stage)
+                    if prepare and not cfg.run.custom:
+                        raise RuntimeError("BFQ SampleSheet is missing usable [CustomOptions]")
+                if prepare and index == start_index:
+                    _prepare_workflow(cfg, store, current)
                 if index == start_index and stage != "demultiplexing":
                     log.info("Checking FASTQ manifests before %s: %s", stage, run_id)
                     bcl2fastq_pipeline.afterFastq.md5sum_worker(cfg)

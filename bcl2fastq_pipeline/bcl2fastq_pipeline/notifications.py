@@ -157,6 +157,7 @@ def _processed_message(cfg, message, payload):
     text_summary = "\n".join(summary)
     message.set_content(text_summary)
     metadata = misc.parseSampleSheetMetrics(saved_cfg, projects=projects).replace("\n", "\n<br>")
+    discovery = misc.analysisSampleMetrics(saved_cfg, projects).replace("\n", "\n<br>")
     metrics = misc.getFCmetricsImproved(saved_cfg)
     disk_usage = afterFastq._disk_usage_message(saved_cfg)
     message.add_alternative(
@@ -169,6 +170,8 @@ def _processed_message(cfg, message, payload):
         + metrics
         + "<br>"
         + metadata
+        + "<br>"
+        + discovery
         + "<br>"
         + disk_usage
         + "</body></html>",

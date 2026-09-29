@@ -8,6 +8,7 @@ import pytest
 
 from bcl2fastq_pipeline.config import Paths, PipelineConfig, RunContext, StaticConfig
 from bcl2fastq_pipeline.state import FlowcellStateStore, StateConflictError, new_state
+from openpyxl import Workbook
 
 from bcl2fastq_pipeline import afterFastq, cli, findFlowCells, makeFastq, misc, notifications
 
@@ -52,10 +53,21 @@ def configured_bfq(tmp_path):
 def write_inputs(directory, suffix=""):
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "SampleSheet.csv").write_text(
-        f"[CustomOptions]\nLibprep,Illumina DNA Prep\nUser,test{suffix}\n",
+        f"[CustomOptions]\nLibprep,Illumina DNA Prep\nUser,test{suffix}\n"
+        "[Data]\nSample_ID,Sample_Project,index\nsample,GCF-2026-001,ACGT\n",
         encoding="utf-8",
     )
-    (directory / "Sample-Submission-Form.xlsx").write_bytes(f"form{suffix}".encode())
+    workbook = Workbook()
+    customer = workbook.active
+    customer.title = "Sample-Submission-Form"
+    customer.cell(15, 1, "Unique Sample ID")
+    customer.cell(15, 2, "Sample Group")
+    customer.cell(16, 1, "sample")
+    customer.cell(16, 2, f"group{suffix}")
+    lab = workbook.create_sheet("INFO (GCF-lab only)")
+    lab.append(["Sample_ID"])
+    lab.append(["sample"])
+    workbook.save(directory / "Sample-Submission-Form.xlsx")
 
 
 def write_fastq(path):
@@ -277,7 +289,9 @@ def test_rerun_refresh_inputs_is_explicit(tmp_path):
     )
 
     assert "test-instrument" in (output / "SampleSheet.csv").read_text()
-    assert (output / "Sample-Submission-Form.xlsx").read_bytes() == b"form-instrument"
+    assert (output / "Sample-Submission-Form.xlsx").read_bytes() == (
+        source / "Sample-Submission-Form.xlsx"
+    ).read_bytes()
 
 
 def test_initialize_analysis_requires_recognized_restored_fastqs(tmp_path):

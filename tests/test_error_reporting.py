@@ -1,3 +1,4 @@
+import json
 import logging
 import subprocess
 import sys
@@ -180,6 +181,31 @@ def test_identical_failure_suppressed_across_rerun_and_store_reload(notification
     fail_run(cfg, fresh_store)
     assert smtp.call_count == 1
     assert fresh_store.read(cfg.run.run_id)["notification"] == before
+
+
+def test_malformed_inputs_send_structured_findings_without_reparsing(notification_run, tmp_path):
+    from bcl2fastq_pipeline.preflight import PreflightValidationError  # noqa: PLC0415
+    from configmaker.validation import validate_inputs  # noqa: PLC0415
+
+    cfg, store, smtp = notification_run
+    sheet = tmp_path / "SampleSheet.csv"
+    sheet.write_text("[Data]\nSample_ID,Sample_Project\n001,GCF-2026-043\n")
+    form = tmp_path / "Sample-Submission-Form.xlsx"
+    form.write_bytes(b"not a workbook")
+    validation = validate_inputs([sheet], [form])
+    # Once diagnosed, error reporting needs no input file or parser access.
+    form.unlink()
+    fail_run(cfg, store, PreflightValidationError(validation), stage="demultiplexing")
+    smtp.return_value.send_message.assert_called_once()
+    message = smtp.return_value.send_message.call_args.args[0]
+    assert "Input preflight failed" in message.get_body(preferencelist=("plain",)).get_content()
+    attachments = list(message.iter_attachments())
+    assert len(attachments) == 2
+    assert attachments[1].get_content_type() == "application/json"
+    saved = json.loads(attachments[1].get_payload(decode=True))
+    assert saved["status"] == "failed"
+    assert saved["inputs"] == validation.to_dict()["inputs"]
+    assert saved["errors"]
 
 
 @pytest.mark.parametrize(

@@ -24,6 +24,7 @@ from pathlib import Path
 import yaml
 
 from configmaker.configmaker import SEQUENCERS
+from configmaker.validation import VALIDATOR_VERSION
 
 from bcl2fastq_pipeline import workflow_config
 from bcl2fastq_pipeline.config import PipelineConfig
@@ -491,6 +492,8 @@ def full_align(cfg):
             selection.kit,
             "--machine",
             str(machine),
+            "--expected-validation-version",
+            VALIDATOR_VERSION,
             "--libprep-config",
             str(dst / "libprep.config"),
             "--libprep-sha256",
@@ -503,6 +506,9 @@ def full_align(cfg):
         if (analysis_dir / "data/raw/fastq").exists():
             cmd.append("--skip-create-fastq-dir")
         subprocess.check_call(cmd, cwd=analysis_dir)
+        discovery_summary = analysis_dir / "configmaker.analysis-summary.json"
+        if discovery_summary.is_file():
+            shutil.copy2(discovery_summary, cfg.output_path / f"configmaker-analysis-{p}.json")
 
         # run snakemake pipeline
         cmd = [

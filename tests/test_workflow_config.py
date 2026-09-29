@@ -157,7 +157,9 @@ def test_daemon_and_configmaker_share_snapshot_through_source_edits(  # noqa: PL
     assert len(generated) == 2
     assert not (output / "bfq-libprep.config").exists()
     assert not (output / "bfq-libprep.json").exists()
-    assert store.read(RUN_ID)["stages"]["analysis"]["metadata"] == {"workflow": workflow}
+    metadata = store.read(RUN_ID)["stages"]["analysis"]["metadata"]
+    assert metadata["workflow"] == workflow
+    assert metadata["input_preflight"]["status"] == "passed"
     selection = generated[0]["libprep_selection"]
     assert selection["entry"].endswith(" SE" if len(geometry) == 1 else " PE")
     assert str(authoritative) in caplog.text

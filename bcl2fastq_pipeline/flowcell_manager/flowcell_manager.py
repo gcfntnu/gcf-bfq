@@ -21,13 +21,12 @@ from bcl2fastq_pipeline.state import (
     locate_source_run,
     new_state,
     output_entries,
-    refresh_run_inputs,
     resolve_output_path,
     validate_restart_boundary,
     validate_restored_fastqs,
 )
 
-from bcl2fastq_pipeline import notification_delivery
+from bcl2fastq_pipeline import notification_delivery, preflight
 
 pd.set_option("display.max_rows", 5000)
 pd.set_option("display.max_columns", 12)
@@ -249,6 +248,8 @@ def rerun_flowcell(**args):
     state = {**state, "output_path": str(output_path)}
     paths = _cleanup_for_state(state, from_stage)
     _print_plan("Rerun", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
+    if from_stage in {"demultiplexing", "analysis"} or refresh_inputs:
+        preflight.require_valid_inputs(state["source_path"], output_path, refresh=refresh_inputs)
     if dry_run:
         return state
     if not _confirm(f"Queue rerun for {run_id}", force):
@@ -260,6 +261,11 @@ def rerun_flowcell(**args):
             raise StateConflictError("Run changed while preparing the command; inspect and retry")
         if _cleanup_for_state(state, from_stage) != paths:
             raise StateConflictError("Output paths changed after the preview; inspect and retry")
+        selected = None
+        if from_stage in {"demultiplexing", "analysis"} or refresh_inputs:
+            selected, _result = preflight.require_valid_inputs(
+                state["source_path"], output_path, refresh=refresh_inputs
+            )
         if creating:
             store.create(state)
         else:
@@ -271,9 +277,14 @@ def rerun_flowcell(**args):
                 output_path=output_path,
             )
 
+        if selected is not None:
+            # Preserve selected legacy filenames before demultiplexing cleanup can
+            # remove them, and make copy failures occur before results are removed.
+            effective = preflight.copy_run_inputs(selected, output_path)
+            result = preflight.validate_selection(effective)
+            if not result.ok:
+                raise preflight.PreflightValidationError(result)
         apply_cleanup(paths)
-        if refresh_inputs:
-            refresh_run_inputs(state["source_path"], state["output_path"])
         return store.queue(run_id, from_stage)
 
 
@@ -323,19 +334,52 @@ def initialize_flowcell(**args):
     }
     paths = _cleanup_for_state(state, from_stage)
     _print_plan("Initialize", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
+    preflight.require_valid_inputs(source_path, output_path, refresh=refresh_inputs)
     if dry_run:
         return state
     if not _confirm(f"Initialize {run_id}", force):
         print("Skipping...")
         return state
 
-    # Persist "preparing" before destructive work. If cleanup fails, the daemon
-    # will not run this flowcell until the operator explicitly resolves it.
-    store.create(state)
-    apply_cleanup(paths)
-    if refresh_inputs:
-        refresh_run_inputs(source_path, output_path)
-    return store.queue(run_id, from_stage)
+    with store.execution_lease(run_id):
+        if store.exists(run_id):
+            raise StateConflictError(f"State was created for {run_id}; inspect and retry")
+        if _cleanup_for_state(state, from_stage) != paths:
+            raise StateConflictError("Output paths changed after the preview; inspect and retry")
+        selected, _result = preflight.require_valid_inputs(
+            source_path, output_path, refresh=refresh_inputs
+        )
+        # Persist preparing before copies or destructive work; a partial operation
+        # must never become eligible for the daemon to execute automatically.
+        store.create(state)
+        effective = preflight.copy_run_inputs(selected, output_path)
+        result = preflight.validate_selection(effective)
+        if not result.ok:
+            raise preflight.PreflightValidationError(result)
+        apply_cleanup(paths)
+        return store.queue(run_id, from_stage)
+
+
+def validate_flowcell(**args):
+    """Resolve BFQ's effective input pair without creating state or output paths."""
+    cfg = get_cfg()
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    run_id, state, legacy = _resolve_state_or_legacy(args["flowcell"], cfg, store)
+    if state is not None:
+        output_path = resolve_output_path(state["output_path"], run_id, cfg)
+        source_path = Path(state["source_path"])
+    else:
+        output_path = (
+            _legacy_output_path(legacy, run_id, cfg)
+            if not legacy.empty
+            else resolve_output_path(run_id, run_id, cfg)
+        )
+        source_path = locate_source_run(run_id, cfg) or cfg.static.paths.nova_base_dir / run_id
+    print(f"Input validation: {run_id}")
+    _selection, result = preflight.require_valid_inputs(
+        source_path, output_path, refresh=args.get("refresh_inputs", False)
+    )
+    return result
 
 
 def _archive_targets(flowcell, projects):
@@ -620,6 +664,17 @@ def main():
     parser_status = subparsers.add_parser("status", help="Show concise status for one run.")
     parser_status.set_defaults(func=status_flowcell)
     parser_status.add_argument("flowcell")
+
+    parser_validate = subparsers.add_parser(
+        "validate", help="Check the effective input pair read-only, before any processing."
+    )
+    parser_validate.set_defaults(func=validate_flowcell)
+    parser_validate.add_argument("flowcell", help="Run ID or flowcell path.")
+    parser_validate.add_argument(
+        "--refresh-inputs",
+        action="store_true",
+        help="Preview validation of both instrument inputs without copying them.",
+    )
 
     parser_retry = subparsers.add_parser(
         "retry-notifications", help="Retry saved completion mail without rerunning processing."

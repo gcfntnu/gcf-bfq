@@ -649,6 +649,21 @@ class FlowcellStateStore:
 
         return self.mutate(run_id, update)
 
+    def record_input_preflight(self, run_id: str, stage: str, report: dict) -> dict:
+        """Attach a complete hash-bound report to its existing restart boundary."""
+        if stage not in {"demultiplexing", "analysis"}:
+            raise StateValidationError(f"Input preflight is not applicable to {stage}")
+
+        def update(state: dict) -> dict:
+            state["stages"][stage]["metadata"]["input_preflight"] = copy.deepcopy(report)
+            if state["attempts"] and state["attempts"][-1]["outcome"] == "running":
+                state["attempts"][-1].setdefault("input_preflight", {})[stage] = copy.deepcopy(
+                    report
+                )
+            return state
+
+        return self.mutate(run_id, update)
+
     def complete_stage(
         self,
         run_id: str,
@@ -1025,6 +1040,7 @@ def cleanup_plan(output_path: Path | str, from_stage: str) -> list[Path]:
             targets.update(output.glob(".multiqc_config_*.yaml"))
             targets.update(output.glob("QC_*"))
             targets.update(output.glob("GCF-*_samplesheet.tsv"))
+            targets.update(output.glob("configmaker-analysis-*.json"))
 
     # Remove descendants if an ancestor is already scheduled, keeping dry-run output concise.
     ordered = sorted(targets, key=lambda path: (len(path.parts), str(path)))
@@ -1055,25 +1071,9 @@ def locate_source_run(run_id: str, cfg) -> Path | None:
 
 def refresh_run_inputs(source_path: Path | str, output_path: Path | str) -> tuple[Path, Path]:
     """Explicitly replace output-side run inputs from the instrument source."""
-    source = Path(source_path)
-    output = Path(output_path)
-    sample_sheets = sorted(source.glob("SampleSheet*.csv"))
-    submission_forms = sorted(source.glob("*Sample-Submission-Form*.xlsx"))
-    if not sample_sheets or not submission_forms:
-        raise StateError(f"Cannot refresh inputs from {source}: required run inputs are missing")
+    # Local import avoids a module cycle: preflight's operator errors inherit StateError.
+    from bcl2fastq_pipeline.preflight import copy_run_inputs, require_valid_inputs  # noqa: PLC0415
 
-    selected_sheet = None
-    for sheet in sample_sheets:
-        options, _ = parse_custom_options(sheet)
-        if options:
-            selected_sheet = sheet
-            break
-    if selected_sheet is None:
-        raise StateError(f"Cannot refresh inputs from {source}: no BFQ SampleSheet was found")
-
-    output.mkdir(parents=True, exist_ok=True)
-    sheet_dst = output / "SampleSheet.csv"
-    form_dst = output / "Sample-Submission-Form.xlsx"
-    shutil.copy2(selected_sheet, sheet_dst)
-    shutil.copy2(submission_forms[0], form_dst)
-    return sheet_dst, form_dst
+    selection, _result = require_valid_inputs(source_path, output_path, refresh=True)
+    copied = copy_run_inputs(selection, output_path)
+    return copied.sample_sheet, copied.submission_form

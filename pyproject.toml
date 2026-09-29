@@ -12,7 +12,7 @@ authors = [
     { name = "Geir Amund Svan Hasle", email = "geir.hasle@ntnu.no" },
 ]
 dependencies = [
-    "gcf-tools>=0.2",
+    "gcf-tools>=0.3.0",
     "pandas",
     "PyYAML",
     "urllib3",
