@@ -37,7 +37,7 @@ Install the Python application from the repository root with the in-house
 
 ```console
 python -m pip install . \
-  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/6310806678d9bb27dd3f16f82b0ce0711e3efcc8.zip"
+  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/bdd94a1d944120ac8a096ea8876c0de98dd51ab3.zip"
 ```
 
 The installation provides two commands:
@@ -641,7 +641,7 @@ Create an editable environment from the repository root:
 
 ```console
 python -m pip install -e ".[dev]" \
-  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/6310806678d9bb27dd3f16f82b0ce0711e3efcc8.zip"
+  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/bdd94a1d944120ac8a096ea8876c0de98dd51ab3.zip"
 ```
 
 The tools revision above is the companion metadata validation API from
