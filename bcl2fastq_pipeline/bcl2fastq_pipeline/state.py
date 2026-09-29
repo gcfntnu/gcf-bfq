@@ -28,6 +28,8 @@ from bcl2fastq_pipeline.config import parse_custom_options
 SCHEMA_VERSION = 1
 STAGES = ("demultiplexing", "analysis", "reporting", "finalization")
 STAGE_STATUSES = {"pending", "queued", "running", "completed", "failed", "skipped"}
+DELIVERY_STATUSES = {"pending", "sending", "sent", "failed", "uncertain", "superseded"}
+DELIVERY_ATTEMPT_STATUSES = {"sending", "sent", "failed", "uncertain"}
 RUN_STATUSES = {
     "preparing",
     "queued",
@@ -55,6 +57,10 @@ class StateConflictError(StateError):
 
 class ExecutionLeaseError(StateConflictError):
     """Raised when another process owns the run execution lease."""
+
+
+class DeliveryUncertainError(RuntimeError):
+    """The relay may have accepted mail, so retrying could deliver a duplicate."""
 
 
 def utcnow() -> str:
@@ -158,6 +164,7 @@ def new_state(  # noqa: PLR0913
             "notified": False,
             "notified_at": None,
         },
+        "delivery_notifications": [],
         "restart_request": None,
         "archive": {"status": "active", "archived_at": None},
         "attempts": [],
@@ -218,6 +225,114 @@ def validate_state(state: dict) -> None:
     for stage, detail in state["stages"].items():
         if not isinstance(detail, dict) or detail.get("status") not in STAGE_STATUSES:
             raise StateValidationError(f"Invalid stage state for {stage}")
+    # Optional in v1: loading an older document must not invent mail to send.
+    if "delivery_notifications" in state:
+        _validate_delivery_notifications(state["delivery_notifications"])
+
+
+def _validate_delivery_notifications(notifications) -> None:
+    if not isinstance(notifications, list):
+        raise StateValidationError("delivery_notifications must be a list")
+    identifiers = set()
+    required = {
+        "id",
+        "kind",
+        "stage",
+        "attempt",
+        "status",
+        "created_at",
+        "sent_at",
+        "last_error",
+        "payload",
+        "attempts",
+    }
+    for entry in notifications:
+        if not isinstance(entry, dict) or required - entry.keys():
+            raise StateValidationError("Invalid delivery notification fields")
+        if (
+            not isinstance(entry["kind"], str)
+            or not entry["kind"]
+            or ":" in entry["kind"]
+            or not isinstance(entry["attempt"], int)
+            or isinstance(entry["attempt"], bool)
+            or entry["attempt"] < 1
+            or entry["id"] != f"{entry['kind']}:{entry['attempt']}"
+        ):
+            raise StateValidationError("Invalid delivery notification identity")
+        if entry["id"] in identifiers:
+            raise StateValidationError(f"Duplicate delivery notification: {entry['id']}")
+        identifiers.add(entry["id"])
+        if (
+            entry["stage"] not in STAGES
+            or not isinstance(entry["status"], str)
+            or entry["status"] not in DELIVERY_STATUSES
+        ):
+            raise StateValidationError("Invalid delivery notification stage or status")
+        if not isinstance(entry["payload"], dict) or not isinstance(entry["created_at"], str):
+            raise StateValidationError("Invalid delivery notification payload or timestamp")
+        for field in ("sent_at", "last_error", "invalidated_at", "invalidation_reason"):
+            if entry.get(field) is not None and not isinstance(entry[field], str):
+                raise StateValidationError(f"Invalid delivery notification {field}")
+        attempts = entry["attempts"]
+        if not isinstance(attempts, list):
+            raise StateValidationError("Delivery notification attempts must be a list")
+        for number, attempt in enumerate(attempts, start=1):
+            if (
+                not isinstance(attempt, dict)
+                or attempt.get("attempt") != number
+                or not isinstance(attempt.get("status"), str)
+                or attempt["status"] not in DELIVERY_ATTEMPT_STATUSES
+                or not isinstance(attempt.get("started_at"), str)
+                or "completed_at" not in attempt
+                or "error" not in attempt
+            ):
+                raise StateValidationError("Invalid delivery attempt")
+            for field in ("completed_at", "error"):
+                if attempt[field] is not None and not isinstance(attempt[field], str):
+                    raise StateValidationError(f"Invalid delivery attempt {field}")
+
+
+def _append_delivery_notification(state: dict, stage: str, notification: dict | None) -> None:
+    if notification is None:
+        return
+    if (
+        not isinstance(notification, dict)
+        or not isinstance(notification.get("kind"), str)
+        or not notification["kind"]
+        or not isinstance(notification.get("payload"), dict)
+    ):
+        raise StateValidationError("Notification requires a kind and payload object")
+    state.setdefault("delivery_notifications", []).append(
+        {
+            "id": f"{notification['kind']}:{state['attempt']}",
+            "kind": notification["kind"],
+            "stage": stage,
+            "attempt": state["attempt"],
+            "status": "pending",
+            "created_at": utcnow(),
+            "sent_at": None,
+            "last_error": None,
+            "payload": copy.deepcopy(notification["payload"]),
+            "attempts": [],
+        }
+    )
+
+
+def _invalidate_delivery_notifications(
+    state: dict, from_stage: str, reason: str, *, unsent_only: bool = False
+) -> None:
+    boundary = STAGES.index(from_stage)
+    now = utcnow()
+    for entry in state.get("delivery_notifications", []):
+        if (
+            STAGES.index(entry["stage"]) < boundary
+            or entry["status"] == "superseded"
+            or (unsent_only and entry["status"] == "sent")
+        ):
+            continue
+        entry["status"] = "superseded"
+        entry["invalidated_at"] = now
+        entry["invalidation_reason"] = reason
 
 
 def validate_restart_boundary(state: dict, start_stage: str) -> None:
@@ -387,6 +502,7 @@ class FlowcellStateStore:
             raise StateValidationError(f"Unsupported stage: {start_stage}")
 
         def update(state: dict) -> dict:
+            _invalidate_delivery_notifications(state, start_stage, f"Restart from {start_stage}")
             state["status"] = "preparing"
             state["current_stage"] = start_stage
             state["restart_request"] = {
@@ -409,6 +525,7 @@ class FlowcellStateStore:
 
         def update(state: dict) -> dict:
             validate_restart_boundary(state, start_stage)
+            _invalidate_delivery_notifications(state, start_stage, f"Restart from {start_stage}")
             start_index = STAGES.index(start_stage)
             for index, stage in enumerate(STAGES):
                 detail = state["stages"][stage]
@@ -480,7 +597,15 @@ class FlowcellStateStore:
 
         return self.mutate(run_id, update)
 
-    def complete_stage(self, run_id: str, stage: str, metadata_: dict | None = None) -> dict:
+    def complete_stage(
+        self,
+        run_id: str,
+        stage: str,
+        metadata_: dict | None = None,
+        *,
+        notification: dict | None = None,
+    ) -> dict:
+        """Atomically record completed work and its optional delivery intent."""
         if stage not in STAGES:
             raise StateValidationError(f"Unsupported stage: {stage}")
 
@@ -500,6 +625,7 @@ class FlowcellStateStore:
                 next_stage = STAGES[index + 1]
                 state["current_stage"] = next_stage
                 state["stages"][next_stage]["status"] = "queued"
+            _append_delivery_notification(state, stage, notification)
             return state
 
         return self.mutate(run_id, update)
@@ -580,7 +706,95 @@ class FlowcellStateStore:
             self._atomic_write_unlocked(state)
             return True
 
-    def complete_run(self, run_id: str, projects: list[str]) -> dict:
+    def deliver_notification(  # noqa: PLR0913
+        self,
+        run_id: str,
+        notification_id: str,
+        send,
+        *,
+        retry: bool = False,
+        retry_uncertain: bool = False,
+    ) -> bool:
+        """Deliver one intent without modifying processing state.
+
+        The caller must hold the run's execution lease. The state lock spans SMTP
+        to serialize delivery against cleanup and other retries. ``send(entry)``
+        must not call back into state mutations, which would deadlock this lock.
+
+        Pending entries receive one automatic attempt. Failed entries need an
+        explicit retry; uncertain outcomes also need duplicate-risk acknowledgement.
+        Persisting the claim before SMTP prevents automatic resend after a crash.
+        A crash or write failure after SMTP acceptance cannot establish delivery:
+        the persisted claim is recovered as uncertain, never assumed sent.
+
+        Return True only after success is persisted. Callback exceptions record a
+        failed/uncertain delivery and return False; state I/O failures propagate.
+        """
+        with self.lock(run_id):
+            state = self.read(run_id)
+            entry = next(
+                (
+                    entry
+                    for entry in state.get("delivery_notifications", [])
+                    if entry["id"] == notification_id
+                ),
+                None,
+            )
+            if entry is None:
+                raise StateConflictError(f"No notification {notification_id!r} for {run_id}")
+            if entry["status"] == "sending":
+                message = "Previous delivery was interrupted; SMTP acceptance is unknown"
+                self._finish_delivery_unlocked(state, entry, "uncertain", message)
+            status = entry["status"]
+            if (
+                status in {"sent", "superseded"}
+                or (status == "failed" and not retry)
+                or (status == "uncertain" and not (retry and retry_uncertain))
+            ):
+                return False
+            now = utcnow()
+            entry["status"] = "sending"
+            entry["last_error"] = None
+            entry["attempts"].append(
+                {
+                    "attempt": len(entry["attempts"]) + 1,
+                    "status": "sending",
+                    "started_at": now,
+                    "completed_at": None,
+                    "error": None,
+                }
+            )
+            state["updated_at"] = now
+            self._atomic_write_unlocked(state)
+            try:
+                send(copy.deepcopy(entry))
+            except Exception as error:
+                status = "uncertain" if isinstance(error, DeliveryUncertainError) else "failed"
+                self._finish_delivery_unlocked(
+                    state, entry, status, f"{type(error).__name__}: {error}"
+                )
+                return False
+            self._finish_delivery_unlocked(state, entry, "sent", None)
+            return True
+
+    def _finish_delivery_unlocked(
+        self, state: dict, entry: dict, status: str, error: str | None
+    ) -> None:
+        now = utcnow()
+        entry["status"] = status
+        entry["last_error"] = error
+        if status == "sent":
+            entry["sent_at"] = now
+        if entry["attempts"]:
+            entry["attempts"][-1].update(status=status, completed_at=now, error=error)
+        state["updated_at"] = now
+        self._atomic_write_unlocked(state)
+
+    def complete_run(
+        self, run_id: str, projects: list[str], *, notification: dict | None = None
+    ) -> dict:
+        """Atomically record finalization and its optional delivery intent."""
+
         def update(state: dict) -> dict:
             stage = state["stages"]["finalization"]
             if state["status"] != "running" or stage["status"] != "running":
@@ -602,6 +816,7 @@ class FlowcellStateStore:
             if state["attempts"] and state["attempts"][-1].get("outcome") == "running":
                 state["attempts"][-1]["outcome"] = "completed"
                 state["attempts"][-1]["completed_at"] = now
+            _append_delivery_notification(state, "finalization", notification)
             return state
 
         return self.mutate(run_id, update)
@@ -609,9 +824,30 @@ class FlowcellStateStore:
     def mark_archived(self, run_id: str) -> dict:
         def update(state: dict) -> dict:
             now = utcnow()
+            _invalidate_delivery_notifications(
+                state, "demultiplexing", "Outputs archived", unsent_only=True
+            )
             state["archive"] = {"status": "archived", "archived_at": now}
             if state["status"] == "completed":
                 state["status"] = "archived"
+            return state
+
+        return self.mutate(run_id, update)
+
+    def invalidate_notifications(
+        self,
+        run_id: str,
+        from_stage: str = "demultiplexing",
+        *,
+        reason: str,
+        unsent_only: bool = False,
+    ) -> dict:
+        """Persist invalidation before removing outputs, under an execution lease."""
+        if from_stage not in STAGES:
+            raise StateValidationError(f"Unsupported stage: {from_stage}")
+
+        def update(state: dict) -> dict:
+            _invalidate_delivery_notifications(state, from_stage, reason, unsent_only=unsent_only)
             return state
 
         return self.mutate(run_id, update)
