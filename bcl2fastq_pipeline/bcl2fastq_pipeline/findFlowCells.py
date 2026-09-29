@@ -1,5 +1,6 @@
 """Discovery and completion bookkeeping for BFQ flowcells."""
 
+import csv
 import logging
 import shutil
 
@@ -10,6 +11,7 @@ import flowcell_manager.flowcell_manager as fm
 import bcl2fastq_pipeline.afterFastq as af
 
 from bcl2fastq_pipeline.config import PipelineConfig, parse_custom_options
+from bcl2fastq_pipeline.preflight import copy_run_inputs, select_run_inputs
 from bcl2fastq_pipeline.state import (
     FlowcellStateStore,
     new_state,
@@ -106,42 +108,22 @@ def newFlowCell():
     output = resolve_output_path(state["output_path"], cfg.run.run_id, cfg)
     output_entries(output, allow_missing=state["current_stage"] == "demultiplexing")
 
-    use_output = output.exists()
-    opts = sheet = submission = None
-    if use_output:
-        opts, sheet = get_sample_sheet(output)
-        submission = _submission_form(output)
-
-    if not opts or submission is None:
-        opts, sheet = get_sample_sheet(cfg.run.flowcell_path)
-        submission = _submission_form(cfg.run.flowcell_path)
-        use_output = False
-
-    if not opts:
+    selection = select_run_inputs(cfg.run.flowcell_path, output)
+    opts = {}
+    try:
+        opts, _sheet = parse_custom_options(selection.sample_sheet)
+    except (OSError, UnicodeError, csv.Error):
+        # The shared validator supplies the actionable malformed-input report.
+        pass
+    curated = selection.sample_sheet.parent == output
+    if not opts and not curated and state["origin"] == "new" and not state.get("restart_request"):
+        # Automatic instrument discovery remains opt-in via BFQ CustomOptions.
         log.debug("No BFQ [CustomOptions] sample sheet for %s", cfg.run.run_id)
         cfg.run.reset()
         return
-    if submission is None:
-        log.debug("No sample submission form for %s", cfg.run.run_id)
-        cfg.run.reset()
-        return
 
-    output.mkdir(parents=True, exist_ok=True)
-    if not use_output:
-        shutil.copy2(sheet, output / "SampleSheet.csv")
-        shutil.copy2(submission, output / "Sample-Submission-Form.xlsx")
-        sheet = output / "SampleSheet.csv"
-        submission = output / "Sample-Submission-Form.xlsx"
-    else:
-        # Normalize filenames expected by downstream code after legacy restoration.
-        if sheet.name != "SampleSheet.csv":
-            shutil.copy2(sheet, output / "SampleSheet.csv")
-            sheet = output / "SampleSheet.csv"
-        if submission.name != "Sample-Submission-Form.xlsx":
-            shutil.copy2(submission, output / "Sample-Submission-Form.xlsx")
-            submission = output / "Sample-Submission-Form.xlsx"
-
-    cfg.run.apply_custom(opts, sheet, submission)
+    copied = copy_run_inputs(selection, output)
+    cfg.run.apply_custom(opts, copied.sample_sheet, copied.submission_form)
     log.info(
         "Prepared %s from state origin=%s stage=%s",
         cfg.run.run_id,
