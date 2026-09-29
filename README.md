@@ -103,6 +103,88 @@ original workflow commit. A finalization-only rerun likewise preserves those
 reports. Consequently, a later reporting/finalization attempt's runtime revision
 can differ from the analysis revision correctly recorded in the preserved report.
 
+### Retained analysis workdir snapshots
+
+After successful finalization BFQ retains one archive per project at:
+
+```text
+<outputDir>/<run-id>/provenance/<project>_analysis.tar.gz
+```
+
+This is the actual `<TMPDIR>/<project>_<run-date>` working tree, with **only its
+top-level `data/` entry excluded**. It includes `config.yaml`, the generated
+`Snakefile`, `src/gcf-workflows` (including local edits and untracked files),
+hidden `.snakemake` logs/metadata, and any other files outside `data/`. Symlinks
+are stored as links; their targets are not traversed. Nested directories named
+`data` are included. BFQ does not recopy `/opt/gcf-workflows` or reconstruct code
+from a Git commit when creating a snapshot. It does not add extra copies of the
+sample sheet, submission form, or sequencing inputs: these remain in the
+existing delivery archives.
+
+Snapshots are operational records kept separately from the FASTQ/QC delivery
+archives, including for sensitive runs. They are created with owner-only file
+permissions. They do not freeze dependencies or contain FASTQs, reference
+databases, or container images unless those files already exist outside `data/`.
+Use the retained configuration and workflow to establish manual rerun
+requirements; there is no additional dependency/provenance manifest or
+automatic restoration command.
+
+All projects' candidate archives are written and flushed before the successful
+finalization state is committed. BFQ then atomically replaces each retained
+archive. Failed analysis, reporting, archive/checksum creation or snapshot
+writes leave the previous successful snapshot intact. Successful reanalysis
+and finalization replace it; failed/superseded attempts do not accumulate.
+Notification success is independent of retention.
+
+An interruption after the completion commit can leave publication pending in
+`provenance/.staging/`. The canonical state identifies committed candidates.
+BFQ recovers them on its next scan/startup and before processing or operator
+rerun/archive cleanup; uncommitted temporary archives are discarded under the
+execution lease. Publication failures are logged and retried without changing
+completed processing into a failed run. Do not manually remove pending files.
+Replacement is atomic per project, not a simultaneous multi-project filesystem
+transaction.
+
+Reporting/finalization-only retries reuse a matching retained archive without
+rewriting it. If none exists, they use the recorded original workdir. New
+analyses record its path and an ownership token in state and
+`.bfq-analysis.json` to detect reused workdirs (the existing project/date naming
+can collide between same-day flowcells). This marker is just lifecycle identity,
+not a configuration manifest. Older unmarked workdirs can be retained from the
+conventional `TMPDIR` path with a warning; their ownership cannot be verified
+retrospectively. If no matching archive or usable original workdir remains,
+BFQ logs and records **analysis snapshot unavailable**, without substituting
+installed code. An older snapshot, if present, stays intact and is identified
+as belonging to the previous successful finalization.
+
+`flowcell-manager status RUN_ID` reports retained, unavailable, and pending
+snapshots. `flowcell-manager show RUN_ID` exposes the full records:
+`stages.analysis.metadata.workdirs`,
+`stages.finalization.metadata.analysis_snapshots` (that finalization's results),
+and top-level `analysis_snapshots` (retained snapshots, preserved across retries).
+These optional fields are compatible with existing schema-v1 state.
+
+Every restart boundary and `flowcell-manager archive` preserves `provenance/`.
+Once publication has finished, removing the original temporary workdir does not
+affect the retained archive. Snapshot retention does not remove the existing QC
+data prerequisites for rebuilding delivery archives.
+
+Inspect or extract into a separate directory:
+
+```bash
+snapshot=/mnt/bfq/output/RUN_ID/provenance/GCF-2026-044_analysis.tar.gz
+tar -tzf "$snapshot"
+inspect_dir=$(mktemp -d)
+tar -xzf "$snapshot" -C "$inspect_dir"
+less "$inspect_dir/config.yaml"
+less "$inspect_dir/src/gcf-workflows/libprep.config"
+```
+
+Extraction preserves symlinks; links into omitted data or old mounts may be
+broken. Prepare FASTQs, references, containers, paths and environment manually
+before attempting to run the extracted workflow. See the
+[issue #124 server smoke-test guide](docs/analysis-snapshot-integration-tests.md).
+
 ## Starting BFQ
 
 Mount the configuration directory at `/config` and the operational storage at
@@ -544,11 +626,12 @@ a full flowcell path identifies the run; it does not override its output locatio
 `--refresh-inputs` explicitly recopies the sample sheet and submission form
 from the instrument source; without it, output-side run inputs are preserved.
 
+All boundaries preserve retained analysis snapshots in `provenance/`.
 The supported restart boundaries invalidate these products:
 
 | Restart boundary | Preserved | Invalidated |
 | --- | --- | --- |
-| `demultiplexing` | `SampleSheet.csv`, `Sample-Submission-Form.xlsx` | FASTQs and all downstream products |
+| `demultiplexing` | `SampleSheet.csv`, `Sample-Submission-Form.xlsx`, retained `provenance/` | FASTQs and downstream delivery/reporting products |
 | `analysis` | FASTQs, FASTQ checksums and run inputs | workflow/QC output, reports, archives, archive checksums, matching workflow work directories |
 | `reporting` | FASTQs, FASTQ checksums, workflow results, project HTML reports and project MultiQC configurations | sequencer reports/metrics, aggregate MultiQC configuration, archives, completion products |
 | `finalization` | FASTQs, FASTQ checksums, workflow results, reports | delivery archives and archive checksums |
@@ -589,7 +672,8 @@ notification retries. A live lease cannot be overridden with `--force`; stop the
 active process before retrying the command. `--force` skips confirmation only.
 
 `archive` remains separate from pipeline finalization. It removes delivery data
-from the output tree while preserving canonical JSON state. The compatibility
+from the output tree while preserving canonical JSON state and retained
+analysis snapshots in `provenance/`. The compatibility
 `flowcells.processed` inventory is still maintained for legacy protection,
 project-to-flowcell search, and external consumers; successful state-backed
 completion updates it without duplicate project/run rows.
@@ -629,6 +713,8 @@ Each run is written below `<outputDir>/<run-id>`. Important products include:
 - `configmaker-analysis-<project>.json` records the samples actually discovered
   in FASTQs, separately from the planned input metadata.
 - `QC_<project>` workflow outputs and `QC_<project>_<date>.7za` archives.
+- `provenance/<project>_analysis.tar.gz`: latest successfully finalized analysis
+  working tree, excluding top-level `data/`; survives rerun and archive cleanup.
 - A static/run configuration snapshot. Durable processing state is stored under `manager_dir`, not in this output tree.
 - `encryption.*` password files when `SensitiveData` is true.
 

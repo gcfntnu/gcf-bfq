@@ -211,14 +211,23 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                     analysis_snapshots.recover(store, run_id)
                 except Exception:
                     log.exception("Snapshot recovery deferred for %s", run_id)
-                report_run_error(
-                    cfg,
-                    log,
-                    f"Got an error during {stage}: {error}",
-                    store=store,
-                    stage=stage,
-                )
-                return
+                # A state write can raise on its directory fsync after the
+                # atomic completion commit. Do not subsequently fail a delivery
+                # whose snapshot may already have been published by recovery.
+                committed = store.read(run_id)
+                if stage == "finalization" and committed["status"] == "completed":
+                    log.exception(
+                        "Finalization was committed for %s despite a state write error", run_id
+                    )
+                else:
+                    report_run_error(
+                        cfg,
+                        log,
+                        f"Got an error during {stage}: {error}",
+                        store=store,
+                        stage=stage,
+                    )
+                    return
 
             if stage == "finalization":
                 try:

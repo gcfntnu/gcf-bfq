@@ -540,6 +540,20 @@ def status_flowcell(**args):
     if store.exists(run_id):
         state = store.recover_interrupted(run_id)
         print(f"{run_id}: {state['status']} ({state['current_stage']})")
+        results = state["stages"]["finalization"]["metadata"].get("analysis_snapshots", {})
+        retained = state.get("analysis_snapshots", {})
+        for project in sorted(results.keys() | retained.keys()):
+            result = results.get(project, {})
+            record = retained.get(project, {})
+            if result.get("status") == "unavailable":
+                print(f"  Analysis snapshot {project}: unavailable ({result['reason']})")
+            if record:
+                label = "retained"
+                if "pending" in record:
+                    label = "publication pending; BFQ will retry"
+                elif result.get("status") != "available":
+                    label = "retained from previous successful finalization"
+                print(f"  Analysis snapshot {project}: {label} ({record['archive']})")
         for entry in state.get("delivery_notifications", []):
             if entry["status"] == "superseded":
                 continue

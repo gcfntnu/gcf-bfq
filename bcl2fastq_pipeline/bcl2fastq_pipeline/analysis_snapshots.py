@@ -73,8 +73,6 @@ def _source(state, project):
     # workdir, never /opt or a reconstructed working tree.
     if not (path / "config.yaml").is_file() or not (path / "Snakefile").is_file():
         return None, f"original config.yaml or Snakefile is unavailable: {path}"
-    if not record:
-        log.warning("Retaining legacy workdir without an analysis ownership token: %s", path)
     return path, None
 
 
@@ -118,6 +116,8 @@ def prepare(state, projects):
         if directory.is_symlink():
             raise RuntimeError(f"Snapshot directory must not be a symlink: {directory}")
         directory.mkdir(exist_ok=True)
+    _sync_directory(output)
+    _sync_directory(root)
     analysis_id = _analysis_id(state)
     results = {}
     created = []
@@ -141,8 +141,15 @@ def prepare(state, projects):
                 )
                 results[project] = {"status": "unavailable", "reason": reason}
                 continue
+            if project not in state["stages"]["analysis"]["metadata"].get("workdirs", {}):
+                log.warning(
+                    "Retaining legacy workdir without an analysis ownership token: %s", source
+                )
             candidate = _write_archive(source, staging, analysis_id)
             created.append(candidate)
+            verified_source, reason = _source(state, project)
+            if verified_source != source:
+                raise RuntimeError(f"Analysis workdir changed while archiving: {reason}")
             results[project] = {
                 "status": "available",
                 "analysis_id": analysis_id,
@@ -190,11 +197,18 @@ def recover(store, run_id):
     if staging.is_dir() and not staging.is_symlink():
         for path in staging.glob("analysis-*.tar.gz"):
             path.unlink()
+        if not any(staging.iterdir()):
+            staging.rmdir()
 
 
 def recover_pending(store):
     """Recover publication and abandoned writes at startup/each daemon scan."""
-    for state in store.list_states():
+    try:
+        states = store.list_states()
+    except Exception:
+        log.exception("Unable to scan analysis snapshot publication state")
+        return
+    for state in states:
         output = Path(state["output_path"])
         if (
             not any("pending" in item for item in state.get("analysis_snapshots", {}).values())

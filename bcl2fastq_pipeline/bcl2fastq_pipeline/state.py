@@ -911,7 +911,10 @@ class FlowcellStateStore:
             }
             state["projects"] = sorted(set(projects))
             if snapshots is not None:
-                stage["metadata"]["analysis_snapshots"] = copy.deepcopy(snapshots)
+                stage["metadata"]["analysis_snapshots"] = {
+                    project: {key: value for key, value in snapshot.items() if key != "pending"}
+                    for project, snapshot in snapshots.items()
+                }
                 retained = state.setdefault("analysis_snapshots", {})
                 for project, snapshot in snapshots.items():
                     if snapshot["status"] == "available":
