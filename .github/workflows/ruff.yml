@@ -20,11 +20,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Immutable companion revision from gcf-tools PR #57 (libprep API/CLI >=0.2).
+      # Immutable companion revision from gcf-tools PR #58 (validation API 1, >=0.3.0).
       - name: Install BFQ and development dependencies
         run: >-
           pip install -e ".[dev]"
-          "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/3b6593905dbf5484514ffa725a0693aa3c9c3660.zip"
+          "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/6310806678d9bb27dd3f16f82b0ce0711e3efcc8.zip"
 
       - name: Verify installed dependencies
         run: python -m pip check
