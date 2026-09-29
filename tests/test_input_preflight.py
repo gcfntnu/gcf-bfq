@@ -5,12 +5,18 @@ import json
 import logging
 import sys
 
+from pathlib import Path
 from unittest.mock import Mock
 
 import flowcell_manager.flowcell_manager as manager
 import pytest
 
-from bcl2fastq_pipeline.state import ExecutionLeaseError, FlowcellStateStore, new_state
+from bcl2fastq_pipeline.state import (
+    ExecutionLeaseError,
+    FlowcellStateStore,
+    cleanup_plan,
+    new_state,
+)
 from openpyxl import load_workbook
 from test_state_integration import (
     RUN_ID,
@@ -289,6 +295,26 @@ def test_non_bfq_instrument_run_is_not_automatically_opted_in(tmp_path, monkeypa
     assert not output.exists()
 
 
+@pytest.mark.parametrize("alternate", [False, True])
+def test_malformed_opted_in_instrument_sheet_fails_visibly(tmp_path, monkeypatch, alternate):
+    cfg, source, output = configured_bfq(tmp_path)
+    write_inputs(source)
+    sheet = source / ("SampleSheet-bfq.csv" if alternate else "SampleSheet.csv")
+    if alternate:
+        (source / "SampleSheet.csv").write_text(
+            "[Data]\nSample_ID,Sample_Project\nsample,GCF-2026-001\n"
+        )
+    content = b"[CustomOptions]\nLibprep,Illumina DNA Prep\n[Data]\n\xff invalid UTF8"
+    sheet.write_bytes(content)
+    assert findFlowCells.flowCellProcessed() is False
+    calls = simulated_execution(cfg, monkeypatch)
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("preflight-test"), prepare=True)
+    assert calls == []
+    assert store.read(RUN_ID)["status"] == "failed"
+    assert (output / "SampleSheet.csv").read_bytes() == content
+
+
 @pytest.mark.parametrize("boundary", ["demultiplexing", "analysis"])
 @pytest.mark.parametrize("refresh", [False, True])
 def test_invalid_rerun_does_not_remove_existing_products_or_change_state(
@@ -304,12 +330,12 @@ def test_invalid_rerun_does_not_remove_existing_products_or_change_state(
     write_fastq(output / "GCF-2026-001/sample_R1.fastq.gz")
     store = FlowcellStateStore(cfg.static.paths.manager_dir)
     store.create(completed_state(cfg, source, output))
-    before = snapshot(tmp_path)
+    before = snapshot(output), snapshot(source), store.state_path(RUN_ID).read_bytes()
     with pytest.raises(preflight.PreflightValidationError):
         manager.rerun_flowcell(
             flowcell=RUN_ID, from_stage=boundary, force=True, refresh_inputs=refresh
         )
-    assert snapshot(tmp_path) == before
+    assert (snapshot(output), snapshot(source), store.state_path(RUN_ID).read_bytes()) == before
 
 
 def test_refresh_preview_does_not_copy_and_refresh_rerun_uses_instrument(tmp_path):
@@ -365,3 +391,135 @@ def test_restored_fastqs_validate_before_analysis(tmp_path, monkeypatch):
     assert calls == []
     assert store.read(RUN_ID)["current_stage"] == "analysis"
     assert store.read(RUN_ID)["status"] == "failed"
+
+
+@pytest.mark.parametrize("boundary", ["demultiplexing", "analysis"])
+def test_daemon_revalidates_inputs_changed_after_operator_queued_run(
+    tmp_path, monkeypatch, boundary
+):
+    cfg, source, output = configured_bfq(tmp_path)
+    write_inputs(output)
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    store.create(completed_state(cfg, source, output))
+    assert (
+        manager.rerun_flowcell(flowcell=RUN_ID, from_stage=boundary, force=True)["status"]
+        == "queued"
+    )
+    replace_data(output, "Sample_ID,Sample_Project\nchanged-after-queue,GCF-2026-001\n")
+    calls = simulated_execution(cfg, monkeypatch)
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("preflight-test"), prepare=True)
+    assert calls == []
+    assert store.read(RUN_ID)["status"] == "failed"
+
+
+def test_invalid_initialization_keeps_existing_products_and_creates_no_state(tmp_path):
+    cfg, source, output = configured_bfq(tmp_path)
+    write_inputs(output)
+    (output / "Sample-Submission-Form.xlsx").write_bytes(b"broken workbook")
+    (output / "existing.7za").write_bytes(b"existing result")
+    before = snapshot(tmp_path)
+    with pytest.raises(preflight.PreflightValidationError):
+        manager.initialize_flowcell(flowcell=RUN_ID, from_stage="demultiplexing", force=True)
+    assert snapshot(tmp_path) == before
+    assert not FlowcellStateStore(cfg.static.paths.manager_dir).exists(RUN_ID)
+
+
+def test_legacy_filenames_survive_initialization_cleanup_as_canonical_inputs(tmp_path):
+    cfg, source, output = configured_bfq(tmp_path)
+    write_inputs(output)
+    (output / "SampleSheet.csv").rename(output / "SampleSheet-curated.csv")
+    (output / "Sample-Submission-Form.xlsx").rename(output / "old-Sample-Submission-Form.xlsx")
+    expected = preflight.select_run_inputs(source, output)
+    expected_bytes = expected.sample_sheet.read_bytes(), expected.submission_form.read_bytes()
+    assert (
+        manager.initialize_flowcell(flowcell=RUN_ID, from_stage="demultiplexing", force=True)[
+            "status"
+        ]
+        == "queued"
+    )
+    assert (output / "SampleSheet.csv").read_bytes() == expected_bytes[0]
+    assert (output / "Sample-Submission-Form.xlsx").read_bytes() == expected_bytes[1]
+    assert not expected.sample_sheet.exists()
+    assert not expected.submission_form.exists()
+
+
+def test_fresh_run_missing_submission_form_records_actionable_failure(tmp_path, monkeypatch):
+    cfg, source, output = configured_bfq(tmp_path)
+    write_inputs(source)
+    (source / "Sample-Submission-Form.xlsx").unlink()
+    assert findFlowCells.flowCellProcessed() is False
+    calls = simulated_execution(cfg, monkeypatch)
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("preflight-test"), prepare=True)
+    state = store.read(RUN_ID)
+    assert state["status"] == "failed"
+    assert "Submission-Form.xlsx" in state["last_error"]["summary"]
+    assert calls == []
+
+
+def test_warning_only_pair_does_not_block_execution(tmp_path, monkeypatch):
+    cfg, source, output = configured_bfq(tmp_path)
+    write_inputs(source)
+    change_customer(
+        source,
+        [["sample", "group", "GCF-2026-OTHER"]],
+        headers=["Unique Sample ID", "Sample Group", "Project"],
+    )
+    assert findFlowCells.flowCellProcessed() is False
+    calls = simulated_execution(cfg, monkeypatch)
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("preflight-test"), prepare=True)
+    state = store.read(RUN_ID)
+    report = state["stages"]["demultiplexing"]["metadata"]["input_preflight"]
+    assert report["warnings"]
+    assert report["status"] == "passed"
+    assert state["status"] == "completed"
+    assert "demux" in calls
+
+
+@pytest.mark.parametrize(
+    "boundary,removed", [("analysis", True), ("reporting", False), ("finalization", False)]
+)
+def test_actual_analysis_sample_summary_is_invalidated_only_with_analysis(
+    tmp_path, boundary, removed
+):
+    output = tmp_path / RUN_ID
+    output.mkdir()
+    summary = output / "configmaker-analysis-GCF-2026-001.json"
+    summary.write_text('{"discovered_sample_count": 1}')
+    assert (summary in cleanup_plan(output, boundary)) is removed
+
+
+@pytest.mark.parametrize("valid", [False, True])
+def test_sidecar_write_failure_keeps_durable_report_and_original_diagnosis(
+    tmp_path, monkeypatch, valid
+):
+    cfg, source, output = configured_bfq(tmp_path)
+    write_inputs(source)
+    if not valid:
+        replace_data(source, "Sample_ID,Sample_Project\nmissing,GCF-2026-001\n")
+    assert findFlowCells.flowCellProcessed() is False
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    calls = simulated_execution(cfg, monkeypatch)
+    original_write = Path.write_text
+
+    def fail_sidecar(path, *args, **kwargs):
+        if ".input-preflight.json." in path.name:
+            raise OSError("simulated sidecar failure")
+        return original_write(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_sidecar)
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("preflight-test"), prepare=True)
+    state = store.read(RUN_ID)
+    report = state["stages"]["demultiplexing"]["metadata"]["input_preflight"]
+    assert report["report_path"] is None
+    assert report["report_write_error"] == "simulated sidecar failure"
+    assert report["status"] == ("passed" if valid else "failed")
+    if valid:
+        assert "demux" in calls
+        assert state["status"] == "completed"
+    else:
+        assert calls == []
+        assert state["status"] == "failed"
+        assert "Input preflight failed" in state["last_error"]["summary"]
+        assert "missing" in state["last_error"]["summary"]

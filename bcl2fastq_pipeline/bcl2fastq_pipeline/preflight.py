@@ -11,8 +11,6 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from configmaker.validation import validate_inputs
-
 from bcl2fastq_pipeline.config import parse_custom_options
 from bcl2fastq_pipeline.state import StateError, utcnow
 
@@ -40,6 +38,19 @@ class PreflightValidationError(StateError):
         super().__init__(f"Input preflight failed.\n{detail}")
 
 
+def has_custom_options_marker(path: Path) -> bool:
+    """Recognize explicit BFQ opt-in even when unrelated bytes break CSV decoding."""
+    try:
+        content = path.read_bytes()
+    except OSError:
+        return False
+    for line in content.splitlines():
+        first = line.split(b",", 1)[0].removeprefix(b"\xef\xbb\xbf").strip().strip(b'"')
+        if first.lower() == b"[customoptions]":
+            return True
+    return False
+
+
 def _candidate(directory: Path, canonical: str, pattern: str, *, sheet=False, curated=False):
     canonical_path = directory / canonical
     # A curated canonical file always wins, including when unreadable or malformed.
@@ -48,13 +59,18 @@ def _candidate(directory: Path, canonical: str, pattern: str, *, sheet=False, cu
         return canonical_path
     candidates = sorted(directory.glob(pattern))
     if sheet:
+        malformed_opt_in = None
         for path in candidates:
             try:
                 options, _ = parse_custom_options(path)
             except (OSError, UnicodeError, csv.Error):
+                if malformed_opt_in is None and has_custom_options_marker(path):
+                    malformed_opt_in = path
                 continue
             if options:
                 return path
+        if malformed_opt_in is not None:
+            return malformed_opt_in
     if canonical_path.exists() or canonical_path.is_symlink():
         return canonical_path
     return candidates[0] if candidates else None
@@ -108,6 +124,11 @@ def copy_run_inputs(selection: InputSelection, output_path) -> InputSelection:
 
 def validate_selection(selection: InputSelection):
     """Always validate current bytes; successful reports are never used as a cache."""
+    # flowcell-manager's entry point removes its executable directory from sys.path
+    # before domain imports, avoiding a neighbouring configmaker.py script shadowing
+    # the package. Metadata-independent commands (including help) stay lightweight.
+    from configmaker.validation import validate_inputs  # noqa: PLC0415
+
     return validate_inputs([selection.sample_sheet], [selection.submission_form])
 
 
@@ -136,14 +157,29 @@ def run_preflight(cfg, store, stage):
     # State is durable independently of the output directory, including failed input
     # reports, and keeps the validator version and hashes of exactly the parsed bytes.
     store.record_input_preflight(cfg.run.run_id, stage, report)
-    report_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = report_path.with_name(f".{report_path.name}.{os.getpid()}.tmp")
+    saved_report_path = None
     try:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
         temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         os.replace(temporary, report_path)
+        saved_report_path = report_path
+    except OSError as error:
+        # The durable state copy is sufficient; never replace an actionable input
+        # diagnosis with a secondary sidecar failure or link to an older report.
+        log.warning(
+            "Cannot write input-preflight sidecar %s: %s; full report retained in state",
+            report_path,
+            error,
+        )
+        report.update(report_path=None, report_write_error=str(error))
+        store.record_input_preflight(cfg.run.run_id, stage, report)
     finally:
-        temporary.unlink(missing_ok=True)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            log.warning("Cannot remove temporary input-preflight report %s", temporary)
     log.info("%s", result.render_text())
     if not result.ok:
-        raise PreflightValidationError(result, report_path)
+        raise PreflightValidationError(result, saved_report_path)
     return result

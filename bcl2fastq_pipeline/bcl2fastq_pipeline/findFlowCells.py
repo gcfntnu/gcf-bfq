@@ -11,7 +11,11 @@ import flowcell_manager.flowcell_manager as fm
 import bcl2fastq_pipeline.afterFastq as af
 
 from bcl2fastq_pipeline.config import PipelineConfig, parse_custom_options
-from bcl2fastq_pipeline.preflight import copy_run_inputs, select_run_inputs
+from bcl2fastq_pipeline.preflight import (
+    copy_run_inputs,
+    has_custom_options_marker,
+    select_run_inputs,
+)
 from bcl2fastq_pipeline.state import (
     FlowcellStateStore,
     new_state,
@@ -110,13 +114,20 @@ def newFlowCell():
 
     selection = select_run_inputs(cfg.run.flowcell_path, output)
     opts = {}
+    malformed_opt_in = False
     try:
         opts, _sheet = parse_custom_options(selection.sample_sheet)
     except (OSError, UnicodeError, csv.Error):
         # The shared validator supplies the actionable malformed-input report.
-        pass
+        malformed_opt_in = has_custom_options_marker(selection.sample_sheet)
     curated = selection.sample_sheet.parent == output
-    if not opts and not curated and state["origin"] == "new" and not state.get("restart_request"):
+    if (
+        not opts
+        and not malformed_opt_in
+        and not curated
+        and state["origin"] == "new"
+        and not state.get("restart_request")
+    ):
         # Automatic instrument discovery remains opt-in via BFQ CustomOptions.
         log.debug("No BFQ [CustomOptions] sample sheet for %s", cfg.run.run_id)
         cfg.run.reset()
