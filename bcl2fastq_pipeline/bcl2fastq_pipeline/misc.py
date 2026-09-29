@@ -142,6 +142,9 @@ def parseSampleSheetMetrics(cfg, projects=None):
         f"{summary.get('extra_submission_sample_count', 0)} additional submission samples allowed."
     )
     groups = summary.get("sample_groups", {})
+    lines.append(
+        "<strong>Sample_Group in effective submission metadata (including extras)</strong>"
+    )
     values = groups.get("values", [])
     if values:
         lines.append(
@@ -168,10 +171,18 @@ def analysisSampleMetrics(cfg, projects):
         label = escape(str(project))
         try:
             summary = json.loads(report.read_text(encoding="utf-8"))
-            if summary.get("kind") != "fastq_discovery" or summary.get("schema_version") != 1:
+            if (
+                not isinstance(summary, dict)
+                or summary.get("kind") != "fastq_discovery"
+                or summary.get("schema_version") != 1
+            ):
                 raise ValueError("Unsupported FASTQ discovery summary")
             count = summary["sample_count"]
             missing = summary.get("missing_sample_ids", [])
+            if type(count) is not int or count < 0:
+                raise ValueError("Invalid FASTQ discovery sample count")
+            if not isinstance(missing, list) or not all(isinstance(sid, str) for sid in missing):
+                raise ValueError("Invalid missing sample list in FASTQ discovery summary")
         except (OSError, ValueError, KeyError, TypeError) as error:
             log.info("FASTQ discovery summary unavailable for %s: %s", project, error)
             lines.append(f"{label}: discovery summary unavailable for this analysis.")

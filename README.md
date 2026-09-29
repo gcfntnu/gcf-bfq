@@ -15,7 +15,8 @@ BFQ runs as a long-lived process:
 1. Load `/config/bcl2fastq.ini`.
 2. Search the configured Nova and Ekista roots for completed sequencing runs.
 3. Use JSON state to select queued runs; protect inventory-only legacy runs.
-4. Require a sample sheet with `[CustomOptions]` and a sample submission form.
+4. Select the effective sample sheet and submission form; validate their metadata
+   before demultiplexing and again before analysis.
 5. Demultiplex, run the selected Snakemake workflow, and generate MultiQC output.
 6. Create delivery archives and checksums.
 7. Record completion in JSON state and update the compatibility inventory.
@@ -36,13 +37,17 @@ Install the Python application from the repository root with the in-house
 
 ```console
 python -m pip install . \
-  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/3b6593905dbf5484514ffa725a0693aa3c9c3660.zip"
+  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/7a7972905f2a255e81ab4ab214d3fa31bd519392.zip"
 ```
 
 The installation provides two commands:
 
 - `bfq` starts the pipeline service.
 - `flowcell-manager` manages the processed-flowcell inventory.
+
+`flowcell-manager validate RUN_ID` checks the effective inputs without changing
+the run. See [input validation and correction](docs/input-preflight.md) and the
+[coordinated integration-test guide](docs/preflight-integration-tests.md).
 
 The legacy executable names `bfq.py` and `flowcell_manager.py` are not
 installed.
@@ -621,6 +626,8 @@ Each run is written below `<outputDir>/<run-id>`. Important products include:
 - Demultiplexed project FASTQs and `Undetermined` FASTQs.
 - `Stats`, `InterOp`, `RunInfo.xml`, and `RunParameters.xml`.
 - Per-project sample information, MultiQC reports, archives, and archive MD5s.
+- `configmaker-analysis-<project>.json` records the samples actually discovered
+  in FASTQs, separately from the planned input metadata.
 - `QC_<project>` workflow outputs and `QC_<project>_<date>.7za` archives.
 - A static/run configuration snapshot. Durable processing state is stored under `manager_dir`, not in this output tree.
 - `encryption.*` password files when `SensitiveData` is true.
@@ -634,12 +641,15 @@ Create an editable environment from the repository root:
 
 ```console
 python -m pip install -e ".[dev]" \
-  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/3b6593905dbf5484514ffa725a0693aa3c9c3660.zip"
+  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/7a7972905f2a255e81ab4ab214d3fa31bd519392.zip"
 ```
 
-The tools revision above is the companion configuration API from
-[gcf-tools PR #57](https://github.com/gcfntnu/gcf-tools/pull/57). BFQ requires
-`gcf-tools>=0.2`; keep the configmaker subprocess environment in sync.
+The tools revision above is the companion metadata validation API from
+[gcf-tools PR #58](https://github.com/gcfntnu/gcf-tools/pull/58). BFQ requires
+`gcf-tools>=0.3.0`; keep the configmaker subprocess environment in sync. Deploy
+the matching tools first. The Dockerfiles check the API in `/opt/conda/bin/python`,
+and BFQ passes its validator version to configmaker for an explicit compatibility
+check before project initialization.
 
 Run the local checks:
 

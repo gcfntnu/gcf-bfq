@@ -4,6 +4,8 @@ import json
 
 from types import SimpleNamespace
 
+import pytest
+
 from bcl2fastq_pipeline.preflight import PreflightValidationError
 from configmaker.validation import validate_inputs
 from openpyxl import Workbook
@@ -114,4 +116,20 @@ def test_analysis_discovery_is_separate_from_planned_metadata(tmp_path):
 
 def test_legacy_analysis_without_discovery_report_remains_reportable(tmp_path):
     cfg = metadata_pair(tmp_path)
+    assert "discovery summary unavailable" in misc.analysisSampleMetrics(cfg, ["GCF-2026-043"])
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        "broken JSON",
+        "[]",
+        "null",
+        '{"schema_version":1,"kind":"fastq_discovery","sample_count":"wrong"}',
+        '{"schema_version":1,"kind":"fastq_discovery","sample_count":1,"missing_sample_ids":4}',
+    ],
+)
+def test_malformed_discovery_summary_does_not_break_completion_reporting(tmp_path, contents):
+    cfg = metadata_pair(tmp_path)
+    (tmp_path / "configmaker-analysis-GCF-2026-043.json").write_text(contents)
     assert "discovery summary unavailable" in misc.analysisSampleMetrics(cfg, ["GCF-2026-043"])
