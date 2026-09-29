@@ -8,7 +8,6 @@ from pathlib import Path
 import flowcell_manager.flowcell_manager as manager
 import pytest
 
-from bcl2fastq_pipeline.config import RunContext
 from bcl2fastq_pipeline.state import FlowcellStateStore, StateConflictError, new_state
 from test_notification_integration import prepare_pipeline
 from test_state_integration import RUN_ID, configured_bfq, write_fastq, write_inputs
@@ -340,7 +339,7 @@ def test_daemon_normalizes_before_preparation_with_one_execution_lease(tmp_path,
         prepare()
 
     monkeypatch.setattr(findFlowCells, "newFlowCell", check_preparation)
-    monkeypatch.setattr(RunContext, "set_pipeline_from_yaml", lambda *_args: None)
+    monkeypatch.setattr(cli, "_prepare_workflow", lambda *_args: None)
     monkeypatch.setattr(notifications, "send_notification", lambda *_args: None)
     cli._run_state_backed_flowcell(cfg, store, logging.getLogger("test"), prepare=True)
     assert store.read(RUN_ID)["status"] == "completed"

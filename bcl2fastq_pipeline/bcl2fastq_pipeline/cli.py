@@ -17,7 +17,7 @@ import bcl2fastq_pipeline.findFlowCells
 import bcl2fastq_pipeline.makeFastq
 import bcl2fastq_pipeline.misc
 
-from bcl2fastq_pipeline import notification_delivery, notifications
+from bcl2fastq_pipeline import notification_delivery, notifications, workflow_config
 from bcl2fastq_pipeline.config import PipelineConfig
 from bcl2fastq_pipeline.state import (
     ExecutionLeaseError,
@@ -87,6 +87,24 @@ def _run_reporting(cfg, start_time):
     return bcl2fastq_pipeline.afterFastq.reporting_steps()
 
 
+def _prepare_workflow(cfg, store, state):
+    """Use completed analysis metadata for downstream-only retries."""
+    stage = state["current_stage"]
+    workflow = state["stages"]["analysis"]["metadata"].get("workflow")
+    if stage in ("reporting", "finalization") and workflow is None:
+        projects = state["projects"] or bcl2fastq_pipeline.afterFastq.get_project_names(
+            bcl2fastq_pipeline.afterFastq.get_project_dirs(cfg)
+        )
+        workflow = workflow_config.workflow_from_projects(cfg, projects)
+
+        def record_workflow(current):
+            current["stages"]["analysis"]["metadata"]["workflow"] = workflow
+            return current
+
+        store.mutate(cfg.run.run_id, record_workflow)
+    workflow_config.prepare_execution(cfg, stage, workflow=workflow)
+
+
 def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
     run_id = cfg.run.run_id
     with store.execution_lease(run_id):
@@ -101,9 +119,7 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
             bcl2fastq_pipeline.findFlowCells.newFlowCell()
             if not cfg.run.run_id:
                 return
-            cfg.run.set_pipeline_from_yaml(
-                os.environ.get("BFQ_LIBPREP_CONFIG", "/opt/gcf-workflows/libprep.config")
-            )
+            _prepare_workflow(cfg, store, current)
         state = store.begin_attempt(run_id, cfg=cfg)
         first_stage = state["current_stage"]
         start_time = datetime.datetime.now()
@@ -138,7 +154,7 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                 elif stage == "analysis":
                     log.info("Starting analysis: %s", run_id)
                     bcl2fastq_pipeline.afterFastq.analysis_steps()
-                    store.complete_stage(run_id, stage)
+                    store.complete_stage(run_id, stage, {"workflow": cfg.run.pipeline})
                 elif stage == "reporting":
                     log.info("Starting reporting: %s", run_id)
                     projects = _run_reporting(cfg, start_time)

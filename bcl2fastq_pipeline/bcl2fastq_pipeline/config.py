@@ -39,9 +39,12 @@ import re
 from configparser import ConfigParser
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import yaml
+
+if TYPE_CHECKING:
+    from configmaker.libprep import LibprepConfig, LibprepSelection
 
 log = logging.getLogger(__name__)
 
@@ -127,6 +130,8 @@ class RunContext:
     sample_submission_form: Path | None = None
     libprep: str | None = None
     pipeline: str | None = None
+    libprep_config: LibprepConfig | None = None
+    workflow_selection: LibprepSelection | None = None
     user: str | None = None
     rerun: bool = False
     sensitive: bool = False
@@ -201,64 +206,6 @@ class RunContext:
             val = self.custom["SensitiveData"].strip().lower()
             self.sensitive = val in ("true", "1", "yes")
 
-    def set_pipeline_from_yaml(self, yaml_path: Path) -> None:
-        """
-        Determine and set the pipeline workflow for this run based on libprep.config.
-
-        The YAML structure is expected to look like:
-
-            Lexogen SENSE mRNA-Seq Library Prep Kit V2 SE:
-              workflow: rnaseq
-              reads: SE
-              adapter: AAAAAAAA
-            Lexogen SENSE mRNA-Seq Library Prep Kit V2 PE:
-              workflow: rnaseq
-              reads: PE
-            QIAseq miRNA SE:
-              workflow: mirna
-
-        This method:
-          • Matches self.libprep (case-insensitive) against YAML keys
-          • If not found, also tries "<libprep> SE" and "<libprep> PE"
-          • Extracts the inner "workflow" value if present
-          • Sets self.pipeline to that workflow name or "UNKNOWN" if not found
-        """
-        if not self.libprep:
-            self.pipeline = None
-            return
-
-        yaml_file = Path(yaml_path)
-        if not yaml_file.exists():
-            log.warning(f"[RunContext] libprep.config not found: {yaml_file}")
-            self.pipeline = "UNKNOWN"
-            return
-
-        try:
-            with yaml_file.open(encoding="utf-8") as fh:
-                data = yaml.safe_load(fh) or {}
-        except Exception as e:
-            log.exception(f"[RunContext] Failed to parse {yaml_file}: {e}")
-            self.pipeline = "UNKNOWN"
-            return
-
-        libprep_clean = self.libprep.strip().lower()
-        candidates = [libprep_clean, f"{libprep_clean} se", f"{libprep_clean} pe"]
-
-        workflow = None
-
-        for key, value in (data or {}).items():
-            if not isinstance(value, dict):
-                continue  # skip malformed entries
-
-            key_norm = str(key).strip().lower()
-            if key_norm in candidates:
-                wf = value.get("workflow")
-                if wf:
-                    workflow = wf
-                    break
-
-        self.pipeline = str(workflow).strip() if workflow else "UNKNOWN"
-
     def reset(self) -> None:
         """Clear run-specific information."""
         self.run_id = ""
@@ -272,6 +219,8 @@ class RunContext:
         self.rerun = False
         self.sensitive = False
         self.pipeline = None
+        self.libprep_config = None
+        self.workflow_selection = None
         self.custom.clear()
 
 

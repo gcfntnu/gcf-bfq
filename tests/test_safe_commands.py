@@ -9,6 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from bcl2fastq_pipeline.state import apply_cleanup, cleanup_plan
+from configmaker.libprep import LibprepConfig
 
 from bcl2fastq_pipeline import afterFastq, makeFastq
 
@@ -417,6 +418,10 @@ def test_workflow_commands_keep_config_values_as_single_arguments(tmp_path, monk
     monkeypatch.setenv("TMPDIR", str(work_root))
     monkeypatch.setenv("SINGULARITY_CACHEDIR", str(tmp_path / "cache with spaces"))
 
+    selection = LibprepConfig("test", b"RNA prep;not-a-command PE: {workflow: rnaseq}").select(
+        cfg.run.libprep, [150, 150]
+    )
+    monkeypatch.setattr(afterFastq, "select_workflow", lambda _cfg: selection)
     afterFastq.full_align(cfg)
 
     configmaker_command = check_call.call_args_list[0].args[0]
