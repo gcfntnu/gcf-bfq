@@ -506,6 +506,14 @@ flowcell-manager list-processed
 Destructive operations show their cleanup plan and prompt by default. Use
 `--dry-run` to preview without changing files or state, and `--force` only
 for deliberate non-interactive operation. `--reason` is retained in state.
+The preview identifies the output directory it inspects. A legacy inventory or
+state record containing only the run ID resolves under the absolute configured
+`outputDir`, never the current working directory. Confirming the operation saves
+the absolute path before cleanup; a dry run or declined confirmation leaves the
+record unchanged. Other relative paths, conflicting absolute locations, and
+unavailable output directories for downstream reruns are rejected with diagnostics.
+Equivalent existing paths (such as bind mounts or symlinks) are accepted. Passing
+a full flowcell path identifies the run; it does not override its output location.
 `--refresh-inputs` explicitly recopies the sample sheet and submission form
 from the instrument source; without it, output-side run inputs are preserved.
 

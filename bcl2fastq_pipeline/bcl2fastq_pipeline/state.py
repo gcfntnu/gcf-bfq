@@ -74,6 +74,53 @@ def _safe_run_id(run_id: str) -> str:
     return run_id
 
 
+def resolve_output_path(output_path: Path | str, run_id: str, cfg) -> Path:
+    """Resolve legacy bare IDs and require agreement with the daemon's output root.
+
+    A bare run ID in historical inventory/state is relative to outputDir, never
+    the operator's working directory. Other ambiguous paths require correction.
+    Existing aliases (including bind mounts) are accepted only for the same file.
+    """
+    run_id = _safe_run_id(run_id)
+    expected = cfg.static.paths.output_dir / run_id
+    if not expected.is_absolute():
+        raise StateConflictError("[Paths] outputDir must be absolute; check /config/bcl2fastq.ini")
+    recorded = Path(output_path)
+    if recorded == Path(run_id):
+        return expected
+    if not recorded.is_absolute():
+        raise StateConflictError(
+            f"Ambiguous relative output path {str(recorded)!r} for {run_id}; "
+            f"configured output is {expected}. Only a bare run ID can be resolved automatically."
+        )
+    if recorded == expected:
+        return expected
+    try:
+        same_location = recorded.samefile(expected)
+    except OSError:
+        same_location = False
+    if not same_location:
+        raise StateConflictError(
+            f"Output path mismatch for {run_id}: recorded {recorded}; configured {expected}. "
+            "Check outputDir and mounts before retrying; no output path was changed."
+        )
+    return expected
+
+
+def output_entries(output: Path, *, allow_missing: bool = False) -> list[Path]:
+    """Inspect a directory without treating a missing/unreadable mount as empty."""
+    try:
+        return list(output.iterdir())
+    except FileNotFoundError as error:
+        if allow_missing:
+            return []
+        raise StateConflictError(
+            f"Output directory is unavailable: {output}. Check outputDir and mounts before retrying."
+        ) from error
+    except OSError as error:
+        raise StateConflictError(f"Cannot inspect output directory {output}: {error}") from error
+
+
 def _stage_map(start_stage: str, completed_before: bool = False) -> dict[str, dict]:
     if start_stage not in STAGES:
         raise StateValidationError(f"Unsupported stage: {start_stage}")
@@ -489,7 +536,7 @@ class FlowcellStateStore:
             states.append(state)
         return states
 
-    def set_preparing(
+    def set_preparing(  # noqa: PLR0913
         self,
         run_id: str,
         start_stage: str,
@@ -497,11 +544,14 @@ class FlowcellStateStore:
         reason: str | None,
         refresh_inputs: bool,
         hostname: str | None = None,
+        output_path: Path | None = None,
     ) -> dict:
         if start_stage not in STAGES:
             raise StateValidationError(f"Unsupported stage: {start_stage}")
 
         def update(state: dict) -> dict:
+            if output_path is not None:
+                state["output_path"] = str(output_path)
             _invalidate_delivery_notifications(state, start_stage, f"Restart from {start_stage}")
             state["status"] = "preparing"
             state["current_stage"] = start_stage
@@ -553,6 +603,8 @@ class FlowcellStateStore:
             stage = state["current_stage"]
             if state["stages"][stage]["status"] != "queued":
                 raise StateConflictError(f"Current stage {stage} is not queued")
+            if cfg is not None:
+                state["output_path"] = str(resolve_output_path(state["output_path"], run_id, cfg))
             state["attempt"] += 1
             now = utcnow()
             state["status"] = "running"
@@ -647,6 +699,11 @@ class FlowcellStateStore:
             now = utcnow()
             signature_source = f"{stage}\0{summary}".encode()
             signature = failure_signature or hashlib.sha256(signature_source).hexdigest()
+            # Only a just-committed completion may belong to this failure.
+            # Queued/preparing runs still refer to the previous successful attempt.
+            failed_outcomes = {"running"}
+            if state["status"] == "completed":
+                failed_outcomes.add("completed")
             # A completion write may have replaced the state file before its
             # durability check failed. Cancel its intent with the failed stage.
             _invalidate_delivery_notifications(state, stage, f"Processing failed at {stage}")
@@ -672,7 +729,7 @@ class FlowcellStateStore:
             if (
                 state["attempts"]
                 and state["attempts"][-1].get("attempt") == state["attempt"]
-                and state["attempts"][-1].get("outcome") in {"running", "completed"}
+                and state["attempts"][-1].get("outcome") in failed_outcomes
             ):
                 attempt = state["attempts"][-1]
                 attempt["outcome"] = "interrupted" if interrupted else "failed"
@@ -860,12 +917,15 @@ class FlowcellStateStore:
         *,
         reason: str,
         unsent_only: bool = False,
+        output_path: Path | None = None,
     ) -> dict:
         """Persist invalidation before removing outputs, under an execution lease."""
         if from_stage not in STAGES:
             raise StateValidationError(f"Unsupported stage: {from_stage}")
 
         def update(state: dict) -> dict:
+            if output_path is not None:
+                state["output_path"] = str(output_path)
             _invalidate_delivery_notifications(state, from_stage, reason, unsent_only=unsent_only)
             return state
 
@@ -934,17 +994,20 @@ def cleanup_plan(output_path: Path | str, from_stage: str) -> list[Path]:
     output = Path(output_path)
     if from_stage not in STAGES:
         raise StateValidationError(f"Unsupported restart stage: {from_stage}")
-    if not output.exists():
-        return []
+    children = output_entries(output, allow_missing=from_stage == "demultiplexing")
 
     targets: set[Path] = set()
     if from_stage == "demultiplexing":
-        targets.update(path for path in output.iterdir() if path.name not in INPUT_FILES)
+        targets.update(path for path in children if path.name not in INPUT_FILES)
     else:
         # Finalization products are always downstream of analysis/reporting.
-        targets.update(output.glob("*.7za"))
-        targets.update(output.glob("encryption.*"))
-        targets.update(output.glob("md5sum_*_archive.txt"))
+        targets.update(
+            path
+            for path in children
+            if any(
+                path.match(pattern) for pattern in ("*.7za", "encryption.*", "md5sum_*_archive.txt")
+            )
+        )
 
         if from_stage in {"analysis", "reporting"}:
             targets.update(output.glob("bcl2fastq.ini"))

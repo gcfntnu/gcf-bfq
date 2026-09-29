@@ -49,6 +49,35 @@ fault injection. They do not require deliberately crashing production SMTP.
 If a real uncertain outcome occurs, inspect it and use `--retry-uncertain` only
 when a possible duplicate is acceptable. Never edit state JSON to fake recovery.
 
+### Legacy output-path recovery
+
+Server verification found an existing legacy state with `output_path` equal to
+the bare flowcell ID. BFQ used the configured absolute output root, while cleanup
+looked relative to the operator's current directory and incorrectly showed
+`(none)`. Bare IDs now resolve consistently under `outputDir`; manager and daemon
+reject conflicting or unavailable paths instead of silently selecting another
+directory. Preparation and processing share the run execution lease.
+
+After installing the updated branch, preview the affected run:
+
+```console
+flowcell-manager rerun 260918_MN00686_0026_A000HCMFHF --from finalization --dry-run
+```
+
+Expected: output directory `/mnt/bfq/output/260918_MN00686_0026_A000HCMFHF`,
+both project/QC `.7za` archives and their `md5sum_*_archive.txt` files listed.
+FASTQ checksum manifests are preserved. Preview and declining confirmation do
+not change files or state. If a finalization rerun is wanted, repeat without
+`--dry-run` and confirm: the absolute path is recorded atomically with notification
+invalidation before cleanup. BFQ then rebuilds only finalization products.
+No manual JSON edit is needed. This is a processing rerun, so its new finalization
+notification is intentional; `retry-notifications` still performs no cleanup.
+
+The missing-setting, corrected-setting retry and duplicate-suppression scenario
+above passed server verification on 2026-09-29. The path-recovery scenario remains
+the server check for the follow-up fix. Regression tests include a same-named
+directory under the working directory to prove it cannot be selected for cleanup.
+
 ## Implementation decisions and difficulties
 
 - Processing completion and notification intent share one atomic JSON mutation.
@@ -64,6 +93,9 @@ when a possible duplicate is acceptable. Never edit state JSON to fake recovery.
   superseded. Delivery also verifies that its producing stage is complete.
   Notification-result persistence failures, in contrast, never relabel completed
   processing; they leave an uncertain claim for operator inspection.
+- A preparation failure before a new attempt starts leaves prior successful
+  attempt history intact. Only a failure after committing the current completion
+  can change that current attempt from completed to failed.
 - Legacy v1 state has no invented completion intents. Existing error-report
   routing/signature suppression remains separate and unchanged.
 - Removed the old catch-all 10x/Parse resend after any email exception: the first

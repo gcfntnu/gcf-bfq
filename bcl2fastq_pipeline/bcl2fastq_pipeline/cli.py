@@ -19,7 +19,13 @@ import bcl2fastq_pipeline.misc
 
 from bcl2fastq_pipeline import notification_delivery, notifications
 from bcl2fastq_pipeline.config import PipelineConfig
-from bcl2fastq_pipeline.state import ExecutionLeaseError, FlowcellStateStore
+from bcl2fastq_pipeline.state import (
+    ExecutionLeaseError,
+    FlowcellStateStore,
+    StateConflictError,
+    output_entries,
+    resolve_output_path,
+)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 gotHUP = Event()
@@ -81,9 +87,23 @@ def _run_reporting(cfg, start_time):
     return bcl2fastq_pipeline.afterFastq.reporting_steps()
 
 
-def _run_state_backed_flowcell(cfg, store, log):
+def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
     run_id = cfg.run.run_id
     with store.execution_lease(run_id):
+        if prepare:
+            current = store.read(run_id)
+            if current["status"] != "queued":
+                raise StateConflictError(f"Run {run_id} is no longer queued; inspect its state")
+            output = resolve_output_path(current["output_path"], run_id, cfg)
+            output_entries(output, allow_missing=current["current_stage"] == "demultiplexing")
+            if current["output_path"] != str(output):
+                store.write({**current, "output_path": str(output)})
+            bcl2fastq_pipeline.findFlowCells.newFlowCell()
+            if not cfg.run.run_id:
+                return
+            cfg.run.set_pipeline_from_yaml(
+                os.environ.get("BFQ_LIBPREP_CONFIG", "/opt/gcf-workflows/libprep.config")
+            )
         state = store.begin_attempt(run_id, cfg=cfg)
         first_stage = state["current_stage"]
         start_time = datetime.datetime.now()
@@ -249,17 +269,13 @@ def main():
                 cfg.run.reset()
                 continue
 
-            bcl2fastq_pipeline.findFlowCells.newFlowCell()
-            if not cfg.run.run_id:
-                continue
-            cfg.run.set_pipeline_from_yaml(
-                os.environ.get("BFQ_LIBPREP_CONFIG", "/opt/gcf-workflows/libprep.config")
-            )
-
             try:
-                _run_state_backed_flowcell(cfg, store, log)
+                _run_state_backed_flowcell(cfg, store, log, prepare=True)
             except ExecutionLeaseError:
                 log.info("Skipping active flowcell %s", cfg.run.run_id)
+                cfg.run.reset()
+            except StateConflictError as error:
+                log.error("Cannot prepare %s: %s", cfg.run.run_id, error)
                 cfg.run.reset()
             except Exception as error:
                 state = store.read(cfg.run.run_id)

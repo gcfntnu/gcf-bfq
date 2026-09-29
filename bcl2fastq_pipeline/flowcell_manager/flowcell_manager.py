@@ -20,7 +20,9 @@ from bcl2fastq_pipeline.state import (
     cleanup_plan,
     locate_source_run,
     new_state,
+    output_entries,
     refresh_run_inputs,
+    resolve_output_path,
     validate_restart_boundary,
     validate_restored_fastqs,
 )
@@ -137,6 +139,13 @@ def _resolve_state_or_legacy(value, cfg, store):
     return run_id, None, legacy
 
 
+def _legacy_output_path(legacy, run_id, cfg):
+    # Validate every historical location, rather than silently choosing the first.
+    for path in legacy["flowcell_path"].unique():
+        resolve_output_path(path, run_id, cfg)
+    return cfg.static.paths.output_dir / run_id
+
+
 def _confirm(prompt, force):
     if force:
         return True
@@ -157,10 +166,14 @@ def _ensure_not_active(store, run_id, state, force):
     return state
 
 
-def _print_plan(action, run_id, from_stage, paths, refresh_inputs=False):
+def _print_plan(  # noqa: PLR0913
+    action, run_id, from_stage, paths, refresh_inputs=False, *, output_path=None
+):
     print(f"{action}: {run_id}")
     if from_stage:
         print(f"Restart boundary: {from_stage}")
+    if output_path is not None:
+        print(f"Output directory: {output_path}")
     if refresh_inputs:
         print("Inputs: refresh SampleSheet.csv and Sample-Submission-Form.xlsx from instrument")
     print("Paths to invalidate:")
@@ -204,7 +217,7 @@ def rerun_flowcell(**args):
     if state is None:
         if legacy.empty:
             raise StateConflictError(f"No state or legacy inventory entry exists for {run_id}")
-        output_path = Path(legacy.iloc[0]["flowcell_path"])
+        output_path = _legacy_output_path(legacy, run_id, cfg)
         source_path = locate_source_run(run_id, cfg)
         if source_path is None:
             raise StateConflictError(
@@ -232,8 +245,10 @@ def rerun_flowcell(**args):
         creating = False
 
     validate_restart_boundary(state, from_stage)
+    output_path = resolve_output_path(state["output_path"], run_id, cfg)
+    state = {**state, "output_path": str(output_path)}
     paths = _cleanup_for_state(state, from_stage)
-    _print_plan("Rerun", run_id, from_stage, paths, refresh_inputs)
+    _print_plan("Rerun", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
     if dry_run:
         return state
     if not _confirm(f"Queue rerun for {run_id}", force):
@@ -243,6 +258,8 @@ def rerun_flowcell(**args):
     with store.execution_lease(run_id):
         if not creating and store.read(run_id)["updated_at"] != state["updated_at"]:
             raise StateConflictError("Run changed while preparing the command; inspect and retry")
+        if _cleanup_for_state(state, from_stage) != paths:
+            raise StateConflictError("Output paths changed after the preview; inspect and retry")
         if creating:
             store.create(state)
         else:
@@ -251,6 +268,7 @@ def rerun_flowcell(**args):
                 from_stage,
                 reason=reason,
                 refresh_inputs=refresh_inputs,
+                output_path=output_path,
             )
 
         apply_cleanup(paths)
@@ -276,7 +294,7 @@ def initialize_flowcell(**args):
             f"{run_id} is protected by the legacy inventory; use rerun instead"
         )
 
-    output_path = cfg.static.paths.output_dir / run_id
+    output_path = resolve_output_path(run_id, run_id, cfg)
     source_path = locate_source_run(run_id, cfg)
     if source_path is None:
         raise StateConflictError(
@@ -304,7 +322,7 @@ def initialize_flowcell(**args):
         "refresh_inputs": bool(refresh_inputs),
     }
     paths = _cleanup_for_state(state, from_stage)
-    _print_plan("Initialize", run_id, from_stage, paths, refresh_inputs)
+    _print_plan("Initialize", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
     if dry_run:
         return state
     if not _confirm(f"Initialize {run_id}", force):
@@ -346,18 +364,26 @@ def archive_flowcell(**args):
 
     if state is not None:
         state = _ensure_not_active(store, run_id, state, force)
-        flowcell = Path(state["output_path"])
+        flowcell = resolve_output_path(state["output_path"], run_id, cfg)
+        output_entries(flowcell)
         projects = state.get("projects") or [
             child.name for child in flowcell.glob("GCF-*") if child.is_dir()
         ]
     else:
         if legacy.empty:
             raise StateConflictError(f"No such flowcell: {run_id}")
-        flowcell = Path(legacy.iloc[0]["flowcell_path"])
+        flowcell = _legacy_output_path(legacy, run_id, cfg)
+        output_entries(flowcell)
         projects = sorted(set(legacy["project"]))
 
+    inventory = _read_inventory(cfg)
+    matching_inventory_paths = {
+        value
+        for value in inventory["flowcell_path"].unique()
+        if Path(value).name == run_id and resolve_output_path(value, run_id, cfg) == flowcell
+    }
     targets = _archive_targets(flowcell, projects)
-    _print_plan("Archive", run_id, None, targets)
+    _print_plan("Archive", run_id, None, targets, output_path=flowcell)
     if dry_run:
         return state
     if not _confirm(f"Archive {run_id}", force):
@@ -365,15 +391,20 @@ def archive_flowcell(**args):
         return state
 
     with store.execution_lease(run_id):
+        output_entries(flowcell)
+        if _archive_targets(flowcell, projects) != targets:
+            raise StateConflictError("Output paths changed after the preview; inspect and retry")
         if state is not None:
             if store.read(run_id)["updated_at"] != state["updated_at"]:
                 raise StateConflictError(
                     "Run changed while preparing the command; inspect and retry"
                 )
-            store.invalidate_notifications(run_id, reason="Delivery outputs archived")
+            store.invalidate_notifications(
+                run_id, reason="Delivery outputs archived", output_path=flowcell
+            )
         apply_cleanup(targets)
         inventory = _read_inventory(cfg)
-        match = inventory["flowcell_path"] == str(flowcell)
+        match = inventory["flowcell_path"].isin(matching_inventory_paths)
         if match.any():
             inventory.loc[match, "archived"] = datetime.datetime.now().isoformat()
             _write_inventory(cfg, inventory)
