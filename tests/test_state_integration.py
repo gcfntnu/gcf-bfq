@@ -506,3 +506,102 @@ def test_daemon_failure_is_recorded_in_state(tmp_path, monkeypatch):
     assert state["current_stage"] == "analysis"
     assert "workflow bad" in state["last_error"]["summary"]
     assert state["last_error"]["report_path"] == str(report)
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_demultiplexing_hashes_renamed_fastqs_before_completion(tmp_path, monkeypatch, failure):
+    cfg, source, output = configured_bfq(tmp_path)
+    write_inputs(output)
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    store.create(
+        new_state(RUN_ID, source, output, origin="new", start_stage="demultiplexing", cfg=cfg)
+    )
+    calls = []
+    monkeypatch.setattr(misc, "enoughFreeSpace", lambda: True)
+    monkeypatch.setattr(makeFastq, "bcl2fq", lambda: ("bcl-convert", "4"))
+
+    def rename():
+        calls.append("rename")
+        write_fastq(output / "GCF-2026-001/renamed_R1.fastq.gz")
+
+    real_hash = afterFastq.file_md5
+
+    def checksum(path):
+        assert calls == ["rename"]
+        assert path.name == "renamed_R1.fastq.gz"
+        assert store.read(RUN_ID)["stages"]["demultiplexing"]["status"] == "running"
+        calls.append("checksum")
+        if failure:
+            raise OSError("checksum read failure")
+        return real_hash(path)
+
+    def analysis():
+        assert (output / "md5sum_GCF-2026-001_fastq.txt").exists()
+        assert store.read(RUN_ID)["stages"]["demultiplexing"]["status"] == "completed"
+        calls.append("analysis")
+
+    monkeypatch.setattr(makeFastq, "rename_fastqs", rename)
+    monkeypatch.setattr(afterFastq, "file_md5", checksum)
+    monkeypatch.setattr(afterFastq, "analysis_steps", analysis)
+    monkeypatch.setattr(cli, "_run_reporting", lambda *_: None)
+    monkeypatch.setattr(afterFastq, "finalize", lambda: None)
+    monkeypatch.setattr(misc, "finalizedEmail", lambda *_: None)
+    monkeypatch.setattr(findFlowCells, "markFinished", lambda: ["GCF-2026-001"])
+    monkeypatch.setattr(
+        misc, "write_error_report", lambda *_: cfg.static.paths.report_dir / "test.error"
+    )
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("test"))
+    state = store.read(RUN_ID)
+    if failure:
+        assert calls == ["rename", "checksum"]
+        assert state["stages"]["demultiplexing"]["status"] == "failed"
+        assert "FASTQ checksum generation failed" in state["last_error"]["summary"]
+        assert not (output / "md5sum_GCF-2026-001_fastq.txt").exists()
+    else:
+        assert calls == ["rename", "checksum", "analysis"]
+        assert state["status"] == "completed"
+
+
+@pytest.mark.parametrize("stage", ["analysis", "reporting", "finalization"])
+@pytest.mark.parametrize("failure", [False, True])
+def test_downstream_entry_repairs_legacy_checksums_before_work(
+    tmp_path, monkeypatch, stage, failure
+):
+    cfg, source, output = configured_bfq(tmp_path)
+    write_inputs(output)
+    write_fastq(output / "GCF-2026-001/sample_R1.fastq.gz")
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    store.create(
+        new_state(
+            RUN_ID, source, output, origin="restored_legacy_fastq", start_stage=stage, cfg=cfg
+        )
+    )
+    manifest = output / "md5sum_GCF-2026-001_fastq.txt"
+    calls = []
+
+    def work(*_args):
+        assert manifest.exists()
+        calls.append("work")
+
+    monkeypatch.setattr(misc, "enoughFreeSpace", lambda: True)
+    monkeypatch.setattr(makeFastq, "bcl2fq", Mock(side_effect=AssertionError("BCL conversion")))
+    monkeypatch.setattr(afterFastq, "analysis_steps", work)
+    monkeypatch.setattr(cli, "_run_reporting", work)
+    monkeypatch.setattr(afterFastq, "finalize", work)
+    monkeypatch.setattr(misc, "finalizedEmail", lambda *_: None)
+    monkeypatch.setattr(findFlowCells, "markFinished", lambda: ["GCF-2026-001"])
+    monkeypatch.setattr(
+        misc, "write_error_report", lambda *_: cfg.static.paths.report_dir / "test.error"
+    )
+    if failure:
+        monkeypatch.setattr(afterFastq, "file_md5", Mock(side_effect=OSError("disk error")))
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("test"))
+    state = store.read(RUN_ID)
+    if failure:
+        assert not calls
+        assert not manifest.exists()
+        assert state["stages"][stage]["status"] == "failed"
+        assert "FASTQ checksum generation failed" in state["last_error"]["summary"]
+    else:
+        assert calls
+        assert state["status"] == "completed"

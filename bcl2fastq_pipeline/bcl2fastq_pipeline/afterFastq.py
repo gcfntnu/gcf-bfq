@@ -15,6 +15,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
@@ -150,20 +151,77 @@ def get_sequencer(run_id):
     return SEQUENCERS.get(run_id.split("_")[1], "Sequencer could not be automatically determined.")
 
 
-def md5sum_worker(cfg):
-    project_dirs = get_project_dirs(cfg)
-    pnames = get_project_names(project_dirs)
-    for p in pnames:
-        md_path = Path(f"md5sum_{p}_fastq.txt")
-        if not (cfg.output_path / md_path).exists():
-            fastqs = sorted((cfg.output_path / p).rglob("*.fastq.gz"))
-            log.info(f"[md5sum_worker] Processing {cfg.output_path}/{p}")
+def _md5_filename(path):
+    """Encode filenames using GNU md5sum's escaped-line convention."""
+    name = str(path)
+    escaped = any(char in name for char in "\\\n\r")
+    name = name.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r")
+    return ("\\" if escaped else "", name)
+
+
+def _complete_fastq_manifest(manifest, relative_paths):
+    """Check syntax and exact file coverage without reading FASTQ contents."""
+    expected = {_md5_filename(path) for path in relative_paths}
+    seen = set()
+    try:
+        with manifest.open(encoding="utf-8", newline="") as handle:
+            for line in handle:
+                match = re.fullmatch(r"(\\?)[0-9a-fA-F]{32} [ *]([^\n]*)\n", line)
+                if match is None or match.groups() not in expected or match.groups() in seen:
+                    return False
+                seen.add(match.groups())
+    except (FileNotFoundError, UnicodeError):
+        return False
+    return seen == expected
+
+
+def _write_fastq_manifest(manifest, fastqs, output_path):
+    """Publish a complete manifest atomically; never expose a partial write."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            dir=manifest.parent,
+            prefix=f".{manifest.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
             with ThreadPoolExecutor(max_workers=5) as executor:
                 checksums = executor.map(file_md5, fastqs)
-                with (cfg.output_path / md_path).open("w") as output_fh:
-                    for fastq, checksum in zip(fastqs, checksums, strict=True):
-                        relative_path = fastq.relative_to(cfg.output_path)
-                        output_fh.write(f"{checksum}  {relative_path}\n")
+                for fastq, checksum in zip(fastqs, checksums, strict=True):
+                    prefix, name = _md5_filename(fastq.relative_to(output_path))
+                    handle.write(f"{prefix}{checksum}  {name}\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, manifest)
+        directory_fd = os.open(manifest.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def md5sum_worker(cfg, *, force=False):
+    """Generate demultiplexing checksums, or repair legacy manifests once."""
+    for project in sorted(get_project_names(get_project_dirs(cfg))):
+        manifest = cfg.output_path / f"md5sum_{project}_fastq.txt"
+        fastqs = sorted((cfg.output_path / project).rglob("*.fastq.gz"))
+        relative_paths = [path.relative_to(cfg.output_path) for path in fastqs]
+        if not force and _complete_fastq_manifest(manifest, relative_paths):
+            continue
+        log.info("[md5sum_worker] Generating FASTQ checksums for %s", project)
+        try:
+            _write_fastq_manifest(manifest, fastqs, cfg.output_path)
+        except Exception as error:
+            raise RuntimeError(
+                f"FASTQ checksum generation failed for {project}: {error}"
+            ) from error
 
 
 def md5sum_archive(archive_path: Path):
@@ -506,7 +564,6 @@ def analysis_steps():
     """Run work invalidated by the public analysis restart boundary."""
     cfg = PipelineConfig.get()
     cfg.run.set_pipeline_from_yaml(Path("/opt/gcf-workflows/libprep.config"))
-    md5sum_worker(cfg)
     full_align(cfg)
 
 
