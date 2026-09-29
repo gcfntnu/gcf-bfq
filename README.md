@@ -187,9 +187,12 @@ when they are absent.
 
 ### `[Email]`
 
-All four options are required when the normal notification paths are used.
-Error recipients support comma-separated addresses, including display names; empty
-entries and duplicate addresses are ignored. All error recipients receive one message.
+Completion mail validates `host`, `from_address` and its recipient setting before
+sending. Recipient lists support comma-separated addresses and display names.
+Invalid settings are recorded as notification failures without invalidating
+completed processing. Use the exact underscored keys below: `errorTo` becomes
+`errorto` when parsed and is not an alias for `error_to`. Unknown keys are reported.
+Production error recipients retain their existing duplicate/empty-entry handling.
 
 | Option | Purpose |
 | --- | --- |
@@ -200,6 +203,75 @@ entries and duplicate addresses are ignored. All error recipients receive one me
 
 Current SMTP handling does not configure authentication or TLS. Access control
 must therefore be provided by the deployment environment or relay.
+
+### Completion notifications and recovery
+
+Reporting/finalization completion and notification intent are saved atomically.
+Message composition and SMTP run afterward. Missing email settings, malformed
+email metadata, unreadable attachments or SMTP errors do not invalidate completed
+reports, archives or checksums. Genuine report-generation, archive/checksum or
+processing-state commit failures still fail processing.
+
+`flowcell-manager status RUN_ID` shows notification outcomes alongside processing
+status; `show` includes the saved run context, last error and delivery attempts.
+The optional `delivery_notifications` state field is separate from the existing
+production-error `notification` record. Existing JSON records remain readable;
+historical completion emails are not reconstructed or automatically sent.
+
+| Notification state | Meaning and recovery |
+| --- | --- |
+| `pending` | Completion saved, delivery not attempted. The daemon makes one automatic attempt, including after restart. |
+| `sending` | A durable delivery claim exists. With no active execution lease, acceptance is uncertain; recovery records `uncertain`. |
+| `sent` | SMTP accepted delivery and success was persisted. Further retries are suppressed. |
+| `failed` | Configuration/composition or definite SMTP rejection/connection failure. Correct the problem and retry explicitly. |
+| `uncertain` | A crash, send timeout/disconnect, partial recipient refusal or result-write failure may have left some/all recipients with the message. Explicit duplicate-risk acknowledgement is needed. |
+| `superseded` | The producing outputs were invalidated/archived, or their producing stage failed. The old notification cannot be retried. |
+
+After correcting `/config/bcl2fastq.ini` or restoring a missing report, use:
+
+```console
+flowcell-manager retry-notifications RUN_ID
+flowcell-manager retry-notifications RUN_ID --kind processed
+flowcell-manager retry-notifications RUN_ID --kind finalized
+```
+
+The CLI loads current email settings and uses saved run context/timing values.
+It does not read the instrument inputs, reload workflow configuration, queue a
+run, regenerate outputs or reset processing status. Processed mail composition
+still reads retained output-side sample metadata and reports; finalization mail
+needs no live run inputs. Missing instrument disk statistics display as unavailable.
+Commands return nonzero if delivery remains incomplete or no retained intent
+matches. Run processed-mail retries from a writable working directory while the
+current gcf-tools parser still creates its diagnostic log on import.
+
+Failed notifications are not retried on every daemon scan. Inspect uncertain
+outcomes before explicitly permitting another send:
+
+```console
+flowcell-manager retry-notifications RUN_ID --kind finalized --retry-uncertain
+```
+
+A retry can duplicate mail already accepted by the relay, including recipients
+that succeeded during a partial refusal. A stable Message-ID aids correlation but
+does not guarantee recipient-side deduplication. SMTP acceptance is not proof of
+inbox delivery. A failed QUIT after known acceptance does not undo success.
+Each attempt has a 30-second SMTP socket timeout; there is no automatic send loop
+or automatic 10x/Parse resend with fewer attachments. If a relay rejects a large
+message, address the attachment/relay problem before explicit retry.
+
+Analysis/reporting reruns supersede their processed and finalization notifications
+before cleanup. A finalization-only rerun preserves the processed notification and
+replaces only finalization intent. Archive cleanup invalidates delivery intents
+before removing their outputs. Retry and cleanup serialize under the execution
+lease; `--force` cannot bypass it. Sent/superseded history remains inspectable.
+
+Completion mail retains existing routing: `processed` goes to `finished_to`,
+`finalized` to `error_to`. Completion mail is not gated by `BFQ_ENV`; production
+error-mail gating below remains unchanged. Notification time is excluded from
+the existing attempt-runtime messages; persisted per-step timing is separate work.
+
+See [notification recovery verification](docs/notification-recovery.md) for a
+short server test and the failure-boundary design notes.
 
 ### Production error notifications
 
@@ -419,6 +491,8 @@ flowcell-manager list --status failed
 flowcell-manager list --stage analysis
 flowcell-manager show RUN_ID
 flowcell-manager status RUN_ID
+flowcell-manager retry-notifications RUN_ID
+flowcell-manager retry-notifications RUN_ID --kind finalized
 flowcell-manager rerun RUN_ID --from demultiplexing
 flowcell-manager rerun RUN_ID --from analysis --reason "repeat workflow"
 flowcell-manager rerun RUN_ID --from reporting
@@ -475,8 +549,9 @@ detect manual edits to FASTQ contents with unchanged filenames.
 
 A state record is put into `preparing` before restart cleanup begins and is
 queued only after cleanup succeeds. This prevents partial destructive work from
-being mistaken for a runnable state. Active runs are refused unless `--force`
-is explicitly supplied.
+being mistaken for a runnable state. Rerun and archive cleanup acquire the same execution lease as processing and
+notification retries. A live lease cannot be overridden with `--force`; stop the
+active process before retrying the command. `--force` skips confirmation only.
 
 `archive` remains separate from pipeline finalization. It removes delivery data
 from the output tree while preserving canonical JSON state. The compatibility
