@@ -11,17 +11,23 @@ from pathlib import Path
 import pandas as pd
 
 from bcl2fastq_pipeline.config import PipelineConfig
+from bcl2fastq_pipeline.entrypoint import _remove_executable_directory_from_import_path
 from bcl2fastq_pipeline.state import (
     FlowcellStateStore,
     StateConflictError,
+    StateError,
     apply_cleanup,
     cleanup_plan,
     locate_source_run,
     new_state,
+    output_entries,
     refresh_run_inputs,
+    resolve_output_path,
     validate_restart_boundary,
     validate_restored_fastqs,
 )
+
+from bcl2fastq_pipeline import notification_delivery
 
 pd.set_option("display.max_rows", 5000)
 pd.set_option("display.max_columns", 12)
@@ -133,6 +139,13 @@ def _resolve_state_or_legacy(value, cfg, store):
     return run_id, None, legacy
 
 
+def _legacy_output_path(legacy, run_id, cfg):
+    # Validate every historical location, rather than silently choosing the first.
+    for path in legacy["flowcell_path"].unique():
+        resolve_output_path(path, run_id, cfg)
+    return cfg.static.paths.output_dir / run_id
+
+
 def _confirm(prompt, force):
     if force:
         return True
@@ -141,7 +154,7 @@ def _confirm(prompt, force):
 
 def _ensure_not_active(store, run_id, state, force):
     if state is None:
-        return
+        return state
     if state["status"] == "running" and not store.execution_active(run_id):
         state = store.recover_interrupted(run_id)
     if store.execution_active(run_id) or state["status"] == "running":
@@ -150,11 +163,17 @@ def _ensure_not_active(store, run_id, state, force):
                 f"{run_id} is currently running; repeat with --force only for a deliberate override"
             )
 
+    return state
 
-def _print_plan(action, run_id, from_stage, paths, refresh_inputs=False):
+
+def _print_plan(  # noqa: PLR0913
+    action, run_id, from_stage, paths, refresh_inputs=False, *, output_path=None
+):
     print(f"{action}: {run_id}")
     if from_stage:
         print(f"Restart boundary: {from_stage}")
+    if output_path is not None:
+        print(f"Output directory: {output_path}")
     if refresh_inputs:
         print("Inputs: refresh SampleSheet.csv and Sample-Submission-Form.xlsx from instrument")
     print("Paths to invalidate:")
@@ -198,7 +217,7 @@ def rerun_flowcell(**args):
     if state is None:
         if legacy.empty:
             raise StateConflictError(f"No state or legacy inventory entry exists for {run_id}")
-        output_path = Path(legacy.iloc[0]["flowcell_path"])
+        output_path = _legacy_output_path(legacy, run_id, cfg)
         source_path = locate_source_run(run_id, cfg)
         if source_path is None:
             raise StateConflictError(
@@ -222,32 +241,40 @@ def rerun_flowcell(**args):
         }
         creating = True
     else:
-        _ensure_not_active(store, run_id, state, force)
+        state = _ensure_not_active(store, run_id, state, force)
         creating = False
 
     validate_restart_boundary(state, from_stage)
+    output_path = resolve_output_path(state["output_path"], run_id, cfg)
+    state = {**state, "output_path": str(output_path)}
     paths = _cleanup_for_state(state, from_stage)
-    _print_plan("Rerun", run_id, from_stage, paths, refresh_inputs)
+    _print_plan("Rerun", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
     if dry_run:
         return state
     if not _confirm(f"Queue rerun for {run_id}", force):
         print("Skipping...")
         return state
 
-    if creating:
-        store.create(state)
-    else:
-        store.set_preparing(
-            run_id,
-            from_stage,
-            reason=reason,
-            refresh_inputs=refresh_inputs,
-        )
+    with store.execution_lease(run_id):
+        if not creating and store.read(run_id)["updated_at"] != state["updated_at"]:
+            raise StateConflictError("Run changed while preparing the command; inspect and retry")
+        if _cleanup_for_state(state, from_stage) != paths:
+            raise StateConflictError("Output paths changed after the preview; inspect and retry")
+        if creating:
+            store.create(state)
+        else:
+            store.set_preparing(
+                run_id,
+                from_stage,
+                reason=reason,
+                refresh_inputs=refresh_inputs,
+                output_path=output_path,
+            )
 
-    apply_cleanup(paths)
-    if refresh_inputs:
-        refresh_run_inputs(state["source_path"], state["output_path"])
-    return store.queue(run_id, from_stage)
+        apply_cleanup(paths)
+        if refresh_inputs:
+            refresh_run_inputs(state["source_path"], state["output_path"])
+        return store.queue(run_id, from_stage)
 
 
 def initialize_flowcell(**args):
@@ -267,7 +294,7 @@ def initialize_flowcell(**args):
             f"{run_id} is protected by the legacy inventory; use rerun instead"
         )
 
-    output_path = cfg.static.paths.output_dir / run_id
+    output_path = resolve_output_path(run_id, run_id, cfg)
     source_path = locate_source_run(run_id, cfg)
     if source_path is None:
         raise StateConflictError(
@@ -295,7 +322,7 @@ def initialize_flowcell(**args):
         "refresh_inputs": bool(refresh_inputs),
     }
     paths = _cleanup_for_state(state, from_stage)
-    _print_plan("Initialize", run_id, from_stage, paths, refresh_inputs)
+    _print_plan("Initialize", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
     if dry_run:
         return state
     if not _confirm(f"Initialize {run_id}", force):
@@ -336,34 +363,54 @@ def archive_flowcell(**args):
     run_id, state, legacy = _resolve_state_or_legacy(args["flowcell"], cfg, store)
 
     if state is not None:
-        _ensure_not_active(store, run_id, state, force)
-        flowcell = Path(state["output_path"])
+        state = _ensure_not_active(store, run_id, state, force)
+        flowcell = resolve_output_path(state["output_path"], run_id, cfg)
+        output_entries(flowcell)
         projects = state.get("projects") or [
             child.name for child in flowcell.glob("GCF-*") if child.is_dir()
         ]
     else:
         if legacy.empty:
             raise StateConflictError(f"No such flowcell: {run_id}")
-        flowcell = Path(legacy.iloc[0]["flowcell_path"])
+        flowcell = _legacy_output_path(legacy, run_id, cfg)
+        output_entries(flowcell)
         projects = sorted(set(legacy["project"]))
 
+    inventory = _read_inventory(cfg)
+    matching_inventory_paths = {
+        value
+        for value in inventory["flowcell_path"].unique()
+        if Path(value).name == run_id and resolve_output_path(value, run_id, cfg) == flowcell
+    }
     targets = _archive_targets(flowcell, projects)
-    _print_plan("Archive", run_id, None, targets)
+    _print_plan("Archive", run_id, None, targets, output_path=flowcell)
     if dry_run:
         return state
     if not _confirm(f"Archive {run_id}", force):
         print("Skipping...")
         return state
 
-    apply_cleanup(targets)
-    inventory = _read_inventory(cfg)
-    match = inventory["flowcell_path"] == str(flowcell)
-    if match.any():
-        inventory.loc[match, "archived"] = datetime.datetime.now().isoformat()
-        _write_inventory(cfg, inventory)
-    if state is not None:
-        return store.mark_archived(run_id)
-    return None
+    with store.execution_lease(run_id):
+        output_entries(flowcell)
+        if _archive_targets(flowcell, projects) != targets:
+            raise StateConflictError("Output paths changed after the preview; inspect and retry")
+        if state is not None:
+            if store.read(run_id)["updated_at"] != state["updated_at"]:
+                raise StateConflictError(
+                    "Run changed while preparing the command; inspect and retry"
+                )
+            store.invalidate_notifications(
+                run_id, reason="Delivery outputs archived", output_path=flowcell
+            )
+        apply_cleanup(targets)
+        inventory = _read_inventory(cfg)
+        match = inventory["flowcell_path"].isin(matching_inventory_paths)
+        if match.any():
+            inventory.loc[match, "archived"] = datetime.datetime.now().isoformat()
+            _write_inventory(cfg, inventory)
+        if state is not None:
+            return store.mark_archived(run_id)
+        return None
 
 
 def combined_list(status=None, stage=None):
@@ -444,6 +491,15 @@ def status_flowcell(**args):
     if store.exists(run_id):
         state = store.recover_interrupted(run_id)
         print(f"{run_id}: {state['status']} ({state['current_stage']})")
+        for entry in state.get("delivery_notifications", []):
+            if entry["status"] == "superseded":
+                continue
+            label = entry["status"]
+            if label == "sending" and not store.execution_active(run_id):
+                label = "uncertain (interrupted delivery)"
+            print(f"  Notification {entry['id']}: {label}")
+            if entry.get("last_error"):
+                print(f"    {entry['last_error']}")
         return state
     legacy = _legacy_row_for_run(cfg, run_id)
     if legacy.empty:
@@ -451,6 +507,43 @@ def status_flowcell(**args):
     status = "archived" if any(legacy["archived"] != "0") else "completed"
     print(f"{run_id}: {status} (legacy inventory)")
     return legacy
+
+
+def retry_notifications(**args):
+    """Retry saved notification intents without loading inputs or changing processing."""
+    cfg = get_cfg()
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    run_id = _run_id(args["flowcell"])
+    kind = args.get("kind")
+    with store.execution_lease(run_id):
+        state = store.read(run_id)
+        entries = [
+            entry
+            for entry in state.get("delivery_notifications", [])
+            if (kind is None or entry["kind"] == kind) and entry["status"] != "superseded"
+        ]
+        if not entries:
+            raise StateConflictError(
+                "No retained notifications match this request. Legacy notifications are not "
+                "reconstructed; superseded outputs cannot be notified."
+            )
+        if args.get("retry_uncertain"):
+            print("Retrying uncertain delivery may duplicate email already accepted by SMTP.")
+        successful = notification_delivery.deliver_pending(
+            cfg,
+            store,
+            run_id,
+            kind=kind,
+            retry=True,
+            retry_uncertain=args.get("retry_uncertain", False),
+        )
+    if not successful:
+        raise StateConflictError(
+            "Notification delivery remains incomplete. Inspect flowcell-manager status/show; "
+            "correct configuration or use --retry-uncertain if duplicate delivery is acceptable."
+        )
+    print(f"{run_id}: matching notifications sent or already delivered")
+    return store.read(run_id)
 
 
 def pretty_print(df):
@@ -461,6 +554,7 @@ def pretty_print(df):
 
 
 def main():
+    _remove_executable_directory_from_import_path()
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -527,12 +621,27 @@ def main():
     parser_status.set_defaults(func=status_flowcell)
     parser_status.add_argument("flowcell")
 
+    parser_retry = subparsers.add_parser(
+        "retry-notifications", help="Retry saved completion mail without rerunning processing."
+    )
+    parser_retry.add_argument("flowcell", help="Run ID or flowcell path.")
+    parser_retry.add_argument("--kind", choices=["processed", "finalized"])
+    parser_retry.add_argument(
+        "--retry-uncertain",
+        action="store_true",
+        help="Allow resending after uncertain SMTP acceptance; duplicates are possible.",
+    )
+    parser_retry.set_defaults(func=retry_notifications)
+
     args = parser.parse_args()
     values = vars(args)
-    if values.pop("print_res", False):
-        pretty_print(values.pop("func")(**values))
-    else:
-        values.pop("func")(**values)
+    try:
+        if values.pop("print_res", False):
+            pretty_print(values.pop("func")(**values))
+        else:
+            values.pop("func")(**values)
+    except StateError as error:
+        parser.exit(1, f"{error}\n")
 
 
 if __name__ == "__main__":

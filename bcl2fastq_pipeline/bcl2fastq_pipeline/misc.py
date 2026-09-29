@@ -16,9 +16,6 @@ import xml.etree.ElementTree as ET
 from argparse import Namespace
 from datetime import UTC, datetime
 from email.message import EmailMessage
-from email.mime.application import MIMEApplication
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from email.utils import formatdate, getaddresses
 
 import configmaker.configmaker as cm
@@ -27,8 +24,6 @@ import pandas as pd
 from bcl2fastq_pipeline.afterFastq import (
     get_project_dirs,
     get_project_names,
-    get_read_geometry,
-    get_sequencer,
 )
 from bcl2fastq_pipeline.config import PipelineConfig
 
@@ -61,14 +56,16 @@ def getSampleID(sampleTuple, project, lane, sampleName):
     return " "
 
 
-def getFCmetricsImproved():
-    cfg = PipelineConfig.get()
+def getFCmetricsImproved(cfg=None):
+    cfg = cfg if cfg is not None else PipelineConfig.get()
     message = ""
     try:
         with (cfg.output_path / "Stats" / "interop_summary.csv").open() as fh:
             header = False
             while not header:
                 line = fh.readline()
+                if not line:
+                    raise ValueError("Missing table header in Stats/interop_summary.csv")
                 if line.startswith("\n"):
                     line = fh.readline()
                     header = True
@@ -118,9 +115,8 @@ def getFCmetricsImproved():
     return message
 
 
-def parseSampleSheetMetrics(cfg):
-    project_dirs = get_project_dirs(cfg)
-    project_names = get_project_names(project_dirs)
+def parseSampleSheetMetrics(cfg, projects=None):
+    project_names = projects if projects is not None else get_project_names(get_project_dirs(cfg))
     msg = "<strong>Sample sheet info</strong>\n"
     for pid in project_names:
         args = Namespace(
@@ -295,93 +291,3 @@ def send_error_report(cfg, report_path, stage, error_info, store, signature):  #
     sent = store.deliver_failure_notification(cfg.run.run_id, signature, deliver)
     log.info("Error email %s for %s", "sent" if sent else "duplicate suppressed", cfg.run.run_id)
     return sent
-
-
-def finishedEmail(msg, runTime, extra_html=True):
-    cfg = PipelineConfig.get()
-    projects = get_project_names(get_project_dirs(cfg))
-
-    message = f"<strong>Short summary for {', '.join(projects)}. </strong>\n\n"
-    message += f"<strong>User: {cfg.run.user} </strong>\n" if cfg.run.user != "N/A" else ""
-    message += f"Flow cell: {cfg.run.run_id} \n"
-    seq = get_sequencer(cfg.run.run_id)
-    message += f"Sequencer: {seq} \n"
-    read_geo = get_read_geometry(cfg.output_path)
-    message += f"Read geometry: {read_geo} \n\n"
-    message += f"bcl2fastq_pipeline run time: {runTime} \n"
-    # message += "Data transfer: %s\n" % transferTime
-    message = message.replace("\n", "\n<br>")
-    message += msg
-
-    sample_sheet_metrics = parseSampleSheetMetrics(cfg)
-    sample_sheet_metrics = sample_sheet_metrics.replace("\n", "\n<br>")
-
-    message = (
-        "<html>\n<body>\n<head>\n"
-        + style
-        + "\n</head>\n"
-        + message
-        + "<br>"
-        + sample_sheet_metrics
-        + "\n</body>\n</html>"
-    )
-
-    msg = MIMEMultipart()
-    msg["Subject"] = f"[bcl2fastq_pipeline] {', '.join(projects)} processed"
-    msg["From"] = cfg.static.email["from_address"]
-    msg["To"] = cfg.static.email["finished_to"]
-    msg["Date"] = formatdate(localtime=True)
-
-    msg.attach(MIMEText(message, "html"))
-
-    date = cfg.run.run_id.split("_")[0]
-
-    for p in projects:
-        with (cfg.output_path / f"multiqc_{p}_{date}.html").open("rb") as report:
-            part = MIMEApplication(report.read(), report.name)
-        part["Content-Disposition"] = f'attachment; filename="multiqc_{p}_{date}.html"'
-        msg.attach(part)
-
-        if (
-            cfg.run.libprep.startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences"))
-            and extra_html
-        ):
-            f = cfg.output_path / f"all_samples_web_summary_{p}_{date}.html"
-            if f.exists():
-                fname = f.name
-                with f.open("rb") as report:
-                    part = MIMEApplication(report.read(), report.name)
-                part["Content-Disposition"] = f'attachment; filename="{fname}"'
-                msg.attach(part)
-    project_str = "_".join(projects)
-    with (cfg.output_path / "Stats" / f"sequencer_stats_{project_str}.html").open("rb") as report:
-        part = MIMEApplication(report.read(), report.name)
-    part["Content-Disposition"] = f'attachment; filename="sequencer_stats_{project_str}.html"'
-    msg.attach(part)
-
-    s = smtplib.SMTP(cfg.static.email["host"])
-    s.send_message(msg)
-    s.quit()
-
-
-def finalizedEmail(msg, finalizeTime, runTime):
-    cfg = PipelineConfig.get()
-
-    projects = get_project_names(get_project_dirs(cfg))
-
-    message = f"{', '.join(projects)} has been finalized and prepared for delivery.\n\n"
-    message += f"md5sum and 7zip runtime: {finalizeTime}\n"
-    message += f"Total runtime for bcl2fastq_pipeline: {runTime}\n"
-    message += msg
-
-    msg = MIMEMultipart()
-    msg["Subject"] = f"[bcl2fastq_pipeline] {', '.join(projects)} finalized"
-    msg["From"] = cfg.static.email["from_address"]
-    msg["To"] = cfg.static.email["error_to"]
-    msg["Date"] = formatdate(localtime=True)
-
-    msg.attach(MIMEText(message))
-
-    s = smtplib.SMTP(cfg.static.email["host"])
-    s.send_message(msg)
-    s.quit()

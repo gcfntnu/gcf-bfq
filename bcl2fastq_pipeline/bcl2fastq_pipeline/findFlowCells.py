@@ -10,7 +10,13 @@ import flowcell_manager.flowcell_manager as fm
 import bcl2fastq_pipeline.afterFastq as af
 
 from bcl2fastq_pipeline.config import PipelineConfig, parse_custom_options
-from bcl2fastq_pipeline.state import FlowcellStateStore, new_state, validate_restored_fastqs
+from bcl2fastq_pipeline.state import (
+    FlowcellStateStore,
+    new_state,
+    output_entries,
+    resolve_output_path,
+    validate_restored_fastqs,
+)
 
 log = logging.getLogger(__name__)
 
@@ -97,7 +103,8 @@ def newFlowCell():
     cfg = PipelineConfig.get()
     store = FlowcellStateStore(cfg.static.paths.manager_dir)
     state = store.read(cfg.run.run_id)
-    output = cfg.output_path
+    output = resolve_output_path(state["output_path"], cfg.run.run_id, cfg)
+    output_entries(output, allow_missing=state["current_stage"] == "demultiplexing")
 
     use_output = output.exists()
     opts = sheet = submission = None

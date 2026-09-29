@@ -281,8 +281,8 @@ def multiqc_stats(cfg):
     with in_confs[0].open() as in_conf_fh:
         mqc_conf = yaml.load(in_conf_fh, Loader=yaml.FullLoader)
 
-    pnames = get_project_names(get_project_dirs(cfg))
-    pnames = ", ".join(pnames)
+    projects = sorted(get_project_names(get_project_dirs(cfg)))
+    pnames = ", ".join(projects)
     mqc_conf["title"] = pnames
     mqc_conf["intro_text"] = (
         "This report is generated for projects run at Genomics Core Facility, NTNU, Trondheim. The results are reported per sample."
@@ -326,6 +326,7 @@ def multiqc_stats(cfg):
             log.info(f"[multiqc_worker] Running: {shlex.join(cmd)}")
 
     subprocess.check_call(cmd, cwd=cwd)
+    return projects
 
 
 def generate_password(cfg, prefix: str) -> str:
@@ -542,21 +543,22 @@ def full_align(cfg):
 
 def _disk_usage_message(cfg):
     """Build the operational disk-usage summary used by completion mail."""
-    total, _used, free = shutil.disk_usage(cfg.static.paths.output_dir)
-    total /= 1024**3
-    free /= 1024**3
-    message = (
-        f"Current free space for output: {free:.0f} of {total:.0f} GiB "
-        f"({100 * free / total:5.2f}%)\n<br>"
-    )
-
-    total, _used, free = shutil.disk_usage(cfg.run.flowcell_path.parent)
-    total /= 1024**3
-    free /= 1024**3
-    message += (
-        f"Current free space for instruments: {free:.0f} of {total:.0f} GiB "
-        f"({100 * free / total:5.2f}%)\n<br>\n<br>"
-    )
+    message = ""
+    sources = [("output", cfg.output_path.parent)]
+    if cfg.run.flowcell_path is not None:
+        sources.append(("instruments", cfg.run.flowcell_path.parent))
+    for label, path in sources:
+        try:
+            total, _used, free = shutil.disk_usage(path)
+        except OSError:
+            message += f"Current free space for {label}: unavailable\n<br>"
+            continue
+        total /= 1024**3
+        free /= 1024**3
+        message += (
+            f"Current free space for {label}: {free:.0f} of {total:.0f} GiB "
+            f"({100 * free / total:5.2f}%)\n<br>"
+        )
     return message
 
 
@@ -570,15 +572,16 @@ def analysis_steps():
 def reporting_steps():
     """Generate reporting products while preserving completed workflow results."""
     cfg = PipelineConfig.get()
-    multiqc_stats(cfg)
+    projects = multiqc_stats(cfg)
     cfg.to_file(cfg.output_path / "bcl2fastq.ini")
-    return _disk_usage_message(cfg)
+    return projects
 
 
 def postMakeSteps():
     """Compatibility wrapper for callers that still expect the combined operation."""
     analysis_steps()
-    return reporting_steps()
+    reporting_steps()
+    return _disk_usage_message(PipelineConfig.get())
 
 
 def finalize():
