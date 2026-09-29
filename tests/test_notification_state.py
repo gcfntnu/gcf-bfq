@@ -207,6 +207,49 @@ def test_claim_write_failure_prevents_sending(tmp_path, monkeypatch):
     assert store.state_path(RUN_ID).read_bytes() == before
 
 
+def test_claim_directory_sync_failure_never_sends_or_automatically_retries(tmp_path, monkeypatch):
+    store = completed_store(tmp_path)
+    calls = []
+    original_write = store._atomic_write_unlocked
+
+    def fail_after_replace(state):
+        original_write(state)
+        raise OSError("directory fsync failed after replacement")
+
+    monkeypatch.setattr(store, "_atomic_write_unlocked", fail_after_replace)
+    with pytest.raises(OSError, match="directory fsync"):
+        store.deliver_notification(RUN_ID, "processed:1", calls.append)
+    assert calls == []
+    assert entry(store)["status"] == "sending"
+    restarted = FlowcellStateStore(store.manager_dir)
+    assert not restarted.deliver_notification(RUN_ID, "processed:1", calls.append)
+    assert entry(store)["status"] == "uncertain"
+    assert calls == []
+
+
+def test_failure_outcome_write_failure_retains_claim_and_stops_automatic_retry(
+    tmp_path, monkeypatch
+):
+    store = completed_store(tmp_path)
+    original_write = store._atomic_write_unlocked
+
+    def fail(notification):
+        raise ValueError("malformed email setting")
+
+    def fail_outcome_write(state):
+        if state["delivery_notifications"][0]["status"] == "failed":
+            raise OSError("disk disappeared before saving failed delivery")
+        original_write(state)
+
+    monkeypatch.setattr(store, "_atomic_write_unlocked", fail_outcome_write)
+    with pytest.raises(OSError, match="disk disappeared"):
+        store.deliver_notification(RUN_ID, "processed:1", fail)
+    assert entry(store)["status"] == "sending"
+    restarted = FlowcellStateStore(store.manager_dir)
+    assert not restarted.deliver_notification(RUN_ID, "processed:1", fail)
+    assert entry(store)["status"] == "uncertain"
+
+
 def test_acceptance_before_success_write_failure_remains_uncertain(tmp_path, monkeypatch):
     store = completed_store(tmp_path)
     original_write = store._atomic_write_unlocked
@@ -280,6 +323,98 @@ def test_mark_archived_defensively_invalidates_pending_entries(tmp_path):
     store = completed_store(tmp_path)
     state = store.mark_archived(RUN_ID)
     assert {item["status"] for item in state["delivery_notifications"]} == {"superseded"}
+
+
+def test_notification_retry_preserves_later_genuine_processing_failure(tmp_path):
+    store = reporting_store(tmp_path)
+    processed(store)
+    store.start_stage(RUN_ID, "finalization")
+    store.fail_stage(
+        RUN_ID,
+        "finalization",
+        summary="Archive creation failed",
+        report_path=tmp_path / "run.error",
+    )
+    before = processing_state(store)
+    assert before["status"] == "failed"
+    assert store.deliver_notification(RUN_ID, "processed:1", lambda notification: None)
+    assert processing_state(store) == before
+    assert entry(store)["status"] == "sent"
+
+
+@pytest.mark.parametrize("finalization", [False, True])
+def test_completion_replaced_before_write_error_cannot_send_success(
+    tmp_path, monkeypatch, finalization
+):
+    store = reporting_store(tmp_path)
+    if finalization:
+        processed(store)
+        store.start_stage(RUN_ID, "finalization")
+    original_write = store._atomic_write_unlocked
+
+    def fail_after_replace(state):
+        original_write(state)
+        raise OSError("directory sync failed after state replacement")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "_atomic_write_unlocked", fail_after_replace)
+        with pytest.raises(OSError, match="directory sync failed"):
+            if finalization:
+                store.complete_run(RUN_ID, [], notification={"kind": "finalized", "payload": {}})
+            else:
+                processed(store)
+    identifier = "finalized:1" if finalization else "processed:1"
+    stage = "finalization" if finalization else "reporting"
+    assert entry(store, identifier)["status"] == "pending"
+    store.fail_stage(
+        RUN_ID, stage, summary="Could not persist processing completion", report_path=None
+    )
+    calls = []
+    assert entry(store, identifier)["status"] == "superseded"
+    assert not store.deliver_notification(
+        RUN_ID, identifier, calls.append, retry=True, retry_uncertain=True
+    )
+    assert calls == []
+    failed = store.read(RUN_ID)
+    assert failed["stages"][stage]["status"] == "failed"
+    assert failed["stages"][stage]["completed_at"] is None
+    assert failed["completed_at"] is None
+    assert failed["attempts"][-1]["outcome"] == "failed"
+    assert failed["attempts"][-1]["completed_at"] is None
+    if finalization:
+        assert store.deliver_notification(RUN_ID, "processed:1", calls.append)
+        assert len(calls) == 1
+
+
+def test_failure_supersedes_same_and_downstream_completion_intents(tmp_path):
+    store = completed_store(tmp_path)
+    state = store.fail_stage(
+        RUN_ID, "reporting", summary="Reporting completion could not be committed", report_path=None
+    )
+    assert [item["status"] for item in state["delivery_notifications"]] == [
+        "superseded",
+        "superseded",
+    ]
+
+
+@pytest.mark.parametrize("stage_status", ["pending", "queued", "running", "failed", "skipped"])
+def test_delivery_refuses_inconsistent_intent_for_unfinished_stage(tmp_path, stage_status):
+    store = completed_store(tmp_path)
+    state = store.read(RUN_ID)
+    state["stages"]["reporting"]["status"] = stage_status
+    store.write(state)
+    before = processing_state(store)
+    calls = []
+    assert not store.deliver_notification(
+        RUN_ID, "processed:1", calls.append, retry=True, retry_uncertain=True
+    )
+    assert calls == []
+    notification = entry(store)
+    assert notification["status"] == "superseded"
+    assert "not completed" in notification["invalidation_reason"]
+    assert notification["attempts"] == []
+    assert entry(store, "finalized:1")["status"] == "superseded"
+    assert processing_state(store) == before
 
 
 def test_concurrent_delivery_only_calls_sender_once(tmp_path):

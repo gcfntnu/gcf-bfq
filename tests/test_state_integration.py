@@ -9,7 +9,7 @@ import pytest
 from bcl2fastq_pipeline.config import Paths, PipelineConfig, RunContext, StaticConfig
 from bcl2fastq_pipeline.state import FlowcellStateStore, StateConflictError, new_state
 
-from bcl2fastq_pipeline import afterFastq, cli, findFlowCells, makeFastq, misc
+from bcl2fastq_pipeline import afterFastq, cli, findFlowCells, makeFastq, misc, notifications
 
 RUN_ID = "260918_MN00686_0026_A000HCMFHF"
 
@@ -459,14 +459,18 @@ def test_daemon_executes_only_from_queued_analysis_boundary(tmp_path, monkeypatc
     monkeypatch.setattr(afterFastq, "analysis_steps", lambda: calls.append("analysis"))
     monkeypatch.setattr(cli, "_run_reporting", lambda *_args: calls.append("reporting"))
     monkeypatch.setattr(afterFastq, "finalize", lambda: calls.append("finalization"))
-    monkeypatch.setattr(misc, "finalizedEmail", lambda *_args: calls.append("final-email"))
+    monkeypatch.setattr(
+        notifications,
+        "send_notification",
+        lambda _cfg, entry: calls.append(entry["kind"] + "-email"),
+    )
     monkeypatch.setattr(findFlowCells, "markFinished", lambda: ["GCF-2026-001"])
 
     cli._run_state_backed_flowcell(cfg, store, logging.getLogger("test"))
 
     assert "demultiplexing" not in calls
     assert "rename" not in calls
-    assert calls == ["analysis", "reporting", "finalization", "final-email"]
+    assert calls == ["analysis", "reporting", "processed-email", "finalization", "finalized-email"]
     state = store.read(RUN_ID)
     assert state["status"] == "completed"
     assert state["attempt"] == 1
@@ -545,7 +549,7 @@ def test_demultiplexing_hashes_renamed_fastqs_before_completion(tmp_path, monkey
     monkeypatch.setattr(afterFastq, "analysis_steps", analysis)
     monkeypatch.setattr(cli, "_run_reporting", lambda *_: None)
     monkeypatch.setattr(afterFastq, "finalize", lambda: None)
-    monkeypatch.setattr(misc, "finalizedEmail", lambda *_: None)
+    monkeypatch.setattr(notifications, "send_notification", lambda *_: None)
     monkeypatch.setattr(findFlowCells, "markFinished", lambda: ["GCF-2026-001"])
     monkeypatch.setattr(
         misc, "write_error_report", lambda *_: cfg.static.paths.report_dir / "test.error"
@@ -588,7 +592,7 @@ def test_downstream_entry_repairs_legacy_checksums_before_work(
     monkeypatch.setattr(afterFastq, "analysis_steps", work)
     monkeypatch.setattr(cli, "_run_reporting", work)
     monkeypatch.setattr(afterFastq, "finalize", work)
-    monkeypatch.setattr(misc, "finalizedEmail", lambda *_: None)
+    monkeypatch.setattr(notifications, "send_notification", lambda *_: None)
     monkeypatch.setattr(findFlowCells, "markFinished", lambda: ["GCF-2026-001"])
     monkeypatch.setattr(
         misc, "write_error_report", lambda *_: cfg.static.paths.report_dir / "test.error"

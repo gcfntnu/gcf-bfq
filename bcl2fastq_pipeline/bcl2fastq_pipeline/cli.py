@@ -5,6 +5,7 @@ import logging
 import os
 import signal
 import sys
+import time
 
 from pathlib import Path
 from threading import Event
@@ -16,6 +17,7 @@ import bcl2fastq_pipeline.findFlowCells
 import bcl2fastq_pipeline.makeFastq
 import bcl2fastq_pipeline.misc
 
+from bcl2fastq_pipeline import notification_delivery, notifications
 from bcl2fastq_pipeline.config import PipelineConfig
 from bcl2fastq_pipeline.state import ExecutionLeaseError, FlowcellStateStore
 
@@ -75,22 +77,8 @@ def report_run_error(cfg, log, message, store=None, stage=None):
 
 
 def _run_reporting(cfg, start_time):
-    message = bcl2fastq_pipeline.afterFastq.reporting_steps()
-    message += bcl2fastq_pipeline.misc.getFCmetricsImproved()
-    run_time = datetime.datetime.now() - start_time
-
-    retry_email = False
-    try:
-        bcl2fastq_pipeline.misc.finishedEmail(message, run_time)
-    except Exception:
-        if cfg.run.libprep.startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences")):
-            retry_email = True
-        else:
-            raise
-
-    if retry_email:
-        logging.getLogger("bfq").info("Retry completion email without extra html")
-        bcl2fastq_pipeline.misc.finishedEmail(message, run_time, False)
+    # Email-only metrics and composition happen after this stage is committed.
+    return bcl2fastq_pipeline.afterFastq.reporting_steps()
 
 
 def _run_state_backed_flowcell(cfg, store, log):
@@ -99,6 +87,8 @@ def _run_state_backed_flowcell(cfg, store, log):
         state = store.begin_attempt(run_id, cfg=cfg)
         first_stage = state["current_stage"]
         start_time = datetime.datetime.now()
+        processing_started = time.monotonic()
+        notification_seconds = 0.0
 
         if not bcl2fastq_pipeline.misc.enoughFreeSpace():
             raise RuntimeError("Insufficient free space!")
@@ -131,17 +121,37 @@ def _run_state_backed_flowcell(cfg, store, log):
                     store.complete_stage(run_id, stage)
                 elif stage == "reporting":
                     log.info("Starting reporting: %s", run_id)
-                    _run_reporting(cfg, start_time)
-                    store.complete_stage(run_id, stage)
+                    projects = _run_reporting(cfg, start_time)
+                    if projects is None:
+                        projects = current["projects"]
+                    run_time = datetime.timedelta(
+                        seconds=time.monotonic() - processing_started - notification_seconds
+                    )
+                    payload = notifications.make_payload(
+                        cfg, "processed", projects=projects, run_time=str(run_time)
+                    )
+                    store.complete_stage(
+                        run_id, stage, notification={"kind": "processed", "payload": payload}
+                    )
                 elif stage == "finalization":
                     log.info("Starting finalization: %s", run_id)
-                    before_finalize = datetime.datetime.now()
+                    before_finalize = time.monotonic()
                     bcl2fastq_pipeline.afterFastq.finalize()
-                    finalize_time = datetime.datetime.now() - before_finalize
-                    run_time = datetime.datetime.now() - start_time
-                    bcl2fastq_pipeline.misc.finalizedEmail("", finalize_time, run_time)
+                    finalize_time = datetime.timedelta(seconds=time.monotonic() - before_finalize)
+                    run_time = datetime.timedelta(
+                        seconds=time.monotonic() - processing_started - notification_seconds
+                    )
                     projects = bcl2fastq_pipeline.findFlowCells.markFinished()
-                    store.complete_run(run_id, projects)
+                    payload = notifications.make_payload(
+                        cfg,
+                        "finalized",
+                        projects=projects,
+                        finalize_time=str(finalize_time),
+                        run_time=str(run_time),
+                    )
+                    store.complete_run(
+                        run_id, projects, notification={"kind": "finalized", "payload": payload}
+                    )
             except Exception as error:
                 report_run_error(
                     cfg,
@@ -151,6 +161,13 @@ def _run_state_backed_flowcell(cfg, store, log):
                     stage=stage,
                 )
                 return
+
+            # Delivery errors (including state I/O after SMTP) must never enter
+            # the processing failure path above. The intent is already durable.
+            if stage in {"reporting", "finalization"}:
+                before_notification = time.monotonic()
+                notification_delivery.deliver_pending(cfg, store, run_id)
+                notification_seconds += time.monotonic() - before_notification
 
             # complete_run finalizes the final stage itself.
             if index == len(stages) - 1:
@@ -216,6 +233,8 @@ def main():
             log.exception("Flowcell state directory is unavailable; refusing to process")
             sleep(cfg)
             continue
+
+        notification_delivery.recover_pending(cfg, store)
 
         for flowcell_path in candidate_flowcells(cfg, store):
             cfg.run.begin(flowcell_path, cfg.static.paths)

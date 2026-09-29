@@ -647,12 +647,17 @@ class FlowcellStateStore:
             now = utcnow()
             signature_source = f"{stage}\0{summary}".encode()
             signature = failure_signature or hashlib.sha256(signature_source).hexdigest()
+            # A completion write may have replaced the state file before its
+            # durability check failed. Cancel its intent with the failed stage.
+            _invalidate_delivery_notifications(state, stage, f"Processing failed at {stage}")
             state["status"] = "interrupted" if interrupted else "failed"
             state["current_stage"] = stage
             state["failed_at"] = now
+            state["completed_at"] = None
             detail = state["stages"][stage]
             detail["status"] = "failed"
             detail["failed_at"] = now
+            detail["completed_at"] = None
             state["last_error"] = {
                 "summary": summary,
                 "report_path": str(report_path) if report_path else None,
@@ -664,10 +669,15 @@ class FlowcellStateStore:
                     "notified": False,
                     "notified_at": None,
                 }
-            if state["attempts"] and state["attempts"][-1].get("outcome") == "running":
+            if (
+                state["attempts"]
+                and state["attempts"][-1].get("attempt") == state["attempt"]
+                and state["attempts"][-1].get("outcome") in {"running", "completed"}
+            ):
                 attempt = state["attempts"][-1]
                 attempt["outcome"] = "interrupted" if interrupted else "failed"
                 attempt["failed_at"] = now
+                attempt["completed_at"] = None
                 attempt["failure"] = copy.deepcopy(state["last_error"])
             return state
 
@@ -742,14 +752,23 @@ class FlowcellStateStore:
             )
             if entry is None:
                 raise StateConflictError(f"No notification {notification_id!r} for {run_id}")
+            if entry["status"] in {"sent", "superseded"}:
+                return False
+            if state["stages"][entry["stage"]]["status"] != "completed":
+                # Defense for older/inconsistent records: completion mail must
+                # never advertise work whose producing stage is not complete.
+                _invalidate_delivery_notifications(
+                    state, entry["stage"], f"Producing stage {entry['stage']} is not completed"
+                )
+                state["updated_at"] = utcnow()
+                self._atomic_write_unlocked(state)
+                return False
             if entry["status"] == "sending":
                 message = "Previous delivery was interrupted; SMTP acceptance is unknown"
                 self._finish_delivery_unlocked(state, entry, "uncertain", message)
             status = entry["status"]
-            if (
-                status in {"sent", "superseded"}
-                or (status == "failed" and not retry)
-                or (status == "uncertain" and not (retry and retry_uncertain))
+            if (status == "failed" and not retry) or (
+                status == "uncertain" and not (retry and retry_uncertain)
             ):
                 return False
             now = utcnow()
