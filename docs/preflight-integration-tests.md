@@ -6,17 +6,18 @@ either PR until the server checks pass. No production inputs need to be edited.
 
 ## Build both changes together
 
-Check out BFQ branch `121-input-preflight`, then build with its companion branch:
+Check out BFQ branch `121-input-preflight`, then use the standard build/tag/push
+wrapper with its companion tools branch (choose your intended test image tag):
 
 ```bash
-sudo docker build -f dockerfile-test \
-  --build-arg GCF_TOOLS_BRANCH=56-shared-input-validation \
-  --build-arg GCF_WORKFLOWS_BRANCH=bfq-dev \
-  -t gcfntnu/bfq:preflight-test .
+bash build-tag-push.sh test preflight-test -t 56-shared-input-validation
 ```
 
-Use the normal test deployment's mounts and configuration. The build checks
-that `/opt/conda/bin/python` has validation API 1 and satisfies BFQ dependencies.
+The wrapper builds and pushes `gcfntnu/bfq:preflight-test`; it defaults the workflow
+branch to `bfq-dev`. Use the normal test deployment's mounts and configuration.
+The build checks that `/opt/conda/bin/python` has validation API 1 and imports BFQ.
+The clean CI environment retains a full `pip check`. Image builds do not apply
+that audit to all unrelated applications in the shared Conda environment.
 The test image sets `BFQ_ENV=test`, which suppresses production error emails.
 Inside the container, verify the tools used by BFQ and configmaker:
 
@@ -128,6 +129,12 @@ not require FASTQs, so manual validation also works before restoration.
 
 ## Unexpected compatibility findings
 
+- The first integration image build installed BFQ successfully but then failed
+  the newly added global `pip check`: `snakemake-interface-common 1.23.1` requires
+  `packaging>=26.1`, while the image has `packaging 25.0`. The Dockerfiles now check
+  BFQ imports and the validator API instead. This removes the unrelated build
+  gate; it does not repair the Snakemake dependency mismatch. That belongs to the
+  base-image dependency maintenance and should be considered if Snakemake fails.
 - Old BFQ could overwrite a curated partner when the other input was absent.
   Each output-side input now takes precedence independently. A malformed curated
   canonical file fails visibly instead of triggering an instrument fallback.

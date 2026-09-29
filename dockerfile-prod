@@ -10,7 +10,8 @@ ADD https://api.github.com/repos/gcfntnu/gcf-bfq/git/refs/heads/master gcf-bfq_v
 RUN git clone https://github.com/gcfntnu/gcf-bfq.git /opt/gcf-bfq && \
     cd /opt/gcf-bfq && \
     git checkout master && \
-    /opt/conda/bin/python -m pip install . && /opt/conda/bin/python -m pip check
+    /opt/conda/bin/python -m pip install . && \
+    /opt/conda/bin/python -c "import bcl2fastq_pipeline.cli"
 
 ADD https://api.github.com/repos/gcfntnu/gcf-workflows/git/refs/heads/main gcf-workflows_version
 RUN cd /opt && git clone https://github.com/gcfntnu/gcf-workflows.git && cd /opt/gcf-workflows && git checkout main

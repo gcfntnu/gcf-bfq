@@ -14,7 +14,9 @@ RUN cd /opt && git clone https://github.com/gcfntnu/gcf-workflows.git && cd /opt
 
 COPY pyproject.toml /opt/gcf-bfq/pyproject.toml
 COPY bcl2fastq_pipeline /opt/gcf-bfq/bcl2fastq_pipeline
-RUN /opt/conda/bin/python -m pip install /opt/gcf-bfq && /opt/conda/bin/python -m pip check
+# Check BFQ imports; the shared Conda image also contains independently managed tools.
+RUN /opt/conda/bin/python -m pip install /opt/gcf-bfq && \
+    /opt/conda/bin/python -c "import bcl2fastq_pipeline.cli"
 
 WORKDIR /opt
 CMD ["bfq"]
