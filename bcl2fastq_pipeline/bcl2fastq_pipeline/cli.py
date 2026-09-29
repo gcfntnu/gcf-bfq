@@ -17,7 +17,7 @@ import bcl2fastq_pipeline.findFlowCells
 import bcl2fastq_pipeline.makeFastq
 import bcl2fastq_pipeline.misc
 
-from bcl2fastq_pipeline import notification_delivery, notifications
+from bcl2fastq_pipeline import notification_delivery, notifications, workflow_config
 from bcl2fastq_pipeline.config import PipelineConfig
 from bcl2fastq_pipeline.state import (
     ExecutionLeaseError,
@@ -101,9 +101,7 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
             bcl2fastq_pipeline.findFlowCells.newFlowCell()
             if not cfg.run.run_id:
                 return
-            cfg.run.set_pipeline_from_yaml(
-                os.environ.get("BFQ_LIBPREP_CONFIG", "/opt/gcf-workflows/libprep.config")
-            )
+            workflow_config.prepare_execution(cfg, current["current_stage"])
         state = store.begin_attempt(run_id, cfg=cfg)
         first_stage = state["current_stage"]
         start_time = datetime.datetime.now()

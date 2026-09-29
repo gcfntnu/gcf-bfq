@@ -25,8 +25,10 @@ import yaml
 
 from configmaker.configmaker import SEQUENCERS
 
+from bcl2fastq_pipeline import workflow_config
 from bcl2fastq_pipeline.config import PipelineConfig
 from bcl2fastq_pipeline.interop import prepare_index_metrics, run_interop_csv
+from bcl2fastq_pipeline.workflow_config import select_workflow
 
 log = logging.getLogger(__name__)
 COMMAND_OUTPUT_TAIL_LINES = 400
@@ -454,12 +456,10 @@ def post_workflow(project_id, base_dir, pipeline):
 
 
 def full_align(cfg):
-    # old_wd = Path.cwd()
-
-    # os.chdir(os.environ["TMPDIR"])
+    selection = select_workflow(cfg)
     project_names = get_project_names(get_project_dirs(cfg))
     run_date = str(cfg.output_path.name).split("_")[0]
-    for p in project_names:
+    for p in sorted(project_names):
         analysis_dir = Path(os.environ["TMPDIR"]) / f"{p}_{run_date}"
         analysis_dir.mkdir(parents=True, exist_ok=True)
         (analysis_dir / "src").mkdir(parents=True, exist_ok=True)
@@ -468,13 +468,16 @@ def full_align(cfg):
 
         # os.chdir(analysis_dir)
 
-        src = Path("/opt/gcf-workflows")
+        src = workflow_config.AUTHORITATIVE_CONFIG.parent
         dst = analysis_dir / "src" / "gcf-workflows"
 
         # copy snakemake pipeline
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst)
+        # copytree sees mutable working-tree files; overwrite the config with the
+        # exact bytes captured for this execution, including uncommitted edits.
+        selection.config.write(dst / "libprep.config")
 
         machine = get_sequencer(cfg.run.run_id)
         # create config.yaml
@@ -485,11 +488,19 @@ def full_align(cfg):
             "-p",
             str(p),
             "--libkit",
-            str(cfg.run.libprep),
+            selection.kit,
             "--machine",
             str(machine),
+            "--libprep-config",
+            str(dst / "libprep.config"),
+            "--libprep-sha256",
+            selection.config.sha256,
+            "--libprep-entry",
+            selection.entry,
+            "--expected-read-geometry",
+            *(str(n) for n in selection.read_geometry),
         ]
-        if Path("data/raw/fastq").exists():
+        if (analysis_dir / "data/raw/fastq").exists():
             cmd.append("--skip-create-fastq-dir")
         subprocess.check_call(cmd, cwd=analysis_dir)
 
@@ -565,7 +576,6 @@ def _disk_usage_message(cfg):
 def analysis_steps():
     """Run work invalidated by the public analysis restart boundary."""
     cfg = PipelineConfig.get()
-    cfg.run.set_pipeline_from_yaml(Path("/opt/gcf-workflows/libprep.config"))
     full_align(cfg)
 
 
