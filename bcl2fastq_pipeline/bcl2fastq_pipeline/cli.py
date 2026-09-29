@@ -17,7 +17,13 @@ import bcl2fastq_pipeline.findFlowCells
 import bcl2fastq_pipeline.makeFastq
 import bcl2fastq_pipeline.misc
 
-from bcl2fastq_pipeline import notification_delivery, notifications, preflight, workflow_config
+from bcl2fastq_pipeline import (
+    analysis_snapshots,
+    notification_delivery,
+    notifications,
+    preflight,
+    workflow_config,
+)
 from bcl2fastq_pipeline.config import PipelineConfig
 from bcl2fastq_pipeline.state import (
     ExecutionLeaseError,
@@ -108,6 +114,7 @@ def _prepare_workflow(cfg, store, state):
 def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
     run_id = cfg.run.run_id
     with store.execution_lease(run_id):
+        analysis_snapshots.recover(store, run_id)
         if prepare:
             current = store.read(run_id)
             if current["status"] != "queued":
@@ -158,8 +165,10 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                     )
                 elif stage == "analysis":
                     log.info("Starting analysis: %s", run_id)
-                    bcl2fastq_pipeline.afterFastq.analysis_steps()
-                    store.complete_stage(run_id, stage, {"workflow": cfg.run.pipeline})
+                    workdirs = bcl2fastq_pipeline.afterFastq.analysis_steps()
+                    store.complete_stage(
+                        run_id, stage, {"workflow": cfg.run.pipeline, "workdirs": workdirs or {}}
+                    )
                 elif stage == "reporting":
                     log.info("Starting reporting: %s", run_id)
                     projects = _run_reporting(cfg, start_time)
@@ -190,10 +199,18 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                         finalize_time=str(finalize_time),
                         run_time=str(run_time),
                     )
+                    snapshots = analysis_snapshots.prepare(store.read(run_id), projects)
                     store.complete_run(
-                        run_id, projects, notification={"kind": "finalized", "payload": payload}
+                        run_id,
+                        projects,
+                        notification={"kind": "finalized", "payload": payload},
+                        snapshots=snapshots,
                     )
             except Exception as error:
+                try:
+                    analysis_snapshots.recover(store, run_id)
+                except Exception:
+                    log.exception("Snapshot recovery deferred for %s", run_id)
                 report_run_error(
                     cfg,
                     log,
@@ -202,6 +219,16 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                     stage=stage,
                 )
                 return
+
+            if stage == "finalization":
+                try:
+                    analysis_snapshots.recover(store, run_id)
+                except Exception:
+                    log.exception(
+                        "Analysis snapshot publication pending for %s; completed delivery "
+                        "and staged snapshot preserved. BFQ will retry publication on its next scan.",
+                        run_id,
+                    )
 
             # Delivery errors (including state I/O after SMTP) must never enter
             # the processing failure path above. The intent is already durable.
@@ -275,6 +302,7 @@ def main():
             sleep(cfg)
             continue
 
+        analysis_snapshots.recover_pending(store)
         notification_delivery.recover_pending(cfg, store)
 
         for flowcell_path in candidate_flowcells(cfg, store):

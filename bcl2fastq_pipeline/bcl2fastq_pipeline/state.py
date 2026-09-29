@@ -41,6 +41,7 @@ RUN_STATUSES = {
 }
 ORIGINS = {"new", "legacy_rerun", "restored_legacy_fastq"}
 INPUT_FILES = {"SampleSheet.csv", "Sample-Submission-Form.xlsx"}
+PROVENANCE_DIR = "provenance"
 
 
 class StateError(RuntimeError):
@@ -882,7 +883,12 @@ class FlowcellStateStore:
         self._atomic_write_unlocked(state)
 
     def complete_run(
-        self, run_id: str, projects: list[str], *, notification: dict | None = None
+        self,
+        run_id: str,
+        projects: list[str],
+        *,
+        notification: dict | None = None,
+        snapshots: dict | None = None,
     ) -> dict:
         """Atomically record finalization and its optional delivery intent."""
 
@@ -904,6 +910,14 @@ class FlowcellStateStore:
                 "notified_at": None,
             }
             state["projects"] = sorted(set(projects))
+            if snapshots is not None:
+                stage["metadata"]["analysis_snapshots"] = copy.deepcopy(snapshots)
+                retained = state.setdefault("analysis_snapshots", {})
+                for project, snapshot in snapshots.items():
+                    if snapshot["status"] == "available":
+                        retained[project] = {
+                            key: value for key, value in snapshot.items() if key != "status"
+                        }
             if state["attempts"] and state["attempts"][-1].get("outcome") == "running":
                 state["attempts"][-1]["outcome"] = "completed"
                 state["attempts"][-1]["completed_at"] = now
@@ -1013,7 +1027,7 @@ def cleanup_plan(output_path: Path | str, from_stage: str) -> list[Path]:
 
     targets: set[Path] = set()
     if from_stage == "demultiplexing":
-        targets.update(path for path in children if path.name not in INPUT_FILES)
+        targets.update(path for path in children if path.name not in INPUT_FILES | {PROVENANCE_DIR})
     else:
         # Finalization products are always downstream of analysis/reporting.
         targets.update(

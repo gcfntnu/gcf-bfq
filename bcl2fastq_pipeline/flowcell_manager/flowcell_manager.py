@@ -26,7 +26,7 @@ from bcl2fastq_pipeline.state import (
     validate_restored_fastqs,
 )
 
-from bcl2fastq_pipeline import notification_delivery, preflight
+from bcl2fastq_pipeline import analysis_snapshots, notification_delivery, preflight
 
 pd.set_option("display.max_rows", 5000)
 pd.set_option("display.max_columns", 12)
@@ -266,6 +266,8 @@ def rerun_flowcell(**args):
             selected, _result = preflight.require_valid_inputs(
                 state["source_path"], output_path, refresh=refresh_inputs
             )
+        if not creating:
+            analysis_snapshots.recover(store, run_id)
         if creating:
             store.create(state)
         else:
@@ -392,6 +394,8 @@ def _archive_targets(flowcell, projects):
     ordered = sorted(set(targets), key=lambda path: (len(path.parts), str(path)))
     result = []
     for path in ordered:
+        if flowcell / analysis_snapshots.DIRECTORY in path.parents:
+            continue
         if any(parent in path.parents or parent == path for parent in result):
             continue
         if path.exists():
@@ -443,6 +447,7 @@ def archive_flowcell(**args):
                 raise StateConflictError(
                     "Run changed while preparing the command; inspect and retry"
                 )
+            analysis_snapshots.recover(store, run_id)
             store.invalidate_notifications(
                 run_id, reason="Delivery outputs archived", output_path=flowcell
             )
