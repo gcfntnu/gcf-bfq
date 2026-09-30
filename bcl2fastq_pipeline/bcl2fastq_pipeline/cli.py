@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import datetime
 import importlib
+import json
 import logging
 import os
 import signal
@@ -18,10 +19,12 @@ import bcl2fastq_pipeline.makeFastq
 import bcl2fastq_pipeline.misc
 
 from bcl2fastq_pipeline import (
+    analysis_qc,
     analysis_snapshots,
     notification_delivery,
     notifications,
     preflight,
+    sequencing_delivery,
     workflow_config,
 )
 from bcl2fastq_pipeline.config import PipelineConfig
@@ -157,6 +160,23 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                     log.info("Starting demultiplexing: %s", run_id)
                     tool, version = bcl2fastq_pipeline.makeFastq.bcl2fq()
                     bcl2fastq_pipeline.makeFastq.rename_fastqs()
+                    before_early = time.monotonic()
+                    sequencing_delivery.record_conversion(
+                        cfg,
+                        store,
+                        tool,
+                        version,
+                        run_time=str(datetime.timedelta(seconds=before_early - processing_started)),
+                    )
+                    sequencing_delivery.ensure_report(
+                        cfg,
+                        store,
+                        run_id,
+                        run_time=str(datetime.timedelta(seconds=before_early - processing_started)),
+                    )
+                    before_notification = time.monotonic()
+                    notification_delivery.deliver_pending(cfg, store, run_id, kind="sequencing")
+                    notification_seconds += time.monotonic() - before_notification
                     bcl2fastq_pipeline.afterFastq.md5sum_worker(cfg, force=True)
                     store.complete_stage(
                         run_id,
@@ -171,17 +191,41 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                     )
                 elif stage == "reporting":
                     log.info("Starting reporting: %s", run_id)
+                    reporting_started = time.monotonic()
                     projects = _run_reporting(cfg, start_time)
                     if projects is None:
                         projects = current["projects"]
                     run_time = datetime.timedelta(
                         seconds=time.monotonic() - processing_started - notification_seconds
                     )
+                    legacy_qc = None
+                    legacy_summary = cfg.output_path / "Stats/sequencing_qc/summary.json"
+                    if not current.get("sequencing_qc") and legacy_summary.is_file():
+                        legacy_qc = json.loads(legacy_summary.read_text())
                     payload = notifications.make_payload(
-                        cfg, "processed", projects=projects, run_time=str(run_time)
+                        cfg,
+                        "processed",
+                        projects=projects,
+                        run_time=str(run_time),
+                        analysis_qc=analysis_qc.collect(cfg, projects),
+                        sequencing_qc=legacy_qc,
+                    )
+                    late_seconds = time.monotonic() - reporting_started
+                    early = store.read(run_id).get("sequencing_qc", {})
+                    early_seconds = (
+                        early.get("duration_seconds")
+                        if early.get("status") == "completed"
+                        else None
                     )
                     store.complete_stage(
-                        run_id, stage, notification={"kind": "processed", "payload": payload}
+                        run_id,
+                        stage,
+                        {
+                            "analysis_reporting_duration_seconds": late_seconds,
+                            "sequencing_qc_duration_seconds": early_seconds,
+                            "duration_seconds": late_seconds + (early_seconds or 0),
+                        },
+                        notification={"kind": "processed", "payload": payload},
                     )
                 elif stage == "finalization":
                     log.info("Starting finalization: %s", run_id)

@@ -15,13 +15,18 @@ from email.headerregistry import HeaderRegistry
 from email.message import EmailMessage
 from email.utils import format_datetime
 from html import escape
+from html.parser import HTMLParser
 from pathlib import Path
 from types import SimpleNamespace
 
 from bcl2fastq_pipeline.state import DeliveryUncertainError
 
 log = logging.getLogger(__name__)
-RECIPIENT_KEYS = {"processed": "finished_to", "finalized": "error_to"}
+RECIPIENT_KEYS = {
+    "sequencing": "finished_to",
+    "processed": "finished_to",
+    "finalized": "error_to",
+}
 
 
 class NotificationConfigError(ValueError):
@@ -29,17 +34,30 @@ class NotificationConfigError(ValueError):
 
 
 def make_payload(  # noqa: PLR0913
-    cfg, kind, *, message="", run_time="", finalize_time="", projects=None
+    cfg,
+    kind,
+    *,
+    message="",
+    run_time="",
+    finalize_time="",
+    projects=None,
+    sequencing_qc=None,
+    analysis_qc=None,
 ):
     """Capture JSON-compatible run context without composing mail or reading inputs."""
     if kind not in RECIPIENT_KEYS:
         raise ValueError(f"Unsupported completion notification kind: {kind}")
+    if kind == "sequencing" and sequencing_qc is None and projects is None:
+        raise ValueError("Sequencing notification requires planned projects or saved QC")
+    if projects is None and sequencing_qc is not None:
+        projects = sequencing_qc["projects"]
     if projects is None:
         from bcl2fastq_pipeline import afterFastq  # noqa: PLC0415
 
         projects = afterFastq.get_project_names(afterFastq.get_project_dirs(cfg))
     run = cfg.run
-    return {
+    payload = {
+        "email_version": 2,
         "run_id": run.run_id,
         "output_path": str(cfg.output_path),
         "flowcell_path": str(run.flowcell_path) if run.flowcell_path else None,
@@ -55,6 +73,11 @@ def make_payload(  # noqa: PLR0913
         "run_time": str(run_time),
         "finalize_time": str(finalize_time),
     }
+    if sequencing_qc is not None:
+        payload["sequencing_qc"] = sequencing_qc
+    if analysis_qc is not None:
+        payload["analysis_qc"] = analysis_qc
+    return payload
 
 
 def _required(settings, key):
@@ -137,7 +160,7 @@ def _add_report(message, report_path):
     )
 
 
-def _processed_message(cfg, message, payload):
+def _legacy_processed_message(cfg, message, payload):
     from bcl2fastq_pipeline import afterFastq, misc  # noqa: PLC0415
 
     saved_cfg = _saved_config(cfg, payload)
@@ -190,6 +213,145 @@ def _processed_message(cfg, message, payload):
     _add_report(message, saved_cfg.output_path / "Stats" / f"sequencer_stats_{project_names}.html")
 
 
+class _PlainText(HTMLParser):
+    """Keep the full operational summary accessible in plain-text mail clients."""
+
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"br", "p", "tr", "div", "h2", "h3", "pre"}:
+            self.parts.append("\n")
+        elif tag in {"td", "th"}:
+            self.parts.append("\t")
+
+    def handle_endtag(self, tag):
+        if tag in {"p", "tr", "div", "h2", "h3", "pre"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+
+def _plain_text(html):
+    parser = _PlainText()
+    parser.feed(html)
+    return "\n".join(line.strip() for line in "".join(parser.parts).splitlines() if line.strip())
+
+
+def _run_summary(payload):
+    from bcl2fastq_pipeline import afterFastq  # noqa: PLC0415
+
+    lines = [f"Projects: {', '.join(payload['projects']) or '(none)'}"]
+    if payload.get("user") not in (None, "", "N/A"):
+        lines.append(f"User: {payload['user']}")
+    lines.extend(
+        (
+            f"Flow cell: {payload['run_id']}",
+            f"Sequencer: {afterFastq.get_sequencer(payload['run_id'])}",
+            f"bcl2fastq_pipeline elapsed time: {payload['run_time']}",
+        )
+    )
+    return "\n".join(lines)
+
+
+def _body(message, heading, summary, html_sections, text_sections=None):
+    from bcl2fastq_pipeline import misc  # noqa: PLC0415
+
+    if text_sections is None:
+        text_sections = [_plain_text(section) for section in html_sections]
+    message.set_content("\n\n".join([heading, summary, *text_sections]))
+    message.add_alternative(
+        "<html><head>"
+        + misc.style
+        + "</head><body>"
+        + f"<h2>{escape(heading)}</h2>"
+        + escape(summary).replace("\n", "<br>\n")
+        + "<br><br>"
+        + "<br><br>".join(html_sections)
+        + "</body></html>",
+        subtype="html",
+    )
+
+
+def _sequencing_message(cfg, message, payload):
+    """Use only the saved early QC result and operational disk availability."""
+    from bcl2fastq_pipeline import afterFastq  # noqa: PLC0415
+
+    saved_cfg = _saved_config(cfg, payload)
+    qc = payload["sequencing_qc"]
+    disk = afterFastq._disk_usage_message(saved_cfg)
+    explanation = (
+        "Demultiplexing is complete. This report summarizes sequencing and index assignment. "
+        "Analysis is a separate stage; no analysis results or automatic QC pass/fail decision "
+        "are included. Review the attached sequencing report if intervention is needed."
+    )
+    html_sections = [escape(explanation), qc["summary_html"], disk]
+    text_sections = [explanation, qc["summary_text"], _plain_text(disk)]
+    if payload.get("message"):
+        html_sections.append(payload["message"])
+        text_sections.append(_plain_text(payload["message"]))
+    _body(
+        message,
+        "Demultiplexing complete — sequencing QC",
+        _run_summary(payload),
+        html_sections,
+        text_sections,
+    )
+    _add_report(message, Path(qc["report_path"]))
+
+
+def _processed_message(cfg, message, payload):
+    """Describe completed analysis; sequencing QC has its own earlier notification."""
+    from bcl2fastq_pipeline import misc  # noqa: PLC0415
+
+    saved_cfg = _saved_config(cfg, payload)
+    projects = payload["projects"]
+    html_sections = [
+        "Analysis and project QC reports are complete. Review the attached MultiQC reports "
+        "for detailed sample QC; this email does not assign a QC pass/fail status. "
+        "Archiving and delivery preparation are reported separately after finalization."
+    ]
+    if payload.get("analysis_qc"):
+        html_sections.append(payload["analysis_qc"]["summary_html"])
+    else:
+        html_sections.append(
+            misc.analysisSampleMetrics(saved_cfg, projects).replace("\n", "<br>\n")
+        )
+    html_sections.append(
+        misc.parseSampleSheetMetrics(saved_cfg, projects=projects).replace("\n", "<br>\n")
+    )
+    if payload.get("message"):
+        html_sections.append(payload["message"])
+    legacy_sequencing = payload.get("sequencing_qc")
+    if legacy_sequencing:
+        html_sections.extend(
+            (
+                "Sequencing QC is included here for this legacy run; "
+                "no separate early notification was created.",
+                legacy_sequencing["summary_html"],
+            )
+        )
+    else:
+        html_sections.append(
+            "Sequencing yield, base quality, PhiX and index assignment are covered in the "
+            "early sequencing report."
+        )
+    _body(message, "Analysis complete — QC summary", _run_summary(payload), html_sections)
+    date = payload["run_id"].split("_")[0]
+    for project in projects:
+        _add_report(message, saved_cfg.output_path / f"multiqc_{project}_{date}.html")
+        if (payload.get("libprep") or "").startswith(
+            ("10X Genomics Chromium Single Cell", "Parse Biosciences")
+        ):
+            report = saved_cfg.output_path / f"all_samples_web_summary_{project}_{date}.html"
+            if report.exists():
+                _add_report(message, report)
+    if legacy_sequencing:
+        _add_report(message, Path(legacy_sequencing["report_path"]))
+
+
 def build_message(cfg, entry):
     """Read reports and compose mail using saved run context and current recipients."""
     kind = entry["kind"]
@@ -197,15 +359,26 @@ def build_message(cfg, entry):
     payload = entry["payload"]
     projects = ", ".join(payload["projects"])
     message = EmailMessage()
-    message["Subject"] = f"[bcl2fastq_pipeline] {projects} {kind}"
+    label = {
+        "sequencing": "Demultiplexing complete — sequencing QC",
+        "processed": "Analysis complete — QC summary",
+    }.get(kind, kind)
+    if kind == "processed" and payload.get("email_version", 1) < 2:
+        label = kind
+    message["Subject"] = f"[bcl2fastq_pipeline] {projects} {label}"
     message["From"] = sender_header
     message["To"] = recipient_header
     message["Date"] = format_datetime(datetime.fromisoformat(entry["created_at"]))
     identity = "\0".join((payload["run_id"], entry["id"], entry["created_at"]))
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
     message["Message-ID"] = f"<{digest}@bfq.invalid>"
-    if kind == "processed":
-        _processed_message(cfg, message, payload)
+    if kind == "sequencing":
+        _sequencing_message(cfg, message, payload)
+    elif kind == "processed":
+        if payload.get("email_version", 1) < 2:
+            _legacy_processed_message(cfg, message, payload)
+        else:
+            _processed_message(cfg, message, payload)
     else:
         message.set_content(
             f"{projects} has been finalized and prepared for delivery.\n\n"

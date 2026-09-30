@@ -291,12 +291,98 @@ Production error recipients retain their existing duplicate/empty-entry handling
 Current SMTP handling does not configure authentication or TLS. Access control
 must therefore be provided by the deployment environment or relay.
 
+### Early sequencing QC and the three notifications
+
+After a successful BCL conversion and FASTQ rename, BFQ generates sequencing QC
+and attempts its email **before FASTQ MD5 generation and analysis**. Processing
+continues normally: this report has no QC threshold, pass/fail gate, pause,
+index correction or sample-exclusion policy. Review and intervention are manual.
+
+| Notification | Recipients | Contents |
+| --- | --- | --- |
+| `sequencing` — Demultiplexing complete — sequencing QC | `finished_to` | Flowcell/projects/user, instrument and read geometry; yield, lane density/PF/PhiX/R1/R2 Q30 where available; assigned reads, undetermined fraction, planned and zero-read samples, and available top unknown indexes. Includes disk availability and the sequencing MultiQC attachment. |
+| `processed` — Analysis complete — QC summary | `finished_to` | Project/FASTQ sample counts and planned samples without FASTQs; original submission counts, sample groups and validation findings. Optional fastp input/retained reads, retention and base-weighted after-filter Q30, with explicit report coverage. Attaches project MultiQC and existing single-cell summaries. |
+| `finalized` | `error_to` | Existing archive/checksum completion notification and timing. |
+
+Absent metrics say unavailable; a sample omitted from statistics is not assumed
+to have zero reads. Counts describe read clusters/assignments in sequencing QC;
+fastp counts individual reads, including both mates. Optional fastp summaries are
+snapshotted at reporting from the matching analysis workdir so notification
+retries do not need that workdir. Full per-sample details remain in MultiQC.
+
+The sequencing report uses a BFQ-owned configuration and run XML, InterOp,
+SampleSheet and demultiplexer statistics. It never reads the Excel submission
+form, configmaker output or analysis-generated YAML. The existing **preflight
+before demultiplexing remains in place**: a workbook rejected before conversion
+still prevents a fresh run. A successfully converted run can generate/recover
+sequencing QC independently of later workbook or analysis failure.
+
+The standalone HTML lives in the flowcell output root, beside the analysis reports:
+`sequencer_stats_<project(s)>_<flowcell_date>.html`. Project IDs are sorted and
+joined with `_`, for example `sequencer_stats_GCF-2026-043_GCF-2026-044_260925.html`.
+The date is the flowcell ID's date prefix, matching analysis-report naming.
+Supporting JSON summary, configuration, input snapshots, MultiQC data and logs
+stay under `Stats/sequencing_qc/`; the conversion's SampleSheet is saved in state
+and exposed as `Stats/sequencing_qc_samplesheet.csv`. BFQ selects the module from
+actual demultiplexer output, not the current `FORCE_BCL2FASTQ` environment alone.
+Native bcl-convert CSVs are staged beside RunInfo.xml, with bcl2fastq Stats.json
+and XML fallback supported. mkfastq uses the bcl2fastq module when its statistics
+are available; only sequencing/demultiplexing information belongs in this early
+report, not cell, barcode or mapping QC. Missing optional InterOp/index metrics
+produce visible warnings. Missing essential statistics, malformed RunInfo or
+MultiQC failure produces a failed **QC report**, not a QC rejection of the run.
+
+A new successful conversion records one sequencing-QC execution and notification
+identity. Analysis/reporting/finalization reruns preserve it and its successful
+reporting duration. Daemon restarts do not duplicate sent mail. A demultiplexing
+rerun removes its artifacts and supersedes its notification before permitting a
+new one. Even if subsequent FASTQ hashing fails, a successfully generated early
+report remains available. Root-level sequencing HTML is explicitly included in
+each project delivery archive; supporting artifacts remain included through `Stats`. Legacy reruns with no early execution get
+sequencing QC attached to their analysis email; they do not invent early mail.
+
+Inspect and recover a failed/missing report without reconverting BCLs:
+
+```console
+flowcell-manager status RUN_ID
+flowcell-manager show RUN_ID
+flowcell-manager retry-sequencing-qc RUN_ID
+```
+
+Existing completed reports keep their saved paths, including reports generated
+under `Stats` by earlier builds; retries do not rename or resend them. Newly
+generated or recovered reports use the project/date filename at the output root.
+
+`retry-sequencing-qc` reuses a valid report, otherwise regenerates it from the
+retained conversion inputs and attempts a never-attempted notification. It does
+not repeat analysis, hashing or BCL conversion. Failed or uncertain SMTP delivery
+still needs the explicit notification retry described below. The command is
+serialized with processing/cleanup and does not send a second copy of sent mail.
+If report recovery occurs after finalization, use `rerun RUN_ID --from finalization`
+to refresh delivery archives before delivery; report recovery does not rewrite
+existing archives. A hard interruption during report generation requires this
+explicit recovery command; the daemon does not silently rerun the conversion.
+
+For wrong indexes, inspect the report, correct the output-side SampleSheet, and
+explicitly `rerun RUN_ID --from demultiplexing`. For a downstream analysis problem,
+correct its inputs and `rerun RUN_ID --from analysis`; the early report and FASTQ
+checksums remain valid. There is no new pause/cancel interface.
+
+Early generation duration is persisted on successful report completion, excluding
+SMTP and failed report attempts. Later reporting records its own duration plus
+that preserved early component exactly once. The full six-category email timing
+breakdown remains #118; this change supplies its early-report component.
+
+See [early sequencing QC verification](docs/early-sequencing-qc-integration-tests.md)
+for the server checks required before merge.
+
 ### Completion notifications and recovery
 
 Reporting/finalization completion and notification intent are saved atomically.
 Message composition and SMTP run afterward. Missing email settings, malformed
 email metadata, unreadable attachments or SMTP errors do not invalidate completed
-reports, archives or checksums. Genuine report-generation, archive/checksum or
+reports, archives or checksums. Early sequencing report failures are recorded
+separately and processing continues; other reporting, archive/checksum and
 processing-state commit failures still fail processing.
 
 `flowcell-manager status RUN_ID` shows notification outcomes alongside processing
@@ -318,6 +404,7 @@ After correcting `/config/bcl2fastq.ini` or restoring a missing report, use:
 
 ```console
 flowcell-manager retry-notifications RUN_ID
+flowcell-manager retry-notifications RUN_ID --kind sequencing
 flowcell-manager retry-notifications RUN_ID --kind processed
 flowcell-manager retry-notifications RUN_ID --kind finalized
 ```
@@ -352,7 +439,7 @@ replaces only finalization intent. Archive cleanup invalidates delivery intents
 before removing their outputs. Retry and cleanup serialize under the execution
 lease; `--force` cannot bypass it. Sent/superseded history remains inspectable.
 
-Completion mail retains existing routing: `processed` goes to `finished_to`,
+Completion mail retains existing routing: `sequencing` and `processed` go to `finished_to`,
 `finalized` to `error_to`. Completion mail is not gated by `BFQ_ENV`; production
 error-mail gating below remains unchanged. Notification time is excluded from
 the existing attempt-runtime messages; persisted per-step timing is separate work.

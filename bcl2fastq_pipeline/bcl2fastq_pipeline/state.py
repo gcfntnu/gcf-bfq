@@ -12,6 +12,7 @@ import fcntl
 import gzip
 import hashlib
 import json
+import math
 import os
 import shutil
 import socket
@@ -276,6 +277,28 @@ def validate_state(state: dict) -> None:
     # Optional in v1: loading an older document must not invent mail to send.
     if "delivery_notifications" in state:
         _validate_delivery_notifications(state["delivery_notifications"])
+    qc = state.get("sequencing_qc")
+    if qc is not None:
+        if (
+            not isinstance(qc, dict)
+            or type(qc.get("execution")) is not int
+            or qc["execution"] < 1
+            or qc.get("status") not in {"pending", "running", "completed", "failed"}
+            or not isinstance(qc.get("context"), dict)
+            or not isinstance(qc.get("attempts"), list)
+        ):
+            raise StateValidationError("Invalid sequencing QC state")
+        if qc["status"] == "completed":
+            duration = qc.get("duration_seconds")
+            if (
+                not isinstance(duration, (float, int))
+                or isinstance(duration, bool)
+                or not math.isfinite(duration)
+                or duration < 0
+                or not isinstance(qc.get("result"), dict)
+                or not isinstance(qc["result"].get("report_path"), str)
+            ):
+                raise StateValidationError("Invalid completed sequencing QC result")
 
 
 def _validate_delivery_notifications(notifications) -> None:
@@ -340,7 +363,9 @@ def _validate_delivery_notifications(notifications) -> None:
                     raise StateValidationError(f"Invalid delivery attempt {field}")
 
 
-def _append_delivery_notification(state: dict, stage: str, notification: dict | None) -> None:
+def _append_delivery_notification(
+    state: dict, stage: str, notification: dict | None, *, attempt: int | None = None
+) -> None:
     if notification is None:
         return
     if (
@@ -350,12 +375,13 @@ def _append_delivery_notification(state: dict, stage: str, notification: dict | 
         or not isinstance(notification.get("payload"), dict)
     ):
         raise StateValidationError("Notification requires a kind and payload object")
+    attempt = state["attempt"] if attempt is None else attempt
     state.setdefault("delivery_notifications", []).append(
         {
-            "id": f"{notification['kind']}:{state['attempt']}",
+            "id": f"{notification['kind']}:{attempt}",
             "kind": notification["kind"],
             "stage": stage,
-            "attempt": state["attempt"],
+            "attempt": attempt,
             "status": "pending",
             "created_at": utcnow(),
             "sent_at": None,
@@ -367,13 +393,19 @@ def _append_delivery_notification(state: dict, stage: str, notification: dict | 
 
 
 def _invalidate_delivery_notifications(
-    state: dict, from_stage: str, reason: str, *, unsent_only: bool = False
+    state: dict,
+    from_stage: str,
+    reason: str,
+    *,
+    unsent_only: bool = False,
+    preserve_sequencing: bool = False,
 ) -> None:
     boundary = STAGES.index(from_stage)
     now = utcnow()
     for entry in state.get("delivery_notifications", []):
         if (
-            STAGES.index(entry["stage"]) < boundary
+            (preserve_sequencing and entry["kind"] == "sequencing")
+            or STAGES.index(entry["stage"]) < boundary
             or entry["status"] == "superseded"
             or (unsent_only and entry["status"] == "sent")
         ):
@@ -554,6 +586,8 @@ class FlowcellStateStore:
             if output_path is not None:
                 state["output_path"] = str(output_path)
             _invalidate_delivery_notifications(state, start_stage, f"Restart from {start_stage}")
+            if start_stage == "demultiplexing" and state.get("sequencing_qc"):
+                state.setdefault("sequencing_qc_history", []).append(state.pop("sequencing_qc"))
             state["status"] = "preparing"
             state["current_stage"] = start_stage
             state["restart_request"] = {
@@ -577,6 +611,8 @@ class FlowcellStateStore:
         def update(state: dict) -> dict:
             validate_restart_boundary(state, start_stage)
             _invalidate_delivery_notifications(state, start_stage, f"Restart from {start_stage}")
+            if start_stage == "demultiplexing" and state.get("sequencing_qc"):
+                state.setdefault("sequencing_qc_history", []).append(state.pop("sequencing_qc"))
             start_index = STAGES.index(start_stage)
             for index, stage in enumerate(STAGES):
                 detail = state["stages"][stage]
@@ -702,6 +738,86 @@ class FlowcellStateStore:
 
         return self.mutate(run_id, update)
 
+    def record_demultiplexing_execution(self, run_id, tool, version, context):
+        """Commit conversion success before reporting, hashing or analysis can fail."""
+
+        def update(state):
+            if state["stages"]["demultiplexing"]["status"] != "running":
+                raise StateConflictError("Demultiplexing is not running")
+            if state.get("sequencing_qc"):
+                raise StateConflictError("This demultiplexing execution is already recorded")
+            state["demultiplexing"].update(tool=tool, version=version)
+            state["sequencing_qc"] = {
+                "execution": state["attempt"],
+                "status": "pending",
+                "conversion_completed_at": utcnow(),
+                "context": copy.deepcopy(context),
+                "tool": tool,
+                "attempts": [],
+                "last_error": None,
+            }
+            return state
+
+        return self.mutate(run_id, update)
+
+    def start_sequencing_qc(self, run_id):
+        def update(state):
+            qc = state.get("sequencing_qc")
+            if not qc or state["status"] == "archived":
+                raise StateConflictError("No retained demultiplexing execution for sequencing QC")
+            if qc["attempts"] and qc["attempts"][-1]["status"] == "running":
+                qc["attempts"][-1].update(status="interrupted")
+            qc["status"] = "running"
+            qc.pop("duration_seconds", None)
+            reporting = state["stages"]["reporting"]["metadata"]
+            if "analysis_reporting_duration_seconds" in reporting:
+                reporting["sequencing_qc_duration_seconds"] = None
+                reporting["duration_seconds"] = reporting["analysis_reporting_duration_seconds"]
+            qc["attempts"].append({"started_at": utcnow(), "status": "running"})
+            qc["last_error"] = None
+            return state
+
+        return self.mutate(run_id, update)
+
+    def finish_sequencing_qc(self, run_id, *, result=None, duration=None, payload=None, error=None):
+        """Publish report success and its one notification intent atomically."""
+
+        def update(state):
+            qc = state["sequencing_qc"]
+            if qc["status"] != "running":
+                raise StateConflictError("Sequencing QC is not running")
+            status = "failed" if error is not None else "completed"
+            qc.update(status=status, last_error=str(error) if error is not None else None)
+            qc["attempts"][-1].update(status=status, completed_at=utcnow(), error=qc["last_error"])
+            if error is None:
+                qc.update(result=copy.deepcopy(result), duration_seconds=duration)
+                qc["attempts"][-1]["duration_seconds"] = duration
+                reporting = state["stages"]["reporting"]["metadata"]
+                if "analysis_reporting_duration_seconds" in reporting:
+                    reporting["sequencing_qc_duration_seconds"] = duration
+                    reporting["duration_seconds"] = (
+                        reporting["analysis_reporting_duration_seconds"] + duration
+                    )
+                identity = f"sequencing:{qc['execution']}"
+                entry = next(
+                    (e for e in state.get("delivery_notifications", []) if e["id"] == identity),
+                    None,
+                )
+                if entry is None:
+                    _append_delivery_notification(
+                        state,
+                        "demultiplexing",
+                        {"kind": "sequencing", "payload": payload},
+                        attempt=qc["execution"],
+                    )
+                elif entry["status"] in {"pending", "failed"}:
+                    # Refresh an unsent summary after rebuilding a missing
+                    # report, preserving SMTP outcomes and explicit retry policy.
+                    entry["payload"] = copy.deepcopy(payload)
+            return state
+
+        return self.mutate(run_id, update)
+
     def fail_stage(  # noqa: PLR0913
         self,
         run_id: str,
@@ -726,7 +842,12 @@ class FlowcellStateStore:
                 failed_outcomes.add("completed")
             # A completion write may have replaced the state file before its
             # durability check failed. Cancel its intent with the failed stage.
-            _invalidate_delivery_notifications(state, stage, f"Processing failed at {stage}")
+            _invalidate_delivery_notifications(
+                state,
+                stage,
+                f"Processing failed at {stage}",
+                preserve_sequencing=bool(state.get("sequencing_qc")),
+            )
             state["status"] = "interrupted" if interrupted else "failed"
             state["current_stage"] = stage
             state["failed_at"] = now
@@ -831,7 +952,28 @@ class FlowcellStateStore:
                 raise StateConflictError(f"No notification {notification_id!r} for {run_id}")
             if entry["status"] in {"sent", "superseded"}:
                 return False
-            if state["stages"][entry["stage"]]["status"] != "completed":
+            qc = state.get("sequencing_qc", {})
+            producing_complete = (
+                qc.get("status") == "completed" and qc.get("execution") == entry["attempt"]
+                if entry["kind"] == "sequencing"
+                else state["stages"][entry["stage"]]["status"] == "completed"
+            )
+            if not producing_complete:
+                if entry["kind"] == "sequencing":
+                    if qc.get("execution") == entry["attempt"]:
+                        # The same conversion's report can be recovered. Keep
+                        # its intent and SMTP outcome; downstream mail is valid.
+                        entry["last_error"] = (
+                            "Sequencing QC report is unavailable; recover with "
+                            "flowcell-manager retry-sequencing-qc " + run_id
+                        )
+                    else:
+                        entry["status"] = "superseded"
+                        entry["invalidated_at"] = utcnow()
+                        entry["invalidation_reason"] = "Demultiplexing execution was replaced"
+                    state["updated_at"] = utcnow()
+                    self._atomic_write_unlocked(state)
+                    return False
                 # Defense for older/inconsistent records: completion mail must
                 # never advertise work whose producing stage is not complete.
                 _invalidate_delivery_notifications(
