@@ -30,9 +30,15 @@ def _unavailable(detail):
 
 
 def _orientation(content, source_path):
-    source_sheet = preflight.select_run_inputs(source_path, source_path, refresh=True).sample_sheet
-    report = {"source_sheet": str(source_sheet.absolute()), "source_sha256": None}
+    report = {
+        "source_sheet": str(Path(source_path).absolute() / "SampleSheet.csv"),
+        "source_sha256": None,
+    }
     try:
+        source_sheet = preflight.select_run_inputs(
+            source_path, source_path, refresh=True
+        ).sample_sheet
+        report["source_sheet"] = str(source_sheet.absolute())
         reference = source_sheet.read_bytes()
         report["source_sha256"] = _sha256(reference)
         report["per_index"] = index_sequences.orientation(content, reference)

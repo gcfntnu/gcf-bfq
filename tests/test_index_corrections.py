@@ -185,6 +185,39 @@ def test_source_unavailable_does_not_block_toggle(prepared):
     assert (output / "SampleSheet.csv").read_bytes() == correction.after
 
 
+def test_unreadable_source_selection_does_not_block_toggle(prepared, monkeypatch):
+    store, _, output = prepared
+
+    def unavailable(*_, **__):
+        raise PermissionError("source directory unavailable")
+
+    monkeypatch.setattr(corrections.preflight, "select_run_inputs", unavailable)
+    correction = make_plan(prepared)
+    assert correction.orientation["per_index"]["index2"]["status"] == "unavailable"
+    corrections.apply(store, RUN_ID, correction)
+    assert (output / "SampleSheet.csv").read_bytes() == correction.after
+
+
+@pytest.mark.parametrize("replacement", [None, SHEET, SHEET.replace(b"AGTC", b"CCCC")])
+def test_attempt_link_follows_current_sheet_across_rerun_and_refresh(prepared, replacement):
+    store, _, output = prepared
+    correction = make_plan(prepared)
+    corrections.apply(store, RUN_ID, correction)
+    store.queue(RUN_ID, "demultiplexing")
+    # Preparing another plain rerun drops the previous restart_request; history
+    # still identifies the effective input, unless refreshed/manually changed.
+    store.set_preparing(
+        RUN_ID, "demultiplexing", reason=None, refresh_inputs=replacement is not None
+    )
+    if replacement is not None:
+        (output / "SampleSheet.csv").write_bytes(replacement)
+    store.queue(RUN_ID, "demultiplexing")
+    attempt = store.begin_attempt(RUN_ID)["attempts"][-1]
+    assert attempt["index_correction_id"] == (
+        correction.operation_id if replacement is None else None
+    )
+
+
 @pytest.mark.parametrize("link_type", ["symlink", "hardlink"])
 def test_atomic_replace_detaches_output_link_and_preserves_source(prepared, link_type):
     store, source, output = prepared

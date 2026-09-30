@@ -432,6 +432,30 @@ def validate_restart_boundary(state: dict, start_stage: str) -> None:
         )
 
 
+def _effective_index_correction(state):
+    """Associate an attempt with the latest applied edit matching its input bytes.
+
+    Ordinary reruns/recovery may replace restart_request, while input refresh or
+    manual edits can invalidate its old correction ID. Match the actual sheet.
+    """
+    history = state.get("index_corrections", [])
+    if not history:
+        return None
+    try:
+        content = (Path(state["output_path"]) / "SampleSheet.csv").read_bytes()
+    except OSError:
+        return None
+    checksum = hashlib.sha256(content).hexdigest()
+    return next(
+        (
+            item["id"]
+            for item in reversed(history)
+            if item["status"] == "applied" and item["after_sha256"] == checksum
+        ),
+        None,
+    )
+
+
 class FlowcellStateStore:
     """Read and mutate flowcell state rooted at the configured manager directory."""
 
@@ -672,7 +696,7 @@ class FlowcellStateStore:
                     "outcome": "running",
                     "versions": copy.deepcopy(state["versions"]),
                     "failure": None,
-                    "index_correction_id": request.get("index_correction_id"),
+                    "index_correction_id": _effective_index_correction(state),
                 }
             )
             return state

@@ -682,7 +682,15 @@ def show_flowcell(**args):
     run_id = _run_id(args["flowcell"])
     if store.exists(run_id):
         state = store.recover_interrupted(run_id)
-        state = {**state, "index_orientation": index_corrections.current_orientation(state)}
+        try:
+            output = resolve_output_path(state["output_path"], run_id, cfg)
+            orientation = index_corrections.current_orientation(
+                {**state, "output_path": str(output)}
+            )
+        except StateError as error:
+            # Keep show useful for diagnosing a mismatched recorded output path.
+            orientation = {"error": str(error)}
+        state = {**state, "index_orientation": orientation}
         print(json.dumps(state, indent=2, sort_keys=True))
         return state
     legacy = _legacy_row_for_run(cfg, run_id)

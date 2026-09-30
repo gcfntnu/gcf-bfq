@@ -258,6 +258,18 @@ def test_show_reports_live_orientation_without_persisting_derived_field(tmp_path
     assert "index_orientation" in capsys.readouterr().out
 
 
+def test_show_resolves_legacy_bare_output_path_without_rewriting_state(tmp_path, monkeypatch):
+    _cfg, store, _source, output, _original = prepared_run(tmp_path)
+    state = store.read(RUN_ID)
+    state["output_path"] = RUN_ID
+    store.write(state)
+    monkeypatch.chdir(tmp_path)
+    result = manager.show_flowcell(flowcell=RUN_ID)
+    assert result["index_orientation"]["effective_sheet"] == str(output / "SampleSheet.csv")
+    assert result["index_orientation"]["per_index"]["index2"]["status"] == "original"
+    assert store.read(RUN_ID)["output_path"] == RUN_ID
+
+
 @pytest.mark.parametrize("mutated", ["effective", "source"])
 def test_changed_sheet_after_confirmation_blocks_cleanup_and_toggle(tmp_path, monkeypatch, mutated):
     _cfg, store, source, output, _original = prepared_run(tmp_path)
@@ -335,6 +347,10 @@ def test_plain_rerun_recovers_interrupted_toggle_without_reapplying(
     resumed = store.read(RUN_ID)
     assert resumed["status"] == "queued"
     assert resumed["index_corrections"][-1]["status"] == ("applied" if replaced else "not_applied")
+    attempt = store.begin_attempt(RUN_ID)["attempts"][-1]
+    assert attempt["index_correction_id"] == (
+        pending["index_corrections"][-1]["id"] if replaced else None
+    )
 
     manager.rerun_flowcell(flowcell=RUN_ID, force=True, tom_mode=True)
     assert (output / "SampleSheet.csv").read_bytes() == (
