@@ -313,6 +313,7 @@ def rerun_flowcell(**args):
     paths = _cleanup_for_state(state, from_stage)
     _print_plan("Rerun", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
     correction = None
+    selected = None
     if from_stage in {"demultiplexing", "analysis"} or refresh_inputs:
         selected, _result = preflight.require_valid_inputs(
             state["source_path"], output_path, refresh=refresh_inputs
@@ -322,10 +323,11 @@ def rerun_flowcell(**args):
                 store, run_id, selected, state["source_path"], indexes, reason=reason
             )
             index_corrections.print_plan(correction)
+    index_corrections.print_orientation_preview(state, selected, correction, refresh=refresh_inputs)
     if dry_run:
         return state
     if not _confirm(f"Queue rerun for {run_id}", force):
-        print("Skipping...")
+        print("Skipped; SampleSheet unchanged.")
         return state
 
     with store.execution_lease(run_id):
@@ -435,10 +437,11 @@ def initialize_flowcell(**args):
             store, run_id, selected, source_path, indexes, reason=reason
         )
         index_corrections.print_plan(correction)
+    index_corrections.print_orientation_preview(state, selected, correction, refresh=refresh_inputs)
     if dry_run:
         return state
     if not _confirm(f"Initialize {run_id}", force):
-        print("Skipping...")
+        print("Skipped; SampleSheet unchanged.")
         return state
 
     with store.execution_lease(run_id):

@@ -47,19 +47,95 @@ def _orientation(content, source_path):
     return {**report, "effective_sha256": _sha256(content)}
 
 
-def current_orientation(state):
-    """Read current files, not transformation parity or a cached orientation."""
-    path = Path(state["output_path"]) / "SampleSheet.csv"
+def _file_orientation(path, source_path):
     try:
         content = path.read_bytes()
     except OSError as error:
         return {
             "effective_sheet": str(path),
             "effective_sha256": None,
-            "source_directory": state["source_path"],
+            "source_directory": str(source_path),
             "per_index": _unavailable(f"Cannot read effective SampleSheet: {error}"),
         }
-    return {"effective_sheet": str(path), **_orientation(content, state["source_path"])}
+    return {"effective_sheet": str(path), **_orientation(content, source_path)}
+
+
+def current_orientation(state):
+    """Read current files, not transformation parity or a cached orientation."""
+    path = Path(state["output_path"]) / "SampleSheet.csv"
+    return _file_orientation(path, state["source_path"])
+
+
+def _preview_current(state):
+    """Find the current output input, including curated noncanonical filenames."""
+    output = Path(state["output_path"])
+    try:
+        # Select only within output: a source fallback would mislabel a future
+        # refresh/copy as the sheet currently present in the output directory.
+        path = preflight.select_run_inputs(output, output).sample_sheet
+        if not path.exists() and not path.is_symlink():
+            return {
+                "effective_sheet": str(path),
+                "per_index": {
+                    index: {"status": "not_prepared", "detail": "No output SampleSheet yet"}
+                    for index in ("index1", "index2")
+                },
+            }
+        return _file_orientation(path, state["source_path"])
+    except OSError as error:
+        return {
+            "effective_sheet": str(output / "SampleSheet.csv"),
+            "per_index": _unavailable(f"Cannot inspect current output SampleSheet: {error}"),
+        }
+
+
+def _orientation_label(result):
+    status = result["status"]
+    if status == "original":
+        return "original (matches source)"
+    if status == "reversed":
+        return "reversed"
+    if status == "not_present":
+        return "not present"
+    if status == "not_prepared":
+        return "not yet prepared"
+    return f"{status} ({result['detail']})"
+
+
+def print_orientation_preview(state, selection=None, correction=None, *, refresh=False):
+    """Distinguish current output orientation from the proposed confirmed result.
+
+    Informational only: plain downstream reruns do not gain an input-validation
+    requirement, and an unavailable source comparison does not block them.
+    """
+    current = _preview_current(state)
+    if correction is not None:
+        proposed = correction.orientation
+    elif selection is not None:
+        proposed = (
+            current
+            if str(selection.sample_sheet) == current["effective_sheet"]
+            else _file_orientation(selection.sample_sheet, state["source_path"])
+        )
+    else:
+        proposed = current
+    print("Index orientation relative to source (preview):")
+    print(f"  Current output SampleSheet: {current['effective_sheet']}")
+    for index in ("index1", "index2"):
+        before = current["per_index"][index]
+        after = proposed["per_index"][index]
+        actions = []
+        if refresh:
+            actions.append("refresh from source")
+        elif selection is not None and before["status"] == "not_prepared":
+            actions.append("copy selected input")
+        if correction is not None and index in correction.indexes:
+            actions.append(f"reverse-complement {index}")
+        action = "; ".join(actions) if actions else "unchanged"
+        print(f"  {index} current: {_orientation_label(before)}")
+        print(f"  {index} after confirmation: {_orientation_label(after)} [{action}]")
+    reference = proposed.get("source_sheet") or str(Path(state["source_path"]) / "SampleSheet.csv")
+    print(f"  Orientation reference: {reference}")
 
 
 @dataclass(frozen=True)
@@ -132,17 +208,14 @@ def verify_plan(preview, current):
 
 
 def print_plan(correction):
-    print(f"Index toggle input: {correction.selected_path}")
+    print(f"Planned index toggle input: {correction.selected_path}")
     for index in correction.indexes:
         print(
             f"  {index}: reverse-complement {correction.selected_counts[index]} nonempty rows "
             f"({correction.counts[index]} values change)"
         )
-        result = correction.orientation["per_index"][index]
-        print(f"  Resulting {index} orientation: {result['status']} ({result.get('detail', '')})")
-    print(f"Orientation reference: {correction.orientation['source_sheet']}")
     print(f"Input backup: {correction.backup_path}")
-    print(f"SampleSheet SHA256: {correction.before_sha256} -> {correction.after_sha256}")
+    print(f"Planned SampleSheet SHA256: {correction.before_sha256} -> {correction.after_sha256}")
 
 
 def _sync_directory(path):

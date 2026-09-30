@@ -367,3 +367,129 @@ def test_initialize_exact_relative_input_and_normalized_dot_path(tmp_path, monke
         source
     )
     assert (output / "SampleSheet.csv").read_bytes() == original.replace(b"TAGC", b"GCTA")
+
+
+def test_declined_toggle_then_plain_rerun_reports_actual_current_orientation(
+    tmp_path, monkeypatch, capsys
+):
+    cfg, source, output = configured_bfq(tmp_path)
+    original = indexed_inputs(source)
+    manager.initialize_flowcell(flowcell=RUN_ID, force=True, reverse_complement_index1=True)
+    initialized = capsys.readouterr().out
+    assert "index1 current: not yet prepared" in initialized
+    assert (
+        "index1 after confirmation: reversed [copy selected input; reverse-complement index1]"
+        in initialized
+    )
+    before = snapshot(tmp_path)
+    state = FlowcellStateStore(cfg.static.paths.manager_dir).read(RUN_ID)
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: "no")
+    manager.rerun_flowcell(flowcell=RUN_ID, reverse_complement_index1=True)
+    declined = capsys.readouterr().out
+    assert "index1 current: reversed" in declined
+    assert (
+        "index1 after confirmation: original (matches source) [reverse-complement index1]"
+        in declined
+    )
+    assert "Skipped; SampleSheet unchanged." in declined
+    assert snapshot(tmp_path) == before
+
+    manager.rerun_flowcell(flowcell=RUN_ID, dry_run=True)
+    plain = capsys.readouterr().out
+    assert "index1 current: reversed" in plain
+    assert "index1 after confirmation: reversed [unchanged]" in plain
+    assert "index2 current: original (matches source)" in plain
+    assert "index2 after confirmation: original (matches source) [unchanged]" in plain
+    assert (output / "SampleSheet.csv").read_bytes() == original.replace(b"ACGA", b"TCGT")
+    assert FlowcellStateStore(cfg.static.paths.manager_dir).read(RUN_ID) == state
+    assert snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("toggle", [False, True])
+def test_refresh_preview_distinguishes_current_output_from_selected_source(
+    tmp_path, capsys, toggle
+):
+    _cfg, _store, _source, _output, _original = prepared_run(tmp_path)
+    manager.rerun_flowcell(flowcell=RUN_ID, force=True, reverse_complement_index1=True)
+    capsys.readouterr()
+    before = snapshot(tmp_path)
+    manager.rerun_flowcell(
+        flowcell=RUN_ID, refresh_inputs=True, reverse_complement_index1=toggle, dry_run=True
+    )
+    preview = capsys.readouterr().out
+    assert "index1 current: reversed" in preview
+    expected = (
+        "reversed [refresh from source; reverse-complement index1]"
+        if toggle
+        else "original (matches source) [refresh from source]"
+    )
+    assert f"index1 after confirmation: {expected}" in preview
+    assert "index2 after confirmation: original (matches source) [refresh from source]" in preview
+    assert snapshot(tmp_path) == before
+
+
+def test_unflagged_initialize_reports_both_indexes_and_decline_keeps_output_absent(
+    tmp_path, monkeypatch, capsys
+):
+    _cfg, source, output = configured_bfq(tmp_path)
+    indexed_inputs(source)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "no")
+    before = snapshot(tmp_path)
+    manager.initialize_flowcell(flowcell=RUN_ID)
+    preview = capsys.readouterr().out
+    for index in ("index1", "index2"):
+        assert f"{index} current: not yet prepared" in preview
+        assert (
+            f"{index} after confirmation: original (matches source) [copy selected input]"
+            in preview
+        )
+    assert "Skipped; SampleSheet unchanged." in preview
+    assert not output.exists()
+    assert snapshot(tmp_path) == before
+
+
+def test_unflagged_preview_reports_absent_index_and_unavailable_reference(tmp_path, capsys):
+    _cfg, _store, source, output, _original = prepared_run(tmp_path)
+    write_inputs(source)
+    write_inputs(output)
+    before = snapshot(tmp_path)
+    manager.rerun_flowcell(flowcell=RUN_ID, dry_run=True)
+    preview = capsys.readouterr().out
+    assert "index2 current: not present" in preview
+    assert "index2 after confirmation: not present [unchanged]" in preview
+    assert snapshot(tmp_path) == before
+
+    (source / "SampleSheet.csv").unlink()
+    before = snapshot(tmp_path)
+    manager.rerun_flowcell(flowcell=RUN_ID, dry_run=True)
+    preview = capsys.readouterr().out
+    assert "index1 current: unavailable" in preview
+    assert "index1 after confirmation: unavailable" in preview
+    assert snapshot(tmp_path) == before
+
+
+def test_plain_downstream_preview_does_not_require_readable_samplesheet(tmp_path, capsys):
+    _cfg, _store, _source, output, _original = prepared_run(tmp_path)
+    (output / "SampleSheet.csv").write_bytes(b"unsupported sheet")
+    before = snapshot(tmp_path)
+    manager.rerun_flowcell(flowcell=RUN_ID, from_stage="reporting", dry_run=True)
+    preview = capsys.readouterr().out
+    assert "index1 current: unavailable" in preview
+    assert "index1 after confirmation: unavailable" in preview
+    assert "[unchanged]" in preview
+    assert snapshot(tmp_path) == before
+
+
+def test_preview_uses_current_curated_noncanonical_sheet(tmp_path, capsys):
+    _cfg, _store, _source, output, original = prepared_run(tmp_path)
+    current = output / "SampleSheet-curated.csv"
+    (output / "SampleSheet.csv").rename(current)
+    current.write_bytes(original.replace(b"ACGA", b"TCGT"))
+    before = snapshot(tmp_path)
+    manager.rerun_flowcell(flowcell=RUN_ID, dry_run=True)
+    preview = capsys.readouterr().out
+    assert f"Current output SampleSheet: {current}" in preview
+    assert "index1 current: reversed" in preview
+    assert "index1 after confirmation: reversed [unchanged]" in preview
+    assert snapshot(tmp_path) == before

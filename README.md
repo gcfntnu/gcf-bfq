@@ -754,8 +754,17 @@ idempotent instruction to reach a particular orientation. Ordinary reruns preser
 the effective sheet. With `--refresh-inputs`, the source inputs are copied first,
 then any requested toggles are applied to that fresh sheet.
 
-The preview reports the selected corrections and their resulting orientation
-relative to the recorded source SampleSheet. `flowcell-manager show RUN_ID`
+Every initialization and rerun preview shows both indexes' **current output
+orientation** and their **orientation after confirmation**, relative to the
+recorded source SampleSheet. This includes ordinary reruns without correction
+flags, which explicitly show that orientation is unchanged. Refresh previews
+compare the existing output sheet with the proposed refreshed/toggled sheet;
+fresh initialization identifies the output sheet as not yet prepared. Declining
+confirmation explicitly reports that the SampleSheet is unchanged.
+
+The output-side sheet is the current effective input; it may have been changed
+since the last successful attempt. Reruns do not automatically restore an older
+successful attempt's sheet. `flowcell-manager show RUN_ID`
 provides a live comparison for both indexes. Matching the source means original
 orientation, not necessarily the correct orientation for demultiplexing. Mixed or
 otherwise edited values, ambiguous sample matching, and an unavailable source are

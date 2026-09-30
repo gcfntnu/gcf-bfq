@@ -73,9 +73,18 @@ source sheet so each expected value is clear.
    sheet and correction history must remain unchanged. An ordinary downstream
    rerun likewise preserves the sheet. Correction flags with `--from analysis`,
    `reporting` or `finalization` must be rejected before mutation.
+   In each preview, both indexes must show their current orientation and their
+   proposed orientation after confirmation. Ordinary reruns explicitly show
+   `unchanged`. Reproduce the operator sequence: initialize with index1 reversed,
+   decline a flagged rerun proposing a return to original, then preview a plain
+   rerun. The declined command must say `Skipped; SampleSheet unchanged.`, and
+   the plain rerun must still show index1 as reversed, remaining reversed after
+   confirmation. The original queued initialization remains intact.
 5. Test `--refresh-inputs --reverse-complement-index2`: the output should contain
    one index2 reverse complement of the source, regardless of its previous
    orientation. Refresh without a correction should restore source values.
+   The current column must describe the existing output sheet, even though the
+   proposed result is computed from the selected source sheet.
 6. Verify the hidden compatibility alias `--tom-mode`: it changes index2 only.
    Combining it with `--reverse-complement-index2` must apply index2 exactly once;
    combining it with `--reverse-complement-index1` must change both columns.
