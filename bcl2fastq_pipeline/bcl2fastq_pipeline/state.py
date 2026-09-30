@@ -808,7 +808,7 @@ class FlowcellStateStore:
             if not qc or state["status"] == "archived":
                 raise StateConflictError("No retained demultiplexing execution for sequencing QC")
             if qc["attempts"] and qc["attempts"][-1]["status"] == "running":
-                qc["attempts"][-1].update(status="interrupted")
+                qc["attempts"][-1].update(status="interrupted", recovered_at=utcnow())
             qc["status"] = "running"
             qc.pop("duration_seconds", None)
             reporting = state["stages"]["reporting"]["metadata"]
@@ -829,7 +829,9 @@ class FlowcellStateStore:
 
         return self.mutate(run_id, update)
 
-    def finish_sequencing_qc(self, run_id, *, result=None, duration=None, payload=None, error=None):
+    def finish_sequencing_qc(  # noqa: PLR0913
+        self, run_id, *, result=None, duration=None, payload=None, error=None, interrupted=False
+    ):
         """Publish report success and its one notification intent atomically."""
 
         def update(state):
@@ -839,14 +841,13 @@ class FlowcellStateStore:
             status = "failed" if error is not None else "completed"
             qc.update(status=status, last_error=str(error) if error is not None else None)
             qc["attempts"][-1].update(
-                status=status,
+                status="interrupted" if interrupted else status,
                 completed_at=utcnow(),
                 error=qc["last_error"],
                 duration_seconds=duration,
             )
             if error is None:
                 qc.update(result=copy.deepcopy(result), duration_seconds=duration)
-                qc["attempts"][-1]["duration_seconds"] = duration
                 reporting = state["stages"]["reporting"]["metadata"]
                 if "analysis_reporting_duration_seconds" in reporting:
                     reporting["sequencing_qc_duration_seconds"] = duration

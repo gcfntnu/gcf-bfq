@@ -284,3 +284,35 @@ def test_notification_retry_reuses_saved_timing_snapshot(pipeline, monkeypatch):
     notification_delivery.deliver_pending(cfg, store, RUN_ID, retry=True)
     assert delivered == [e["payload"] for e in before["delivery_notifications"]]
     assert store.read(RUN_ID)["processing_timings"] == before["processing_timings"]
+
+
+def test_early_qc_interruption_retains_only_diagnostic_duration(pipeline, monkeypatch):
+    cfg, store, _output, now, _messages = pipeline
+
+    def interrupted(*_a, **_kw):
+        now[0] += 400
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sequencing_qc, "generate", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        run(cfg, store)
+    state = store.recover_interrupted(RUN_ID)
+    record = state["sequencing_qc"]["attempts"][-1]
+    assert record["status"] == "interrupted"
+    assert record["duration_seconds"] == 400
+    assert processing_times.snapshot(state)["total_seconds"] == 12
+
+
+def test_pre_upgrade_state_produces_honest_partial_email_after_rerun(pipeline):
+    cfg, store, _output, _now, messages = pipeline
+    run(cfg, store)
+    legacy = store.read(RUN_ID)
+    legacy.pop("processing_timings")
+    store.write(legacy)
+    restart(cfg, store, "analysis")
+    run(cfg, store)
+    text = messages[-1][1].get_content()
+    assert "Demultiplexing: Timing unavailable" in text
+    assert "FASTQ MD5 checksums: Timing unavailable" in text
+    assert "Analysis: 0:00:04" in text
+    assert "Total processing time (partial; some timings unavailable): 0:00:30" in text
