@@ -33,6 +33,7 @@ bfq-container = "bcl2fastq_pipeline.containers:main"
 cellranger = "bcl2fastq_pipeline.containers:cellranger_main"
 cellranger-atac = "bcl2fastq_pipeline.containers:cellranger_atac_main"
 flowcell-manager = "flowcell_manager.flowcell_manager:main"
+fm = "flowcell_manager.flowcell_manager:main"
 multiqc = "bcl2fastq_pipeline.containers:multiqc_main"
 spaceranger = "bcl2fastq_pipeline.containers:spaceranger_main"
 

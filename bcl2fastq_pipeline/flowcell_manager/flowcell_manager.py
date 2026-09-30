@@ -623,19 +623,27 @@ def archive_flowcell(**args):
         return None
 
 
-def combined_list(status=None, stage=None):
+def combined_list(status=None, stage=None, query=None):
+    """List or search runs, with canonical state authoritative before filtering."""
     cfg = get_cfg()
     store = FlowcellStateStore(cfg.static.paths.manager_dir)
     rows = []
-    state_paths = set()
+    state_run_ids = set()
+    needle = query.casefold() if query is not None else None
+
+    def matches(run_id, projects):
+        return needle is None or any(needle in value.casefold() for value in (run_id, *projects))
 
     for state in store.list_states():
+        # Excluded states must not reappear through stale compatibility inventory.
+        state_run_ids.add(state["run_id"])
         if status and state["status"] != status:
             continue
         if stage and state["current_stage"] != stage:
             continue
+        if not matches(state["run_id"], state["projects"]):
+            continue
         output = state["output_path"]
-        state_paths.add(output)
         rows.append(
             {
                 "run_id": state["run_id"],
@@ -649,8 +657,9 @@ def combined_list(status=None, stage=None):
         )
 
     inventory = _read_inventory(cfg)
-    for flowcell_path, group in inventory.groupby("flowcell_path", sort=True):
-        if flowcell_path in state_paths:
+    inventory = inventory.assign(run_id=inventory["flowcell_path"].map(_run_id))
+    for run_id, group in inventory.groupby("run_id", sort=True):
+        if run_id in state_run_ids:
             continue
         if stage and stage != "legacy":
             continue
@@ -660,13 +669,19 @@ def combined_list(status=None, stage=None):
         legacy_status = "archived" if archived_values else "completed"
         if status and status not in ("legacy", legacy_status):
             continue
+        projects = sorted(set(group["project"]))
+        if not matches(run_id, projects):
+            continue
+        # Historical inventories can contain both a bare ID and an absolute path.
+        # Choose a stable representative without requiring archived outputs to exist.
+        flowcell_path = sorted(set(group["flowcell_path"]))[0]
         rows.append(
             {
-                "run_id": Path(flowcell_path).name,
+                "run_id": run_id,
                 "status": legacy_status,
                 "stage": "legacy",
                 "origin": "legacy_inventory",
-                "projects": ",".join(sorted(set(group["project"]))),
+                "projects": ",".join(projects),
                 "output_path": flowcell_path,
                 "archived": archived_values[-1] if archived_values else "0",
             }
@@ -833,9 +848,18 @@ def _add_index_options(parser):
     parser.add_argument("--tom-mode", action="store_true", help=argparse.SUPPRESS)
 
 
+def _search_query(value):
+    if not value.strip():
+        raise argparse.ArgumentTypeError("query must not be empty or whitespace-only")
+    return value
+
+
 def main():
     _remove_executable_directory_from_import_path()
-    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description="Manage flowcells. fm and flowcell-manager provide the same commands.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     parser_add = subparsers.add_parser("add", help="Add a project to the compatibility inventory.")
@@ -897,12 +921,34 @@ def main():
     _add_index_options(parser_initialize)
 
     parser_list = subparsers.add_parser("list", help="List state-backed and legacy flowcells.")
-    parser_list.set_defaults(
-        func=lambda **kwargs: combined_list(kwargs.get("status"), kwargs.get("stage")),
-        print_res=True,
+    parser_search = subparsers.add_parser(
+        "search",
+        help="Find flowcells by project name or run/flowcell ID.",
+        description=(
+            "Search project names and run/flowcell IDs using case-insensitive literal "
+            "substrings (not regular expressions). Includes completed and archived runs. "
+            "Exit 0 for a successful search, including no matches; 2 for invalid arguments; "
+            "1 for state errors."
+        ),
+        epilog=(
+            "Examples: fm search GCF-2026-043; fm search HL2T7AFXC; "
+            "fm search GCF-2026 --status failed"
+        ),
     )
-    parser_list.add_argument("--status")
-    parser_list.add_argument("--stage")
+    parser_search.add_argument("query", metavar="QUERY", type=_search_query)
+    for list_parser in (parser_list, parser_search):
+        list_parser.set_defaults(
+            func=lambda **kwargs: combined_list(
+                kwargs.get("status"), kwargs.get("stage"), kwargs.get("query")
+            ),
+            print_res=True,
+        )
+        list_parser.add_argument(
+            "--status", help="Filter by exact status; legacy selects inventory-only runs."
+        )
+        list_parser.add_argument(
+            "--stage", help="Filter by exact stage; legacy selects inventory-only runs."
+        )
 
     parser_list_processed = subparsers.add_parser(
         "list-processed", help="List compatibility inventory rows."
