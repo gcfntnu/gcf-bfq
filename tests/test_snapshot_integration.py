@@ -218,7 +218,7 @@ def test_status_reports_retained_unavailable_and_pending_snapshots(tmp_path, mon
     restart(cfg, "analysis")
 
     # Create a valid new analysis, then lose its workdir before finalization.
-    def missing_workdir():
+    def missing_workdir(**_kwargs):
         shutil.rmtree(snapshots.workdir_path(RUN_ID, PROJECT))
 
     monkeypatch.setattr(afterFastq, "finalize", missing_workdir)

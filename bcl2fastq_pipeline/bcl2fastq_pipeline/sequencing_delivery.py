@@ -61,7 +61,9 @@ def ensure_report(cfg, store, run_id, *, retry=False, run_time=""):
             )
         result = sequencing_qc.generate(saved, tool=qc["tool"])
     except Exception as error:
-        store.finish_sequencing_qc(run_id, error=f"{type(error).__name__}: {error}")
+        store.finish_sequencing_qc(
+            run_id, error=f"{type(error).__name__}: {error}", duration=time.monotonic() - started
+        )
         log.exception(
             "Sequencing QC unavailable for %s; processing continues. Recover with "
             "flowcell-manager retry-sequencing-qc %s",

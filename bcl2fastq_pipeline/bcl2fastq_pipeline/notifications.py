@@ -19,6 +19,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from types import SimpleNamespace
 
+from bcl2fastq_pipeline import processing_times
 from bcl2fastq_pipeline.state import DeliveryUncertainError
 
 log = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ def make_payload(  # noqa: PLR0913
     projects=None,
     sequencing_qc=None,
     analysis_qc=None,
+    processing_timing=None,
 ):
     """Capture JSON-compatible run context without composing mail or reading inputs."""
     if kind not in RECIPIENT_KEYS:
@@ -73,6 +75,9 @@ def make_payload(  # noqa: PLR0913
         "run_time": str(run_time),
         "finalize_time": str(finalize_time),
     }
+    if processing_timing is not None:
+        payload["processing_timing"] = processing_timing
+        payload["run_time"] = processing_times.format_duration(processing_timing["total_seconds"])
     if sequencing_qc is not None:
         payload["sequencing_qc"] = sequencing_qc
     if analysis_qc is not None:
@@ -250,9 +255,10 @@ def _run_summary(payload):
         (
             f"Flow cell: {payload['run_id']}",
             f"Sequencer: {afterFastq.get_sequencer(payload['run_id'])}",
-            f"bcl2fastq_pipeline elapsed time: {payload['run_time']}",
         )
     )
+    if payload.get("processing_timing") is None:
+        lines.append(f"bcl2fastq_pipeline elapsed time: {payload['run_time']}")
     return "\n".join(lines)
 
 
@@ -338,6 +344,12 @@ def _processed_message(cfg, message, payload):
             "Sequencing yield, base quality, PhiX and index assignment are covered in the "
             "early sequencing report."
         )
+    if payload.get("processing_timing") is not None:
+        html_sections.append(
+            escape(processing_times.format_summary(payload["processing_timing"])).replace(
+                "\n", "<br>\n"
+            )
+        )
     _body(message, "Analysis complete — QC summary", _run_summary(payload), html_sections)
     date = payload["run_id"].split("_")[0]
     for project in projects:
@@ -380,11 +392,18 @@ def build_message(cfg, entry):
         else:
             _processed_message(cfg, message, payload)
     else:
+        timing = (
+            processing_times.format_summary(payload["processing_timing"]) + "\n"
+            if payload.get("processing_timing") is not None
+            else (
+                f"md5sum and 7zip runtime: {payload['finalize_time']}\n"
+                f"Total runtime for bcl2fastq_pipeline: {payload['run_time']}\n"
+            )
+        )
         message.set_content(
             f"{projects} has been finalized and prepared for delivery.\n\n"
             f"Flow cell: {payload['run_id']}\n"
-            f"md5sum and 7zip runtime: {payload['finalize_time']}\n"
-            f"Total runtime for bcl2fastq_pipeline: {payload['run_time']}\n"
+            f"{timing}"
             f"{payload['message']}"
         )
     return message

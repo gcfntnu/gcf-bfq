@@ -815,7 +815,15 @@ class FlowcellStateStore:
             if "analysis_reporting_duration_seconds" in reporting:
                 reporting["sequencing_qc_duration_seconds"] = None
                 reporting["duration_seconds"] = reporting["analysis_reporting_duration_seconds"]
-            qc["attempts"].append({"started_at": utcnow(), "status": "running"})
+            qc["attempts"].append(
+                {
+                    "attempt": state["attempt"],
+                    "started_at": utcnow(),
+                    "completed_at": None,
+                    "duration_seconds": None,
+                    "status": "running",
+                }
+            )
             qc["last_error"] = None
             return state
 
@@ -830,7 +838,12 @@ class FlowcellStateStore:
                 raise StateConflictError("Sequencing QC is not running")
             status = "failed" if error is not None else "completed"
             qc.update(status=status, last_error=str(error) if error is not None else None)
-            qc["attempts"][-1].update(status=status, completed_at=utcnow(), error=qc["last_error"])
+            qc["attempts"][-1].update(
+                status=status,
+                completed_at=utcnow(),
+                error=qc["last_error"],
+                duration_seconds=duration,
+            )
             if error is None:
                 qc.update(result=copy.deepcopy(result), duration_seconds=duration)
                 qc["attempts"][-1]["duration_seconds"] = duration

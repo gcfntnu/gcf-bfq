@@ -19,12 +19,13 @@ import tempfile
 
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 
 from configmaker.configmaker import SEQUENCERS
 from configmaker.validation import VALIDATOR_VERSION
 
-from bcl2fastq_pipeline import analysis_snapshots, workflow_config
+from bcl2fastq_pipeline import analysis_snapshots, processing_times, workflow_config
 from bcl2fastq_pipeline.config import PipelineConfig
 from bcl2fastq_pipeline.workflow_config import select_workflow
 
@@ -207,21 +208,35 @@ def _write_fastq_manifest(manifest, fastqs, output_path):
             temporary.unlink(missing_ok=True)
 
 
-def md5sum_worker(cfg, *, force=False):
-    """Generate demultiplexing checksums, or repair legacy manifests once."""
+def md5sum_worker(cfg, *, force=False, store=None):
+    """Generate demultiplexing checksums, or repair legacy manifests once.
+
+    A reused manifest retains its timing; checking coverage is not a new hashing
+    execution. When repair is needed, time the enclosing generation once, not
+    each project or parallel worker.
+    """
+    jobs = []
     for project in sorted(get_project_names(get_project_dirs(cfg))):
         manifest = cfg.output_path / f"md5sum_{project}_fastq.txt"
         fastqs = sorted((cfg.output_path / project).rglob("*.fastq.gz"))
         relative_paths = [path.relative_to(cfg.output_path) for path in fastqs]
         if not force and _complete_fastq_manifest(manifest, relative_paths):
             continue
-        log.info("[md5sum_worker] Generating FASTQ checksums for %s", project)
-        try:
-            _write_fastq_manifest(manifest, fastqs, cfg.output_path)
-        except Exception as error:
-            raise RuntimeError(
-                f"FASTQ checksum generation failed for {project}: {error}"
-            ) from error
+        jobs.append((project, manifest, fastqs))
+    timer = (
+        processing_times.measure(store, cfg.run.run_id, "fastq_checksums")
+        if store is not None and (jobs or force)
+        else nullcontext()
+    )
+    with timer:
+        for project, manifest, fastqs in jobs:
+            log.info("[md5sum_worker] Generating FASTQ checksums for %s", project)
+            try:
+                _write_fastq_manifest(manifest, fastqs, cfg.output_path)
+            except Exception as error:
+                raise RuntimeError(
+                    f"FASTQ checksum generation failed for {project}: {error}"
+                ) from error
 
 
 def md5sum_archive(archive_path: Path):
@@ -527,9 +542,17 @@ def postMakeSteps():
     return _disk_usage_message(PipelineConfig.get())
 
 
-def finalize():
+def finalize(*, store=None):
     cfg = PipelineConfig.get()
-    # zip arhive
-    archive_worker(cfg)
-    # md5sum archive
-    md5sum_archive_worker(cfg)
+    with (
+        processing_times.measure(store, cfg.run.run_id, "archiving")
+        if store is not None
+        else nullcontext()
+    ):
+        archive_worker(cfg)
+    with (
+        processing_times.measure(store, cfg.run.run_id, "archive_checksums")
+        if store is not None
+        else nullcontext()
+    ):
+        md5sum_archive_worker(cfg)

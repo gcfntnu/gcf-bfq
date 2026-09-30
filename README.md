@@ -370,8 +370,22 @@ checksums remain valid. There is no new pause/cancel interface.
 
 Early generation duration is persisted on successful report completion, excluding
 SMTP and failed report attempts. Later reporting records its own duration plus
-that preserved early component exactly once. The full six-category email timing
-breakdown remains #118; this change supplies its early-report component.
+that preserved early component exactly once.
+
+Processing-complete and finalization emails show six persisted timing categories:
+Demultiplexing, FASTQ MD5 checksums, Analysis, Reporting, Archiving and Archive MD5
+checksums, followed by **Total processing time**. Each category uses its latest
+successful execution whose outputs remain valid. Reused work retains its original
+duration across daemon restarts and reruns; regenerated work replaces its previous
+duration. Failed/interrupted attempts and waiting time never contribute. Rerun
+cleanup invalidates downstream timings while retaining their history.
+
+Incomplete work is **Not completed** and the total is a subtotal; preserved legacy
+results without a measured duration are **Timing unavailable** and the total is
+partial. These are flowcell-wide wall-clock timings, shared by all its projects,
+not per-project or summed worker CPU time. Notification retries preserve the saved
+completion snapshot; pre-upgrade pending notifications keep their original format.
+See [processing-time semantics and server checks](docs/processing-time-integration-tests.md).
 
 See [early sequencing QC verification](docs/early-sequencing-qc-integration-tests.md)
 for the server checks required before merge.

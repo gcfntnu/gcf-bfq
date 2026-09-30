@@ -472,7 +472,7 @@ def test_daemon_executes_only_from_queued_analysis_boundary(tmp_path, monkeypatc
     monkeypatch.setattr(makeFastq, "rename_fastqs", lambda: calls.append("rename"))
     monkeypatch.setattr(afterFastq, "analysis_steps", lambda: calls.append("analysis"))
     monkeypatch.setattr(cli, "_run_reporting", lambda *_args: calls.append("reporting"))
-    monkeypatch.setattr(afterFastq, "finalize", lambda: calls.append("finalization"))
+    monkeypatch.setattr(afterFastq, "finalize", lambda **_kwargs: calls.append("finalization"))
     monkeypatch.setattr(
         notifications,
         "send_notification",
@@ -562,7 +562,7 @@ def test_demultiplexing_hashes_renamed_fastqs_before_completion(tmp_path, monkey
     monkeypatch.setattr(afterFastq, "file_md5", checksum)
     monkeypatch.setattr(afterFastq, "analysis_steps", analysis)
     monkeypatch.setattr(cli, "_run_reporting", lambda *_: None)
-    monkeypatch.setattr(afterFastq, "finalize", lambda: None)
+    monkeypatch.setattr(afterFastq, "finalize", lambda **_kwargs: None)
     monkeypatch.setattr(notifications, "send_notification", lambda *_: None)
     monkeypatch.setattr(findFlowCells, "markFinished", lambda: ["GCF-2026-001"])
     monkeypatch.setattr(
@@ -597,7 +597,7 @@ def test_downstream_entry_repairs_legacy_checksums_before_work(
     manifest = output / "md5sum_GCF-2026-001_fastq.txt"
     calls = []
 
-    def work(*_args):
+    def work(*_args, **_kwargs):
         assert manifest.exists()
         calls.append("work")
 
