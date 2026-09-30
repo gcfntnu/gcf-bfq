@@ -685,6 +685,10 @@ class FlowcellStateStore:
             detail["completed_at"] = utcnow()
             if metadata_:
                 detail["metadata"].update(metadata_)
+            if stage == "demultiplexing" and state.get("fastq_cleanup"):
+                state["fastq_cleanup"]["status"] = "regenerated"
+                state["fastq_cleanup"]["regenerated_at"] = utcnow()
+                state["fastq_cleanup"]["required_files"] = {}
             if stage == "demultiplexing" and metadata_:
                 state["demultiplexing"]["tool"] = metadata_.get("tool")
                 state["demultiplexing"]["version"] = metadata_.get("version")
