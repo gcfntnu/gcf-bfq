@@ -40,10 +40,14 @@ python -m pip install . \
   "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/bdd94a1d944120ac8a096ea8876c0de98dd51ab3.zip"
 ```
 
-The installation provides two commands:
+The installation provides these commands:
 
 - `bfq` starts the pipeline service.
-- `flowcell-manager` manages the processed-flowcell inventory.
+- `flowcell-manager` (also installed as `fm`) manages flowcell state and inventory.
+
+`fm` and `flowcell-manager` use the same CLI implementation, including all
+subcommands, flags and exit behavior. Both are installed by normal package
+installation and BFQ image rebuilds; existing scripts can keep the long name.
 
 `flowcell-manager validate RUN_ID` checks the effective inputs without changing
 the run. See [input validation and correction](docs/input-preflight.md) and the
@@ -692,6 +696,7 @@ followed by a process restart.
 `flowcell-manager` is the operator-facing interface for both state-backed runs
 and legacy inventory-only runs. It changes state and performs defined cleanup;
 it does not execute pipeline stages. The normal BFQ daemon executes queued work.
+Use the installed `fm` shorthand interchangeably with `flowcell-manager`.
 
 Common commands are:
 
@@ -715,6 +720,47 @@ flowcell-manager clean-fastqs RUN_ID
 flowcell-manager archive RUN_ID
 flowcell-manager list-processed
 ```
+
+### Find flowcells by project or run ID
+
+Use native search to find structured records instead of filtering the printed
+list with `grep`:
+
+```console
+fm search GCF-2026-043
+fm search 260925_NB501038_0281_AHL2T7AFXC
+fm search HL2T7AFXC
+fm search GCF-2026 --status failed
+fm search GCF-2026 --stage analysis
+fm status 260925_NB501038_0281_AHL2T7AFXC
+```
+
+Search matches case-insensitive literal substrings of project names and run IDs;
+characters such as `.` and `[` have no special meaning. Quote queries containing
+shell metacharacters or spaces. Each matching run appears once, with all its
+associated projects, in the same columns and run-ID order as `list`. Completed
+and archived runs are included even when their output directories no longer exist.
+
+JSON state is authoritative over compatibility inventory for the same run ID,
+including its projects, status and stage. Filtering a state-backed run out cannot
+bring back its historical inventory row. Legacy-only entries for the same run ID
+are grouped across path spellings; their projects are combined and the first
+lexically sorted recorded path is displayed.
+
+`--status` and `--stage` work exactly as for `list`: exact values filter the
+current status/stage, and `legacy` selects inventory-only runs. Legacy runs have
+stage `legacy` and status `completed` or `archived`. Both filters may be combined;
+unknown filter values produce no matches, as before.
+
+A successful search exits **0**, including an empty result, which prints
+`No matching flowcells.` Empty or whitespace-only queries and other invalid
+arguments exit **2**; state errors exit **1**. `flowcell-manager search` behaves
+identically. `list` and `list-processed` remain available.
+
+After rebuilding the image, follow the short
+[server smoke checks](docs/flowcell-search-integration-tests.md).
+
+### Changes to a run
 
 Destructive operations show their cleanup plan and prompt by default. Use
 `--dry-run` to preview without changing files or state, and `--force` only
