@@ -26,7 +26,7 @@ import yaml
 from configmaker.configmaker import SEQUENCERS
 from configmaker.validation import VALIDATOR_VERSION
 
-from bcl2fastq_pipeline import workflow_config
+from bcl2fastq_pipeline import analysis_snapshots, workflow_config
 from bcl2fastq_pipeline.config import PipelineConfig
 from bcl2fastq_pipeline.interop import prepare_index_metrics, run_interop_csv
 from bcl2fastq_pipeline.workflow_config import select_workflow
@@ -460,14 +460,15 @@ def full_align(cfg):
     selection = select_workflow(cfg)
     project_names = get_project_names(get_project_dirs(cfg))
     run_date = str(cfg.output_path.name).split("_")[0]
+    workdirs = {}
     for p in sorted(project_names):
-        analysis_dir = Path(os.environ["TMPDIR"]) / f"{p}_{run_date}"
+        analysis_dir = analysis_snapshots.workdir_path(cfg.run.run_id, p)
         analysis_dir.mkdir(parents=True, exist_ok=True)
         (analysis_dir / "src").mkdir(parents=True, exist_ok=True)
         (analysis_dir / "data").mkdir(parents=True, exist_ok=True)
         log.info(f"Setting up analysis for {analysis_dir}")
 
-        # os.chdir(analysis_dir)
+        workdirs[p] = analysis_snapshots.identify_workdir(analysis_dir, cfg.run.run_id, p)
 
         src = workflow_config.AUTHORITATIVE_CONFIG.parent
         dst = analysis_dir / "src" / "gcf-workflows"
@@ -554,8 +555,7 @@ def full_align(cfg):
             cfg.output_path / f".multiqc_config_{p}.yaml",
         )
 
-    # os.chdir(old_wd)
-    return True
+    return workdirs
 
 
 def _disk_usage_message(cfg):
@@ -582,7 +582,7 @@ def _disk_usage_message(cfg):
 def analysis_steps():
     """Run work invalidated by the public analysis restart boundary."""
     cfg = PipelineConfig.get()
-    full_align(cfg)
+    return full_align(cfg)
 
 
 def reporting_steps():

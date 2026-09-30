@@ -1,5 +1,6 @@
 import json
 import logging
+import tarfile
 
 from pathlib import Path
 from unittest.mock import Mock
@@ -127,6 +128,7 @@ def test_daemon_and_configmaker_share_snapshot_through_source_edits(  # noqa: PL
                 ],
             )
             Path("config.yaml").write_text(yaml.safe_dump(config))
+            Path("Snakefile").write_text("# generated workflow entry point\n")
         assert config["workflow"] == cfg.run.pipeline == workflow
         assert config["filter"]["trim"]["fastp"]["params"] == parameter
         assert config["libprep_selection"]["sha256"] == cfg.run.libprep_config.sha256
@@ -165,6 +167,15 @@ def test_daemon_and_configmaker_share_snapshot_through_source_edits(  # noqa: PL
     assert str(authoritative) in caplog.text
     assert "retired and ignored" in caplog.text
     assert selection["sha256"] in caplog.text
+    for project in projects:
+        with tarfile.open(output / "provenance" / f"{project}_analysis.tar.gz") as archive:
+            assert archive.extractfile("src/gcf-workflows/libprep.config").read() == CONTENT
+            retained_config = yaml.safe_load(archive.extractfile("config.yaml"))
+            assert retained_config["filter"]["trim"]["fastp"]["params"] == parameter
+            assert archive.extractfile("Snakefile").read() == b"# generated workflow entry point\n"
+            assert not any(
+                name == "data" or name.startswith("data/") for name in archive.getnames()
+            )
 
 
 @pytest.mark.parametrize("problem", ["missing", "malformed", "unknown"])
