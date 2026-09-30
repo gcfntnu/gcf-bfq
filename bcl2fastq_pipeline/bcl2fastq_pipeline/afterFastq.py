@@ -21,14 +21,11 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import yaml
-
 from configmaker.configmaker import SEQUENCERS
 from configmaker.validation import VALIDATOR_VERSION
 
 from bcl2fastq_pipeline import analysis_snapshots, workflow_config
 from bcl2fastq_pipeline.config import PipelineConfig
-from bcl2fastq_pipeline.interop import prepare_index_metrics, run_interop_csv
 from bcl2fastq_pipeline.workflow_config import select_workflow
 
 log = logging.getLogger(__name__)
@@ -247,89 +244,10 @@ def md5sum_archive_worker(cfg):
 
 
 def multiqc_stats(cfg):
-    in_confs = sorted(cfg.output_path.glob(".multiqc_config*.yaml"))
-    if not in_confs:
-        raise RuntimeError(
-            "Missing analysis-generated MultiQC configuration in "
-            f"{cfg.output_path}; recover with flowcell-manager rerun "
-            f"{cfg.output_path.name} --from analysis"
-        )
+    """Compatibility entry point for metadata-independent sequencing reporting."""
+    from bcl2fastq_pipeline import sequencing_qc  # noqa: PLC0415
 
-    cwd = cfg.output_path / "Stats"
-
-    shutil.copy2(cfg.run.flowcell_path / "RunInfo.xml", cfg.output_path / "RunInfo.xml")
-    # Illumina sequencer update - RunParameters.xml -> runParameters.xml
-    shutil.copy2(
-        list(cfg.run.flowcell_path.glob("[Rr]unParameters.xml"))[0],
-        cfg.output_path / "RunParameters.xml",
-    )
-
-    # Illumina interop
-    out_f = cfg.output_path / "Stats" / "interop_summary.csv"
-    log.info(f"[multiqc_worker] Interop summary on {cfg.output_path}")
-    run_interop_csv("interop_summary", cfg.output_path, out_f, cwd)
-
-    prepare_index_metrics(cfg.output_path)
-    out_f = cfg.output_path / "Stats" / "interop_index-summary.csv"
-    log.info(f"[multiqc_worker] Interop index summary on {cfg.output_path}")
-    run_interop_csv("interop_index-summary", cfg.output_path, out_f, cwd)
-
-    samples_custom_data = dict()
-    for c in in_confs:
-        with c.open() as c_fh:
-            mqc_conf = yaml.load(c_fh, Loader=yaml.FullLoader)
-        samples_custom_data.update(mqc_conf["custom_data"]["general_statistics"]["data"])
-
-    # use one of the existing multiqc_config.yaml as template
-    with in_confs[0].open() as in_conf_fh:
-        mqc_conf = yaml.load(in_conf_fh, Loader=yaml.FullLoader)
-
-    projects = sorted(get_project_names(get_project_dirs(cfg)))
-    pnames = ", ".join(projects)
-    mqc_conf["title"] = pnames
-    mqc_conf["intro_text"] = (
-        "This report is generated for projects run at Genomics Core Facility, NTNU, Trondheim. The results are reported per sample."
-    )
-    mqc_conf["custom_data"]["general_statistics"]["data"] = samples_custom_data
-
-    conf_pth = cfg.output_path / "Stats" / ".multiqc_config.yaml"
-    with conf_pth.open("w+") as out_conf_fh:
-        yaml.dump(mqc_conf, out_conf_fh)
-
-    force_bcl2fastq = os.environ.get("FORCE_BCL2FASTQ", None)
-    demultiplexer_module = "bcl2fastq" if force_bcl2fastq else "bclconvert"
-
-    multiqc_opts = cfg.static.commands["multiqc_options"]
-    pname = pnames.replace(", ", "_")
-    multiqc_out = cfg.output_path / "Stats" / f"sequencer_stats_{pname}.html"
-
-    cmd = command_args("multiqc", multiqc_opts)
-    cmd.extend(
-        [
-            "--config",
-            str(conf_pth),
-            str(cfg.output_path / "Stats"),
-            "--filename",
-            str(multiqc_out),
-            "-m",
-            "interop",
-            "-m",
-            demultiplexer_module,
-        ]
-    )
-    log.info(f"[multiqc_worker] Processing {cfg.output_path}")
-
-    if os.environ.get("BFQ_TEST", None) and not force_bcl2fastq:
-        if not (cfg.output_path / "Stats" / "Demultiplex_Stats.csv").exists():
-            log.warning(
-                "BFQ-TEST: Testflowcell was generated with bcl2fastq but environment is configured for bcl-convert. Using bcl2fastq paths and mqc modules."
-            )
-            cmd = [arg.replace("Reports", "Stats") for arg in cmd]
-            cmd[cmd.index("bclconvert")] = "bcl2fastq"
-            log.info(f"[multiqc_worker] Running: {shlex.join(cmd)}")
-
-    subprocess.check_call(cmd, cwd=cwd)
-    return projects
+    return sequencing_qc.generate(cfg)["projects"]
 
 
 def generate_password(cfg, prefix: str) -> str:
@@ -588,7 +506,15 @@ def analysis_steps():
 def reporting_steps():
     """Generate reporting products while preserving completed workflow results."""
     cfg = PipelineConfig.get()
-    projects = multiqc_stats(cfg)
+    # Early reports belong to the conversion execution. Never regenerate them
+    # merely because analysis/reporting is rerun. Legacy runs have no early event.
+    from bcl2fastq_pipeline.state import FlowcellStateStore  # noqa: PLC0415
+
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    state = store.read(cfg.run.run_id) if store.exists(cfg.run.run_id) else {}
+    if not state.get("sequencing_qc"):
+        multiqc_stats(cfg)
+    projects = sorted(get_project_names(get_project_dirs(cfg)))
     cfg.to_file(cfg.output_path / "bcl2fastq.ini")
     return projects
 

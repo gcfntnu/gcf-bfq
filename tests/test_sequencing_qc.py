@@ -103,6 +103,24 @@ def write_convert(cfg, *, counts=(1, 0, 9999)):
 def write_bcl2fastq(cfg, *, root=None):
     root = root or cfg.output_path / "Stats"
     root.mkdir(parents=True, exist_ok=True)
+
+    def sample_metrics(count):
+        return {
+            "NumberReads": count,
+            "Yield": count * 302,
+            "IndexMetrics": [{"MismatchCounts": {"0": count}}],
+            "ReadMetrics": [
+                {
+                    "ReadNumber": read,
+                    "Yield": count * 151,
+                    "YieldQ30": count * 140,
+                    "QualityScoreSum": count * 151 * 35,
+                    "TrimmedBases": 0,
+                }
+                for read in (1, 2)
+            ],
+        }
+
     (root / "Stats.json").write_text(
         json.dumps(
             {
@@ -112,10 +130,10 @@ def write_bcl2fastq(cfg, *, root=None):
                         "LaneNumber": 1,
                         "TotalClustersPF": 100,
                         "DemuxResults": [
-                            {"SampleId": "s1", "SampleName": "first", "NumberReads": 75},
-                            {"SampleId": "s2", "SampleName": "second", "NumberReads": 0},
+                            {"SampleId": "s1", "SampleName": "first", **sample_metrics(75)},
+                            {"SampleId": "s2", "SampleName": "second", **sample_metrics(0)},
                         ],
-                        "Undetermined": {"NumberReads": 25},
+                        "Undetermined": sample_metrics(25),
                     }
                 ],
                 "UnknownBarcodes": [{"Lane": 1, "Barcodes": {"ATGC+ATGC": 20}}],
@@ -309,3 +327,41 @@ def test_empty_multiqc_success_does_not_accept_stale_html(cfg, report_commands, 
     with pytest.raises(RuntimeError, match="without a nonempty HTML report"):
         qc.generate(cfg)
     assert not Path(first["report_path"]).exists()
+
+
+def test_duplicate_sample_ids_are_mapped_by_lane_and_index(cfg, report_commands):
+    reports = write_convert(cfg)
+    cfg.run.sample_sheet.write_text(
+        "[Data]\nLane,Sample_ID,Sample_Project,index,index2\n1,shared,P1,AAAA,CCCC\n1,shared,P2,GGGG,TTTT\n"
+    )
+    (reports / "Demultiplex_Stats.csv").write_text(
+        "Lane,SampleID,Index,# Reads\n1,shared,AAAA+CCCC,10\n1,shared,GGGG+TTTT,0\n1,Undetermined,,90\n"
+    )
+    result = qc.generate(cfg)
+    assert [(sample["project"], sample["assigned_reads"]) for sample in result["samples"]] == [
+        ("P1", 10),
+        ("P2", 0),
+    ]
+
+
+def test_partial_lane_counts_are_not_reported_as_complete_zero(cfg, report_commands):
+    reports = write_convert(cfg)
+    cfg.run.sample_sheet.write_text("[Data]\nLane,Sample_ID,Sample_Project\n1,s1,P1\n2,s1,P1\n")
+    (reports / "Demultiplex_Stats.csv").write_text(
+        "Lane,SampleID,# Reads\n1,s1,0\n1,Undetermined,50\n2,Undetermined,50\n"
+    )
+    result = qc.generate(cfg)
+    assert result["samples"][0]["assigned_reads"] is None
+    assert result["samples"][0]["observed_assigned_reads"] == 0
+    assert "statistics missing for expected lanes 2" in result["summary_text"]
+
+
+@pytest.mark.parametrize(
+    "subdirectory",
+    ["outs/fastq_path/HFLC5BBXX/Stats", "HFLC5BBXX/outs/fastq_path/Stats", "HFLC5BBXX/Stats"],
+)
+def test_mkfastq_flowcell_subdirectory_layout(cfg, report_commands, subdirectory):
+    write_bcl2fastq(cfg, root=cfg.output_path / subdirectory)
+    result = qc.generate(cfg, tool="cellranger mkfastq")
+    assert result["total_reads"] == 100
+    assert result["stats_source"].endswith(subdirectory + "/Stats.json")

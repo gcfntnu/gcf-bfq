@@ -26,7 +26,13 @@ from bcl2fastq_pipeline.state import (
     validate_restored_fastqs,
 )
 
-from bcl2fastq_pipeline import analysis_snapshots, fastq_cleanup, notification_delivery, preflight
+from bcl2fastq_pipeline import (
+    analysis_snapshots,
+    fastq_cleanup,
+    notification_delivery,
+    preflight,
+    sequencing_delivery,
+)
 
 pd.set_option("display.max_rows", 5000)
 pd.set_option("display.max_columns", 12)
@@ -592,6 +598,13 @@ def status_flowcell(**args):
     if store.exists(run_id):
         state = store.recover_interrupted(run_id)
         print(f"{run_id}: {state['status']} ({state['current_stage']})")
+        qc = state.get("sequencing_qc")
+        if qc:
+            print(f"  Sequencing QC (demultiplexing execution {qc['execution']}): {qc['status']}")
+            if qc.get("last_error"):
+                print(f"    {qc['last_error']}")
+            if qc.get("status") == "completed":
+                print(f"    {qc['result']['report_path']}")
         cleanup = state.get("fastq_cleanup")
         if cleanup:
             print(f"  FASTQ cleanup: {cleanup['status']} (started {cleanup['started_at']})")
@@ -661,6 +674,29 @@ def retry_notifications(**args):
             "correct configuration or use --retry-uncertain if duplicate delivery is acceptable."
         )
     print(f"{run_id}: matching notifications sent or already delivered")
+    return store.read(run_id)
+
+
+def retry_sequencing_qc(**args):
+    """Recover the report from saved conversion inputs, without BCL or analysis."""
+    cfg = get_cfg()
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    run_id = _run_id(args["flowcell"])
+    with store.execution_lease(run_id):
+        before = store.read(run_id)
+        qc = sequencing_delivery.report_and_notify(cfg, store, run_id, retry=True)
+    if qc["status"] != "completed":
+        raise StateConflictError(f"Sequencing QC remains unavailable: {qc.get('last_error')}")
+    print(f"{run_id}: sequencing QC available at {qc['result']['report_path']}")
+    print(
+        "Existing sent notifications are preserved. Inspect status for delivery failures; "
+        "retry with retry-notifications --kind sequencing."
+    )
+    if before["stages"]["finalization"]["status"] == "completed":
+        print(
+            "If this recovery changed the report, rerun --from finalization to include it "
+            "in delivery archives. Existing archives were not changed."
+        )
     return store.read(run_id)
 
 
@@ -766,13 +802,19 @@ def main():
         "retry-notifications", help="Retry saved completion mail without rerunning processing."
     )
     parser_retry.add_argument("flowcell", help="Run ID or flowcell path.")
-    parser_retry.add_argument("--kind", choices=["processed", "finalized"])
+    parser_retry.add_argument("--kind", choices=["sequencing", "processed", "finalized"])
     parser_retry.add_argument(
         "--retry-uncertain",
         action="store_true",
         help="Allow resending after uncertain SMTP acceptance; duplicates are possible.",
     )
     parser_retry.set_defaults(func=retry_notifications)
+
+    parser_qc = subparsers.add_parser(
+        "retry-sequencing-qc", help="Recover early sequencing QC without rerunning conversion."
+    )
+    parser_qc.add_argument("flowcell", help="Run ID or flowcell path.")
+    parser_qc.set_defaults(func=retry_sequencing_qc)
 
     args = parser.parse_args()
     values = vars(args)

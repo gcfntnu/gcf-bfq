@@ -89,7 +89,8 @@ def simulated_execution(cfg, monkeypatch):
     monkeypatch.setattr(afterFastq, "finalize", lambda: calls.append("finalize"))
     monkeypatch.setattr(findFlowCells, "markFinished", lambda: ["GCF-2026-001"])
     monkeypatch.setattr(notifications, "make_payload", lambda *_args, **_kwargs: {"run_id": RUN_ID})
-    monkeypatch.setattr(cli.notification_delivery, "deliver_pending", lambda *_args: True)
+    monkeypatch.setattr(cli.sequencing_delivery, "ensure_report", lambda *_a, **_kw: False)
+    monkeypatch.setattr(cli.notification_delivery, "deliver_pending", lambda *_a, **_kw: True)
     monkeypatch.setattr(misc, "send_error_report", Mock())
     return calls
 

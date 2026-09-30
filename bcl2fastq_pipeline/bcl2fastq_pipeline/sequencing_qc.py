@@ -522,11 +522,6 @@ def _configuration(result):
         "megaqc_url": None,
         "megaqc_access_token": None,
         "custom_data": {
-            "bfq_sequencing_summary": {
-                "section_name": "BFQ sequencing summary",
-                "plot_type": "html",
-                "data": result["summary_html"],
-            },
             "bfq_sample_assignment": {
                 "section_name": "Expected samples and demultiplexing assignment",
                 "plot_type": "table",
@@ -659,6 +654,20 @@ def generate(cfg, tool=None):
         **summary,
     }
     result["summary_text"], result["summary_html"] = _summaries(result)
+    # The deployed GCF MultiQC 1.18 fork accepts HTML from a custom-content
+    # file, but its config-only data reader assumes a dictionary.
+    (inputs / "bfq_sequencing_summary_mqc.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "id": "bfq_sequencing_summary",
+                "section_name": "BFQ sequencing summary",
+                "plot_type": "html",
+                "data": result["summary_html"],
+            },
+            sort_keys=False,
+            allow_unicode=True,
+        )
+    )
     config_path = report_dir / "multiqc_config.yaml"
     config_path.write_text(
         yaml.safe_dump(_configuration(result), sort_keys=False, allow_unicode=True)
