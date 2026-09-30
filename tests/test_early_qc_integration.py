@@ -51,7 +51,7 @@ def prepared(tmp_path, monkeypatch):
     def report(saved, tool=None):
         calls.append("qc")
         assert tool == "bcl-convert"
-        report_path = output / "Stats/sequencing_qc/sequencing_qc.html"
+        report_path = output / "sequencer_stats_GCF-2026-001_260918.html"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text("<html>99.9% undetermined; operator decides</html>")
         return {
@@ -108,7 +108,7 @@ def test_failed_analysis_and_rerun_preserve_report_timing_and_do_not_resend(tmp_
     assert first["status"] == "failed"
     assert first["delivery_notifications"][0]["status"] == "sent"
     qc = copy.deepcopy(first["sequencing_qc"])
-    report = output / "Stats/sequencing_qc/sequencing_qc.html"
+    report = output / "sequencer_stats_GCF-2026-001_260918.html"
     before = report.stat().st_mtime_ns
     apply_cleanup(cleanup_plan(output, "analysis"))
     store.queue(RUN_ID, "analysis")
@@ -238,7 +238,7 @@ def test_report_recovery_keeps_demultiplexing_identity_after_analysis_attempt(
 @pytest.mark.parametrize("stage", ["analysis", "reporting", "finalization"])
 def test_all_downstream_cleanup_preserves_early_artifacts(tmp_path, stage):
     artifacts = [
-        tmp_path / "Stats/sequencing_qc/sequencing_qc.html",
+        tmp_path / "sequencer_stats_GCF-2026-001_260918.html",
         tmp_path / "Stats/sequencing_qc_samplesheet.csv",
     ]
     for artifact in artifacts:
@@ -286,7 +286,7 @@ def test_failed_report_rebuild_preserves_downstream_mail_and_remains_recoverable
     run(cfg, store)
     before = store.read(RUN_ID)
     early_attempts = before["delivery_notifications"][0]["attempts"]
-    (output / "Stats/sequencing_qc/sequencing_qc.html").unlink()
+    (output / "sequencer_stats_GCF-2026-001_260918.html").unlink()
     monkeypatch.setattr(sequencing_qc, "generate", Mock(side_effect=RuntimeError("report failed")))
     with pytest.raises(RuntimeError, match="Sequencing QC remains unavailable"):
         manager.retry_sequencing_qc(flowcell=RUN_ID)
@@ -333,7 +333,7 @@ def test_report_rebuild_preserves_sent_or_uncertain_smtp_identity(tmp_path, monk
 
     store.mutate(RUN_ID, set_delivery_status)
     before = store.read(RUN_ID)["delivery_notifications"][0]
-    (output / "Stats/sequencing_qc/sequencing_qc.html").unlink()
+    (output / "sequencer_stats_GCF-2026-001_260918.html").unlink()
     monkeypatch.setattr(sequencing_qc, "generate", Mock(side_effect=RuntimeError("report failed")))
     with pytest.raises(RuntimeError, match="Sequencing QC remains unavailable"):
         manager.retry_sequencing_qc(flowcell=RUN_ID)

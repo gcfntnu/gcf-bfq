@@ -361,8 +361,8 @@ def test_unsupported_notification_kind_fails_before_delivery(mail_cfg, smtp):
 
 @pytest.fixture
 def sequencing(mail_cfg):
-    report = mail_cfg.output_path / "Stats" / "sequencing_qc" / "sequencing_qc.html"
-    report.parent.mkdir(parents=True)
+    report = mail_cfg.output_path / "sequencer_stats_GCF-2026-043_260918.html"
+    report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text("<html>Early sequencing QC</html>")
     summary = {
         "projects": ["GCF-2026-043"],
@@ -406,7 +406,9 @@ def test_early_qc_requires_no_excel_analysis_or_stats_json(mail_cfg, sequencing,
             "Current free space for output",
         ):
             assert value in body
-    assert [part.get_filename() for part in message.iter_attachments()] == ["sequencing_qc.html"]
+    assert [part.get_filename() for part in message.iter_attachments()] == [
+        "sequencer_stats_GCF-2026-043_260918.html"
+    ]
     forbidden.assert_not_called()
 
 
@@ -501,7 +503,7 @@ def test_legacy_rerun_analysis_mail_includes_sequencing_qc(mail_cfg, processed, 
             assert value in body
     assert [part.get_filename() for part in message.iter_attachments()] == [
         "multiqc_GCF-2026-043_260918.html",
-        "sequencing_qc.html",
+        "sequencer_stats_GCF-2026-043_260918.html",
     ]
 
 

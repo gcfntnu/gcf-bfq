@@ -151,6 +151,10 @@ def test_convert_report_without_analysis_or_fastqs(cfg, report_commands):
     result = qc.generate(cfg, tool=["bcl-convert", "4.2.4"])
 
     assert result["projects"] == ["P1", "P2"]
+    report = cfg.output_path / "sequencer_stats_P1_P2_260925.html"
+    assert result["report_path"] == str(report)
+    assert report.read_text() == "<html>Sequencing QC</html>"
+    assert not (cfg.output_path / qc.REPORT_DIRECTORY / report.name).exists()
     assert result["total_reads"] == 10000
     assert result["undetermined_percent"] == 99.99
     assert result["zero_read_sample_count"] == 1
@@ -165,7 +169,7 @@ def test_convert_report_without_analysis_or_fastqs(cfg, report_commands):
     assert not (cfg.output_path / "P1").exists()
 
     command = report_commands[-1]
-    assert command[command.index("--filename") + 1] == "sequencing_qc.html"
+    assert command[command.index("--filename") + 1] == "sequencer_stats_P1_P2_260925.html"
     assert command[-2] == "bclconvert"
     inputs = Path(command[-1])
     assert inputs.parent == cfg.output_path / "Stats" / "sequencing_qc"
@@ -283,6 +287,9 @@ def test_no_samplesheet_uses_project_identifiers_in_demux_stats(cfg, report_comm
     )
     result = qc.generate(cfg)
     assert result["projects"] == ["P-from-stats"]
+    assert (
+        Path(result["report_path"]) == cfg.output_path / "sequencer_stats_P-from-stats_260925.html"
+    )
     assert result["samples"][0]["assigned_reads"] == 0
     assert "planned samples cannot be enumerated" in result["summary_text"]
 
@@ -302,7 +309,7 @@ def test_malformed_demux_is_diagnostic_and_does_not_publish_report(cfg, report_c
         RuntimeError, match="Unable to read demultiplexer statistics.*Invalid read count"
     ):
         qc.generate(cfg)
-    assert not (cfg.output_path / qc.REPORT_DIRECTORY / qc.REPORT_FILENAME).exists()
+    assert not list(cfg.output_path.glob("sequencer_stats_*.html"))
 
 
 def test_multiqc_failure_has_log_tail(cfg, report_commands, monkeypatch):

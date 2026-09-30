@@ -290,6 +290,7 @@ def archive_worker(cfg):
         pw = generate_password(cfg, p) if cfg.run.sensitive else None
         report_dir = cfg.output_path / "Reports"
         archive_inputs = [cfg.output_path / p, cfg.output_path / "Stats"]
+        archive_inputs.extend(sorted(cfg.output_path.glob("sequencer_stats_*.html")))
         if report_dir.exists():
             archive_inputs.append(report_dir)
         archive_inputs.extend(sorted(cfg.output_path.glob("Undetermined*.fastq.gz")))

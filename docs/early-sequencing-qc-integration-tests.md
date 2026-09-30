@@ -29,7 +29,8 @@ analysis, analysis email, archive/checksum finalization, final email in that ord
 Verify `flowcell-manager status RUN_ID` and `show` include completed sequencing QC
 and one sent `sequencing:<execution>` entry.
 
-Inspect `Stats/sequencing_qc/sequencing_qc.html` and compare values with the source
+Inspect `sequencer_stats_<project(s)>_<flowcell_date>.html` in the output root
+and compare values with the source
 statistics. Cover bcl-convert `Reports/Demultiplex_Stats.csv` plus `Quality_Metrics.csv`
 and `Top_Unknown_Barcodes.csv`, bcl2fastq `Stats/Stats.json`, and supported 10x
 mkfastq output. Check actual MultiQC images/wrappers and InterOp binaries. Native
@@ -76,7 +77,8 @@ unreadable to downstream parsing and run `retry-sequencing-qc`.
   `flowcell-manager retry-notifications RUN_ID --kind sequencing`.
   Uncertain acceptance requires `--retry-uncertain`, as for other notifications.
 - After successful finalization, inspect project `.7za` contents for
-  `Stats/sequencing_qc/`. Recovery performed after finalization requires an
+  both the root-level `sequencer_stats_<project(s)>_<flowcell_date>.html` and
+  supporting `Stats/sequencing_qc/`. Recovery performed after finalization requires an
   explicit finalization rerun to refresh archives; the command warns about this.
 
 ## Timing and compatibility
@@ -108,3 +110,10 @@ MultiQC bclconvert; separate custom-content YAML for older MultiQC HTML parsing;
 mkfastq's optional flowcell-id directory; duplicate sample IDs disambiguated by
 lane/index, with incomplete lane totals marked unavailable; and recovery of a
 missing early report without superseding valid later notifications.
+
+
+The report filename includes sorted project IDs joined by `_` and the flowcell
+ID's date prefix. Check that the downloaded email attachment has the same name,
+that downstream reruns preserve this root-level HTML, and that a demultiplexing
+rerun invalidates it. Existing completed reports retain their recorded paths;
+no conversion rerun is required merely to deliver an already generated report.

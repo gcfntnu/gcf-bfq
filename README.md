@@ -317,8 +317,12 @@ before demultiplexing remains in place**: a workbook rejected before conversion
 still prevents a fresh run. A successfully converted run can generate/recover
 sequencing QC independently of later workbook or analysis failure.
 
-Artifacts live under `Stats/sequencing_qc/` (HTML, JSON summary, configuration,
-input snapshots and MultiQC log); the conversion's SampleSheet is saved in state
+The standalone HTML lives in the flowcell output root, beside the analysis reports:
+`sequencer_stats_<project(s)>_<flowcell_date>.html`. Project IDs are sorted and
+joined with `_`, for example `sequencer_stats_GCF-2026-043_GCF-2026-044_260925.html`.
+The date is the flowcell ID's date prefix, matching analysis-report naming.
+Supporting JSON summary, configuration, input snapshots, MultiQC data and logs
+stay under `Stats/sequencing_qc/`; the conversion's SampleSheet is saved in state
 and exposed as `Stats/sequencing_qc_samplesheet.csv`. BFQ selects the module from
 actual demultiplexer output, not the current `FORCE_BCL2FASTQ` environment alone.
 Native bcl-convert CSVs are staged beside RunInfo.xml, with bcl2fastq Stats.json
@@ -333,8 +337,8 @@ identity. Analysis/reporting/finalization reruns preserve it and its successful
 reporting duration. Daemon restarts do not duplicate sent mail. A demultiplexing
 rerun removes its artifacts and supersedes its notification before permitting a
 new one. Even if subsequent FASTQ hashing fails, a successfully generated early
-report remains available. The report is retained in delivery archives through
-the existing `Stats` archive input. Legacy reruns with no early execution get
+report remains available. Root-level sequencing HTML is explicitly included in
+each project delivery archive; supporting artifacts remain included through `Stats`. Legacy reruns with no early execution get
 sequencing QC attached to their analysis email; they do not invent early mail.
 
 Inspect and recover a failed/missing report without reconverting BCLs:
@@ -344,6 +348,10 @@ flowcell-manager status RUN_ID
 flowcell-manager show RUN_ID
 flowcell-manager retry-sequencing-qc RUN_ID
 ```
+
+Existing completed reports keep their saved paths, including reports generated
+under `Stats` by earlier builds; retries do not rename or resend them. Newly
+generated or recovered reports use the project/date filename at the output root.
 
 `retry-sequencing-qc` reuses a valid report, otherwise regenerates it from the
 retained conversion inputs and attempts a never-attempted notification. It does

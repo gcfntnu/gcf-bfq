@@ -1,7 +1,8 @@
 """Sequencer-only QC, independent of Excel metadata and project analysis.
 
-All generated inputs, summaries and reports belong to one demultiplexing execution
-and live in ``Stats/sequencing_qc``. State and email delivery are caller concerns.
+Generated inputs and summaries live in ``Stats/sequencing_qc``; the HTML report
+lives beside project analysis reports in the output root. All belong to one
+demultiplexing execution. State and email delivery are caller concerns.
 Counts below are clusters (read pairs for paired-end runs), not R1+R2 records.
 """
 
@@ -26,7 +27,16 @@ from bcl2fastq_pipeline.interop import prepare_index_metrics, run_interop_csv
 
 log = logging.getLogger(__name__)
 REPORT_DIRECTORY = Path("Stats") / "sequencing_qc"
-REPORT_FILENAME = "sequencing_qc.html"
+
+
+def report_filename(run_id, projects):
+    """Use the same project/date identifiers as analysis reports, in stable order."""
+    identifiers = sorted(set(projects)) or ["Unspecified"]
+    date = run_id.split("_")[0]
+    for value in [*identifiers, date]:
+        if any(char in value for char in "/\\\x00"):
+            raise ValueError(f"Invalid report filename component: {value!r}")
+    return f"sequencer_stats_{'_'.join(identifiers)}_{date}.html"
 
 
 def _number(value):
@@ -633,10 +643,12 @@ def generate(cfg, tool=None):
         else None
     )
     expected = [sample for sample in samples.values() if sample["expected"]]
+    projects = sorted({sample["project"] for sample in samples.values()})
+    filename = report_filename(cfg.run.run_id, projects)
     result = {
         "run_id": cfg.run.run_id,
-        "projects": sorted({sample["project"] for sample in samples.values()}),
-        "report_path": str(report_dir / REPORT_FILENAME),
+        "projects": projects,
+        "report_path": str(output / filename),
         "read_geometry": geometry,
         "demultiplexer": module,
         "stats_source": str(source),
@@ -674,6 +686,8 @@ def generate(cfg, tool=None):
     )
     report_path = Path(result["report_path"])
     report_path.unlink(missing_ok=True)
+    generated_report = report_dir / filename
+    generated_report.unlink(missing_ok=True)
     log_path = report_dir / "multiqc.log"
     command = [
         "multiqc",
@@ -685,7 +699,7 @@ def generate(cfg, tool=None):
         "--outdir",
         str(report_dir),
         "--filename",
-        REPORT_FILENAME,
+        filename,
         "-m",
         "custom_content",
         "-m",
@@ -697,8 +711,11 @@ def generate(cfg, tool=None):
     try:
         with log_path.open("w") as handle:
             subprocess.check_call(command, cwd=report_dir, stdout=handle, stderr=subprocess.STDOUT)
-        if not report_path.is_file() or not report_path.stat().st_size:
+        if not generated_report.is_file() or not generated_report.stat().st_size:
             raise RuntimeError("MultiQC returned without a nonempty HTML report")
+        # Keep MultiQC data/logs with the supporting metrics, but publish the
+        # standalone HTML alongside the project analysis reports.
+        generated_report.replace(report_path)
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         tail = "\n".join(log_path.read_text(errors="replace").splitlines()[-30:])
         raise RuntimeError(

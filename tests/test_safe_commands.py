@@ -265,6 +265,8 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
     (output_path / "Stats").mkdir()
     (output_path / "Reports").mkdir()
     (output_path / "Undetermined lane_R1.fastq.gz").touch()
+    sequencer_report = output_path / "sequencer_stats_GCF-2026-001_GCF-2026-002_260923.html"
+    sequencer_report.write_text("<html>Sequencing QC</html>")
     (output_path / f"{project}_samplesheet.tsv").touch()
     (output_path / "SampleSheet.csv").touch()
     (output_path / "Sample-Submission-Form.xlsx").touch()
@@ -302,6 +304,7 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
     assert fastq_command[:2] == ["7za", "a"]
     assert str(output_path / "Undetermined lane_R1.fastq.gz") in fastq_command
     assert str(output_path / project) in fastq_command
+    assert str(sequencer_report) in fastq_command
     assert qc_command == [
         "7za",
         "a",
