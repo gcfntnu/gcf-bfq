@@ -151,7 +151,7 @@ def test_daemon_and_configmaker_share_snapshot_through_source_edits(  # noqa: PL
     monkeypatch.setattr(afterFastq.subprocess, "check_call", configmaker)
     monkeypatch.setattr(afterFastq, "run_logged_command", snakemake)
     monkeypatch.setattr(cli, "_run_reporting", lambda *_args: projects)
-    monkeypatch.setattr(afterFastq, "finalize", lambda: None)
+    monkeypatch.setattr(afterFastq, "finalize", lambda **_kwargs: None)
     monkeypatch.setattr(findFlowCells, "markFinished", lambda: projects)
     monkeypatch.setattr(notifications, "send_notification", lambda *_args: None)
     cli._run_state_backed_flowcell(cfg, store, logging.getLogger("test"), prepare=True)
@@ -238,7 +238,7 @@ def test_downstream_daemon_recovers_only_workflow(workflow_run, monkeypatch, sta
     store.create(state)
     calls = []
 
-    def check_workflow(*_args):
+    def check_workflow(*_args, **_kwargs):
         assert store.execution_active(RUN_ID)
         assert cfg.run.pipeline == "metagenome"
         assert cfg.run.libprep_config is None

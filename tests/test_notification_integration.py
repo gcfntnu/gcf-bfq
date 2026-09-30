@@ -65,7 +65,7 @@ def prepare_pipeline(tmp_path, monkeypatch, *, start_stage="analysis"):
         (output / f"multiqc_{PROJECT}_260918.html").write_text("<html>QC</html>")
         return [PROJECT]
 
-    def finalize():
+    def finalize(**_kwargs):
         calls.append("finalization")
         (output / f"{PROJECT}_260918.7za").write_bytes(b"prepared delivery archive")
         (output / f"md5sum_{PROJECT}_archive.txt").write_text("archive checksum\n")

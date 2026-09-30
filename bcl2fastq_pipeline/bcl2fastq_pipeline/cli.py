@@ -24,6 +24,7 @@ from bcl2fastq_pipeline import (
     notification_delivery,
     notifications,
     preflight,
+    processing_times,
     sequencing_delivery,
     workflow_config,
 )
@@ -133,7 +134,6 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
         first_stage = state["current_stage"]
         start_time = datetime.datetime.now()
         processing_started = time.monotonic()
-        notification_seconds = 0.0
 
         if not bcl2fastq_pipeline.misc.enoughFreeSpace():
             raise RuntimeError("Insufficient free space!")
@@ -155,11 +155,12 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                     _prepare_workflow(cfg, store, current)
                 if index == start_index and stage != "demultiplexing":
                     log.info("Checking FASTQ manifests before %s: %s", stage, run_id)
-                    bcl2fastq_pipeline.afterFastq.md5sum_worker(cfg)
+                    bcl2fastq_pipeline.afterFastq.md5sum_worker(cfg, store=store)
                 if stage == "demultiplexing":
                     log.info("Starting demultiplexing: %s", run_id)
-                    tool, version = bcl2fastq_pipeline.makeFastq.bcl2fq()
-                    bcl2fastq_pipeline.makeFastq.rename_fastqs()
+                    with processing_times.measure(store, run_id, "demultiplexing"):
+                        tool, version = bcl2fastq_pipeline.makeFastq.bcl2fq()
+                        bcl2fastq_pipeline.makeFastq.rename_fastqs()
                     before_early = time.monotonic()
                     sequencing_delivery.record_conversion(
                         cfg,
@@ -174,10 +175,8 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                         run_id,
                         run_time=str(datetime.timedelta(seconds=before_early - processing_started)),
                     )
-                    before_notification = time.monotonic()
                     notification_delivery.deliver_pending(cfg, store, run_id, kind="sequencing")
-                    notification_seconds += time.monotonic() - before_notification
-                    bcl2fastq_pipeline.afterFastq.md5sum_worker(cfg, force=True)
+                    bcl2fastq_pipeline.afterFastq.md5sum_worker(cfg, force=True, store=store)
                     store.complete_stage(
                         run_id,
                         stage,
@@ -185,32 +184,32 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                     )
                 elif stage == "analysis":
                     log.info("Starting analysis: %s", run_id)
-                    workdirs = bcl2fastq_pipeline.afterFastq.analysis_steps()
+                    with processing_times.measure(store, run_id, "analysis"):
+                        workdirs = bcl2fastq_pipeline.afterFastq.analysis_steps()
                     store.complete_stage(
                         run_id, stage, {"workflow": cfg.run.pipeline, "workdirs": workdirs or {}}
                     )
                 elif stage == "reporting":
                     log.info("Starting reporting: %s", run_id)
-                    reporting_started = time.monotonic()
-                    projects = _run_reporting(cfg, start_time)
-                    if projects is None:
-                        projects = current["projects"]
-                    run_time = datetime.timedelta(
-                        seconds=time.monotonic() - processing_started - notification_seconds
-                    )
-                    legacy_qc = None
-                    legacy_summary = cfg.output_path / "Stats/sequencing_qc/summary.json"
-                    if not current.get("sequencing_qc") and legacy_summary.is_file():
-                        legacy_qc = json.loads(legacy_summary.read_text())
+                    with processing_times.measure(store, run_id, "reporting"):
+                        projects = _run_reporting(cfg, start_time)
+                        if projects is None:
+                            projects = current["projects"]
+                        legacy_qc = None
+                        legacy_summary = cfg.output_path / "Stats/sequencing_qc/summary.json"
+                        if not current.get("sequencing_qc") and legacy_summary.is_file():
+                            legacy_qc = json.loads(legacy_summary.read_text())
+                        analysis_summary = analysis_qc.collect(cfg, projects)
+                    timed = store.read(run_id)
                     payload = notifications.make_payload(
                         cfg,
                         "processed",
                         projects=projects,
-                        run_time=str(run_time),
-                        analysis_qc=analysis_qc.collect(cfg, projects),
+                        processing_timing=processing_times.snapshot(timed),
+                        analysis_qc=analysis_summary,
                         sequencing_qc=legacy_qc,
                     )
-                    late_seconds = time.monotonic() - reporting_started
+                    late_seconds = timed["processing_timings"]["reporting"][-1]["duration_seconds"]
                     early = store.read(run_id).get("sequencing_qc", {})
                     early_seconds = (
                         early.get("duration_seconds")
@@ -229,19 +228,13 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                     )
                 elif stage == "finalization":
                     log.info("Starting finalization: %s", run_id)
-                    before_finalize = time.monotonic()
-                    bcl2fastq_pipeline.afterFastq.finalize()
-                    finalize_time = datetime.timedelta(seconds=time.monotonic() - before_finalize)
-                    run_time = datetime.timedelta(
-                        seconds=time.monotonic() - processing_started - notification_seconds
-                    )
+                    bcl2fastq_pipeline.afterFastq.finalize(store=store)
                     projects = bcl2fastq_pipeline.findFlowCells.markFinished()
                     payload = notifications.make_payload(
                         cfg,
                         "finalized",
                         projects=projects,
-                        finalize_time=str(finalize_time),
-                        run_time=str(run_time),
+                        processing_timing=processing_times.snapshot(store.read(run_id)),
                     )
                     snapshots = analysis_snapshots.prepare(store.read(run_id), projects)
                     store.complete_run(
@@ -286,9 +279,7 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
             # Delivery errors (including state I/O after SMTP) must never enter
             # the processing failure path above. The intent is already durable.
             if stage in {"reporting", "finalization"}:
-                before_notification = time.monotonic()
                 notification_delivery.deliver_pending(cfg, store, run_id)
-                notification_seconds += time.monotonic() - before_notification
 
             # complete_run finalizes the final stage itself.
             if index == len(stages) - 1:
