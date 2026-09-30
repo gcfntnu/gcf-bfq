@@ -29,6 +29,7 @@ from bcl2fastq_pipeline.state import (
 from bcl2fastq_pipeline import (
     analysis_snapshots,
     fastq_cleanup,
+    index_corrections,
     notification_delivery,
     preflight,
     sequencing_delivery,
@@ -157,12 +158,13 @@ def _confirm(prompt, force):
     return input(f"{prompt} (yes/no): ").strip().lower() == "yes"
 
 
-def _ensure_not_active(store, run_id, state, force):
+def _ensure_not_active(store, run_id, state, force, *, recover=True):
     if state is None:
         return state
-    if state["status"] == "running" and not store.execution_active(run_id):
+    active = store.execution_active(run_id)
+    if recover and state["status"] == "running" and not active:
         state = store.recover_interrupted(run_id)
-    if store.execution_active(run_id) or state["status"] == "running":
+    if active:
         if not force:
             raise StateConflictError(
                 f"{run_id} is currently running; repeat with --force only for a deliberate override"
@@ -209,11 +211,65 @@ def _cleanup_for_state(state, from_stage):
     return sorted(set(paths), key=str)
 
 
+def _requested_indexes(args, from_stage):
+    indexes = []
+    if args.get("reverse_complement_index1", False):
+        indexes.append("index1")
+    if args.get("reverse_complement_index2", False) or args.get("tom_mode", False):
+        indexes.append("index2")
+    if indexes and from_stage != "demultiplexing":
+        raise StateConflictError(
+            "Index reverse-complement options require --from demultiplexing; "
+            "no state or inputs were changed"
+        )
+    return tuple(indexes)
+
+
+def _require_separate_source(source_path, output_path):
+    source = Path(source_path).resolve()
+    output = Path(output_path).resolve()
+    if source == output or source in output.parents or output in source.parents:
+        raise StateConflictError(
+            f"Input directory {source_path} overlaps output directory {output_path}; "
+            "instrument inputs must remain separate from output"
+        )
+    if Path(source_path).exists() and Path(output_path).exists():
+        if Path(source_path).samefile(output_path):
+            raise StateConflictError("Input and output directories refer to the same location")
+
+
+def _initialize_source(value, cfg):
+    raw = str(value)
+    explicit = Path(raw).is_absolute() or "/" in raw or raw in {".", ".."}
+    if explicit:
+        source = Path(os.path.abspath(Path(raw).expanduser()))
+        if not source.is_dir():
+            raise StateConflictError(f"Input directory is unavailable or not a directory: {source}")
+        return source
+    matches = []
+    for root in (cfg.static.paths.nova_base_dir, cfg.static.paths.ekista_base_dir):
+        candidate = Path(root) / raw
+        if candidate.is_dir() and not any(candidate.samefile(path) for path in matches):
+            matches.append(candidate)
+    if not matches:
+        raise StateConflictError(
+            f"Cannot initialize {raw}: instrument source directory is unavailable"
+        )
+    if len(matches) > 1:
+        raise StateConflictError(
+            f"Ambiguous input run {raw}: "
+            + ", ".join(map(str, matches))
+            + "; supply the exact input directory"
+        )
+    return matches[0].absolute()
+
+
 def rerun_flowcell(**args):
+    from_stage = args.get("from_stage") or "demultiplexing"
+    indexes = _requested_indexes(args, from_stage)
     cfg = get_cfg()
     store = FlowcellStateStore(cfg.static.paths.manager_dir)
     run_id, state, legacy = _resolve_state_or_legacy(args["flowcell"], cfg, store)
-    from_stage = args.get("from_stage") or "demultiplexing"
     force = args.get("force", False)
     dry_run = args.get("dry_run", False)
     refresh_inputs = args.get("refresh_inputs", False)
@@ -246,21 +302,32 @@ def rerun_flowcell(**args):
         }
         creating = True
     else:
-        state = _ensure_not_active(store, run_id, state, force)
+        state = _ensure_not_active(store, run_id, state, force, recover=False)
         creating = False
 
     validate_restart_boundary(state, from_stage)
     output_path = resolve_output_path(state["output_path"], run_id, cfg)
     state = {**state, "output_path": str(output_path)}
+    _require_separate_source(state["source_path"], output_path)
     fastq_cleanup.require_restored(state, output_path, from_stage)
     paths = _cleanup_for_state(state, from_stage)
     _print_plan("Rerun", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
+    correction = None
+    selected = None
     if from_stage in {"demultiplexing", "analysis"} or refresh_inputs:
-        preflight.require_valid_inputs(state["source_path"], output_path, refresh=refresh_inputs)
+        selected, _result = preflight.require_valid_inputs(
+            state["source_path"], output_path, refresh=refresh_inputs
+        )
+        if indexes:
+            correction = index_corrections.plan(
+                store, run_id, selected, state["source_path"], indexes, reason=reason
+            )
+            index_corrections.print_plan(correction)
+    index_corrections.print_orientation_preview(state, selected, correction, refresh=refresh_inputs)
     if dry_run:
         return state
     if not _confirm(f"Queue rerun for {run_id}", force):
-        print("Skipping...")
+        print("Skipped; SampleSheet unchanged.")
         return state
 
     with store.execution_lease(run_id):
@@ -268,14 +335,29 @@ def rerun_flowcell(**args):
             raise StateConflictError("Run changed while preparing the command; inspect and retry")
         if _cleanup_for_state(state, from_stage) != paths:
             raise StateConflictError("Output paths changed after the preview; inspect and retry")
+        _require_separate_source(state["source_path"], output_path)
         fastq_cleanup.require_restored(state, output_path, from_stage)
         selected = None
         if from_stage in {"demultiplexing", "analysis"} or refresh_inputs:
             selected, _result = preflight.require_valid_inputs(
                 state["source_path"], output_path, refresh=refresh_inputs
             )
+        if correction is not None:
+            current = index_corrections.plan(
+                store, run_id, selected, state["source_path"], indexes, reason=reason
+            )
+            index_corrections.verify_plan(correction, current)
         if not creating:
+            index_corrections.recover(store, run_id)
             analysis_snapshots.recover(store, run_id)
+            if state["status"] == "running":
+                store.fail_stage(
+                    run_id,
+                    state["current_stage"],
+                    summary="Interrupted before operator rerun; execution lease is inactive",
+                    report_path=None,
+                    interrupted=True,
+                )
         if creating:
             store.create(state)
         else:
@@ -294,15 +376,21 @@ def rerun_flowcell(**args):
             result = preflight.validate_selection(effective)
             if not result.ok:
                 raise preflight.PreflightValidationError(result)
+        if correction is not None:
+            index_corrections.apply(store, run_id, correction)
         apply_cleanup(paths)
         return store.queue(run_id, from_stage)
 
 
 def initialize_flowcell(**args):
+    from_stage = args.get("from_stage") or "demultiplexing"
+    indexes = _requested_indexes(args, from_stage)
     cfg = get_cfg()
     store = FlowcellStateStore(cfg.static.paths.manager_dir)
-    run_id = _run_id(args["flowcell"])
-    from_stage = args["from_stage"]
+    source_path = _initialize_source(args["flowcell"], cfg)
+    run_id = (
+        source_path.resolve().name if str(args["flowcell"]) in {".", ".."} else source_path.name
+    )
     force = args.get("force", False)
     dry_run = args.get("dry_run", False)
     refresh_inputs = args.get("refresh_inputs", False)
@@ -316,11 +404,7 @@ def initialize_flowcell(**args):
         )
 
     output_path = resolve_output_path(run_id, run_id, cfg)
-    source_path = locate_source_run(run_id, cfg)
-    if source_path is None:
-        raise StateConflictError(
-            f"Cannot initialize {run_id}: instrument source directory is unavailable"
-        )
+    _require_separate_source(source_path, output_path)
     if from_stage == "analysis":
         recognized, detail = validate_restored_fastqs(output_path)
         if not recognized:
@@ -344,21 +428,38 @@ def initialize_flowcell(**args):
     }
     paths = _cleanup_for_state(state, from_stage)
     _print_plan("Initialize", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
-    preflight.require_valid_inputs(source_path, output_path, refresh=refresh_inputs)
+    selected, _result = preflight.require_valid_inputs(
+        source_path, output_path, refresh=refresh_inputs
+    )
+    correction = None
+    if indexes:
+        correction = index_corrections.plan(
+            store, run_id, selected, source_path, indexes, reason=reason
+        )
+        index_corrections.print_plan(correction)
+    index_corrections.print_orientation_preview(state, selected, correction, refresh=refresh_inputs)
     if dry_run:
         return state
     if not _confirm(f"Initialize {run_id}", force):
-        print("Skipping...")
+        print("Skipped; SampleSheet unchanged.")
         return state
 
     with store.execution_lease(run_id):
         if store.exists(run_id):
             raise StateConflictError(f"State was created for {run_id}; inspect and retry")
+        _require_separate_source(source_path, output_path)
+        if not source_path.is_dir():
+            raise StateConflictError(f"Input directory is no longer available: {source_path}")
         if _cleanup_for_state(state, from_stage) != paths:
             raise StateConflictError("Output paths changed after the preview; inspect and retry")
         selected, _result = preflight.require_valid_inputs(
             source_path, output_path, refresh=refresh_inputs
         )
+        if correction is not None:
+            current = index_corrections.plan(
+                store, run_id, selected, source_path, indexes, reason=reason
+            )
+            index_corrections.verify_plan(correction, current)
         # Persist preparing before copies or destructive work; a partial operation
         # must never become eligible for the daemon to execute automatically.
         store.create(state)
@@ -366,6 +467,8 @@ def initialize_flowcell(**args):
         result = preflight.validate_selection(effective)
         if not result.ok:
             raise preflight.PreflightValidationError(result)
+        if correction is not None:
+            index_corrections.apply(store, run_id, correction)
         apply_cleanup(paths)
         return store.queue(run_id, from_stage)
 
@@ -582,6 +685,15 @@ def show_flowcell(**args):
     run_id = _run_id(args["flowcell"])
     if store.exists(run_id):
         state = store.recover_interrupted(run_id)
+        try:
+            output = resolve_output_path(state["output_path"], run_id, cfg)
+            orientation = index_corrections.current_orientation(
+                {**state, "output_path": str(output)}
+            )
+        except StateError as error:
+            # Keep show useful for diagnosing a mismatched recorded output path.
+            orientation = {"error": str(error)}
+        state = {**state, "index_orientation": orientation}
         print(json.dumps(state, indent=2, sort_keys=True))
         return state
     legacy = _legacy_row_for_run(cfg, run_id)
@@ -707,6 +819,20 @@ def pretty_print(df):
         print(df.to_string(index=False))
 
 
+def _add_index_options(parser):
+    parser.add_argument(
+        "--reverse-complement-index1",
+        action="store_true",
+        help="Toggle index1 (index column) before a demultiplexing restart.",
+    )
+    parser.add_argument(
+        "--reverse-complement-index2",
+        action="store_true",
+        help="Toggle index2 before a demultiplexing restart.",
+    )
+    parser.add_argument("--tom-mode", action="store_true", help=argparse.SUPPRESS)
+
+
 def main():
     _remove_executable_directory_from_import_path()
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -737,6 +863,7 @@ def main():
     parser_rerun.add_argument("--force", action="store_true")
     parser_rerun.add_argument("--reason")
     parser_rerun.add_argument("--refresh-inputs", action="store_true")
+    _add_index_options(parser_rerun)
 
     parser_clean = subparsers.add_parser(
         "clean-fastqs", help="Remove delivered FASTQs while retaining archives and other products."
@@ -751,20 +878,23 @@ def main():
     )
 
     parser_initialize = subparsers.add_parser(
-        "initialize", help="Explicitly initialize ambiguous existing output."
+        "initialize", help="Prepare and queue a run from its input directory."
     )
     parser_initialize.set_defaults(func=initialize_flowcell)
-    parser_initialize.add_argument("flowcell", help="Run ID.")
+    parser_initialize.add_argument(
+        "flowcell", help="Input directory or run ID in configured instrument roots."
+    )
     parser_initialize.add_argument(
         "--from",
         dest="from_stage",
-        required=True,
+        default="demultiplexing",
         choices=["demultiplexing", "analysis"],
     )
     parser_initialize.add_argument("--dry-run", action="store_true")
     parser_initialize.add_argument("--force", action="store_true")
     parser_initialize.add_argument("--reason")
     parser_initialize.add_argument("--refresh-inputs", action="store_true")
+    _add_index_options(parser_initialize)
 
     parser_list = subparsers.add_parser("list", help="List state-backed and legacy flowcells.")
     parser_list.set_defaults(

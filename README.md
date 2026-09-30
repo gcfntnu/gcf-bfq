@@ -693,7 +693,8 @@ flowcell-manager rerun RUN_ID --from demultiplexing
 flowcell-manager rerun RUN_ID --from analysis --reason "repeat workflow"
 flowcell-manager rerun RUN_ID --from reporting
 flowcell-manager rerun RUN_ID --from finalization
-flowcell-manager initialize RUN_ID --from demultiplexing
+flowcell-manager initialize RUN_ID
+flowcell-manager initialize /instruments/RUN_ID --reverse-complement-index2
 flowcell-manager initialize RUN_ID --from analysis
 flowcell-manager clean-fastqs RUN_ID --dry-run
 flowcell-manager clean-fastqs RUN_ID
@@ -711,9 +712,89 @@ the absolute path before cleanup; a dry run or declined confirmation leaves the
 record unchanged. Other relative paths, conflicting absolute locations, and
 unavailable output directories for downstream reruns are rejected with diagnostics.
 Equivalent existing paths (such as bind mounts or symlinks) are accepted. Passing
-a full flowcell path identifies the run; it does not override its output location.
+a full flowcell output path to `rerun` identifies the run; it does not override
+its output location. `initialize` instead accepts an input path, as described below.
 `--refresh-inputs` explicitly recopies the sample sheet and submission form
 from the instrument source; without it, output-side run inputs are preserved.
+
+### Initialize a run and correct index orientation
+
+`initialize` copies the instrument inputs into the configured output directory,
+creates run state and queues processing. With no `--from`, it starts from
+`demultiplexing`. An explicit input directory selects that exact source:
+
+```console
+flowcell-manager initialize /import-kista/RUN_ID --dry-run
+flowcell-manager initialize /import-kista/RUN_ID --reverse-complement-index2
+```
+
+If an uninitialized output directory already contains curated input files, those
+still take precedence. Use `--refresh-inputs` to explicitly replace them from the
+selected source before any requested toggle.
+
+A bare `RUN_ID` searches the configured instrument roots. If more than one root
+contains the run, supply its full input path. Initialization retains the existing
+prepare-and-queue behavior: it does not add completion-marker checks. Use it when
+you intend to queue the selected run for processing. An existing state-backed run
+must use `rerun`, rather than another `initialize` that replaces its inputs.
+
+For a demultiplexing restart, select either index or both:
+
+```console
+flowcell-manager rerun RUN_ID --from demultiplexing --reverse-complement-index1 --dry-run
+flowcell-manager rerun RUN_ID --from demultiplexing --reverse-complement-index2
+flowcell-manager rerun RUN_ID --from demultiplexing --reverse-complement-index1 --reverse-complement-index2
+```
+
+The same flags are available on `initialize`. They are only valid when the
+selected restart boundary is `demultiplexing`. Index1 means the `index` column;
+index2 means `index2`. **Every explicit request toggles the current output-side
+SampleSheet.** Repeating the same request reverses it again; it is not an
+idempotent instruction to reach a particular orientation. Ordinary reruns preserve
+the effective sheet. With `--refresh-inputs`, the source inputs are copied first,
+then any requested toggles are applied to that fresh sheet.
+
+Every initialization and rerun preview shows both indexes' **current output
+orientation** and their **orientation after confirmation**, relative to the
+recorded source SampleSheet. This includes ordinary reruns without correction
+flags, which explicitly show that orientation is unchanged. Refresh previews
+compare the existing output sheet with the proposed refreshed/toggled sheet;
+fresh initialization identifies the output sheet as not yet prepared. Declining
+confirmation explicitly reports that the SampleSheet is unchanged.
+
+The output-side sheet is the current effective input; it may have been changed
+since the last successful attempt. Reruns do not automatically restore an older
+successful attempt's sheet. `flowcell-manager show RUN_ID`
+provides a live comparison for both indexes. Matching the source means original
+orientation, not necessarily the correct orientation for demultiplexing. Mixed or
+otherwise edited values, ambiguous sample matching, and an unavailable source are
+reported without guessing. An unavailable reference does not block an otherwise
+valid correction. If the source sheet is subsequently edited, the live comparison
+can differ from the reference recorded by an earlier correction.
+
+Corrections support comma-delimited UTF-8 SampleSheets (with an optional BOM),
+including quoted fields and `[Data]` or `[BCLConvert_Data]` sections. Only selected
+index values change; quoting, line endings, other fields and settings such as
+`ReverseComplementIndexP5/P7` are retained. IUPAC DNA bases are accepted with case
+preserved. Empty index cells are left untouched; a selected column with no values
+is rejected. All selected corrections are validated before the sheet is replaced,
+so an invalid index2 cannot leave index1 half-corrected.
+
+Before replacement, the effective sheet is backed up under
+`<manager_dir>/input-history/RUN_ID/<operation_id>.SampleSheet.csv`. Backups live
+outside the flowcell output tree and survive rerun/archive cleanup. State retains
+an `index_corrections` history with before/after checksums and the recorded source
+comparison. Instrument inputs are never modified. Dry runs and declined prompts
+leave files, backups and state unchanged; `--force` only skips the prompt and does
+not bypass a live processing lease.
+
+If preparation is interrupted after a toggle was committed, use an ordinary
+`rerun RUN_ID --from demultiplexing` to finish preparation without toggling again.
+Supplying the flag again is an intentional new toggle of the current sheet. See
+[the index orientation integration checks](docs/index-orientation-integration-tests.md)
+for operator verification and interruption scenarios.
+
+### Restart boundaries
 
 All boundaries preserve retained analysis snapshots in `provenance/`.
 The supported restart boundaries invalidate these products:
