@@ -1,9 +1,12 @@
 """Cleanup safety and restoration checks, using isolated output/state trees."""
 
+import json
+
 import flowcell_manager.flowcell_manager as manager
 import pytest
 
-from bcl2fastq_pipeline.state import FlowcellStateStore, StateConflictError
+from bcl2fastq_pipeline.state import ExecutionLeaseError, FlowcellStateStore, StateConflictError
+from test_output_paths import completed_bare_path_state
 from test_state_integration import (
     RUN_ID,
     completed_state,
@@ -12,7 +15,7 @@ from test_state_integration import (
     write_inputs,
 )
 
-from bcl2fastq_pipeline import fastq_cleanup
+from bcl2fastq_pipeline import cli, fastq_cleanup, notifications
 
 PROJECT = "GCF-2026-001"
 
@@ -83,7 +86,7 @@ def test_preview_confirmation_and_repeat(delivered, monkeypatch, capsys, absolut
     assert result["status"] == "completed"
     assert result["fastq_cleanup"]["status"] == "completed"
     assert set(result["fastq_cleanup"]["required_files"]) == set(files)
-    original = __import__("json").loads(before)
+    original = json.loads(before)
     for key in ("stages", "completed_at", "attempts", "delivery_notifications"):
         assert result[key] == original[key]
     repeated = manager.clean_fastqs(flowcell=RUN_ID, force=True)
@@ -335,3 +338,103 @@ def test_file_replaced_after_preview_is_not_removed(delivered, monkeypatch):
     assert all(
         (output / name).read_bytes() == b"changed file" for name in fastq_cleanup.plan(output)
     )
+
+
+@pytest.mark.parametrize("notification_status", ["pending", "failed"])
+def test_cleanup_preserves_notifications_and_retry_works_without_fastqs(
+    delivered, monkeypatch, notification_status
+):
+    # Reuse the notification-state fixture with a fresh subdirectory.
+    _cfg, _store, original_output = delivered
+    root = original_output.parent.parent / "notifications"
+    root.mkdir()
+    cfg, store, output = completed_bare_path_state(root, monkeypatch)
+    (output / f"{PROJECT}_260918.7za").write_bytes(b"archive")
+    (output / f"md5sum_{PROJECT}_260918_archive.txt").write_text("checksum")
+
+    def update(state):
+        for entry in state["delivery_notifications"]:
+            entry["status"] = notification_status
+        return state
+
+    before = store.mutate(RUN_ID, update)
+    result = manager.clean_fastqs(flowcell=RUN_ID, force=True)
+    assert result["delivery_notifications"] == before["delivery_notifications"]
+    assert result["output_path"] == str(output)
+    assert not fastq_cleanup.plan(output)
+    sent = []
+
+    def send(_cfg, entry):
+        assert store.execution_active(RUN_ID)
+        sent.append(entry["id"])
+        return True
+
+    monkeypatch.setattr(notifications, "send_notification", send)
+    manager.retry_notifications(flowcell=RUN_ID, kind="finalized")
+    assert sent == ["finalized:1"]
+    assert store.read(RUN_ID)["status"] == "completed"
+    assert store.read(RUN_ID)["delivery_notifications"][-1]["status"] == "sent"
+
+
+def test_cleanup_excludes_competing_manager_and_daemon_actions(delivered, monkeypatch):
+    cfg, store, output = delivered
+    original = fastq_cleanup.unlink_fastq
+    monkeypatch.setattr(manager.preflight, "require_valid_inputs", lambda *a, **k: (None, None))
+
+    def competing(root_fd, name, info):
+        assert store.execution_active(RUN_ID)
+        with pytest.raises(ExecutionLeaseError):
+            manager.archive_flowcell(flowcell=RUN_ID, force=True)
+        with pytest.raises(ExecutionLeaseError):
+            manager.rerun_flowcell(flowcell=RUN_ID, from_stage="demultiplexing", force=True)
+        with pytest.raises(ExecutionLeaseError):
+            manager.retry_notifications(flowcell=RUN_ID)
+        with pytest.raises(StateConflictError, match="active execution lease"):
+            manager.clean_fastqs(flowcell=RUN_ID, force=True)
+        # The daemon must not schedule this completed run as cleanup progresses.
+        assert cli.candidate_flowcells(cfg, store) == []
+        return original(root_fd, name, info)
+
+    monkeypatch.setattr(fastq_cleanup, "unlink_fastq", competing)
+    manager.clean_fastqs(flowcell=RUN_ID, force=True)
+    assert not fastq_cleanup.plan(output)
+
+
+def test_execution_starting_during_confirmation_blocks_cleanup(delivered, monkeypatch):
+    _cfg, store, output = delivered
+    before = state_bytes(store)
+    lease = store.execution_lease(RUN_ID)
+
+    def confirm(_prompt):
+        lease.__enter__()
+        return "yes"
+
+    monkeypatch.setattr("builtins.input", confirm)
+    try:
+        with pytest.raises(ExecutionLeaseError):
+            manager.clean_fastqs(flowcell=RUN_ID)
+        assert state_bytes(store) == before
+        assert fastq_cleanup.plan(output)
+    finally:
+        lease.__exit__(None, None, None)
+
+
+def test_truncated_restoration_is_rejected(delivered):
+    _cfg, store, output = delivered
+    saved = {name: (output / name).read_bytes() for name in fastq_cleanup.plan(output)}
+    manager.clean_fastqs(flowcell=RUN_ID, force=True)
+    for name, data in saved.items():
+        (output / name).write_bytes(data[:-1])
+    with pytest.raises(StateConflictError, match="size-mismatched"):
+        manager.rerun_flowcell(flowcell=RUN_ID, from_stage="finalization", force=True)
+    assert store.read(RUN_ID)["status"] == "completed"
+
+
+def test_legacy_inventory_does_not_substitute_for_finalization(delivered):
+    cfg, store, output = delivered
+    store.state_path(RUN_ID).unlink()
+    manager.add_flowcell(project=PROJECT, path=str(output))
+    with pytest.raises(StateConflictError, match="legacy inventory alone"):
+        manager.clean_fastqs(flowcell=RUN_ID, force=True)
+    assert not store.exists(RUN_ID)
+    assert fastq_cleanup.plan(output)

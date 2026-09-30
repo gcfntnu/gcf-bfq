@@ -336,7 +336,6 @@ def initialize_flowcell(**args):
         "requested_at": datetime.datetime.now(datetime.UTC).isoformat(),
         "refresh_inputs": bool(refresh_inputs),
     }
-    fastq_cleanup.require_restored(state, output_path, from_stage)
     paths = _cleanup_for_state(state, from_stage)
     _print_plan("Initialize", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
     preflight.require_valid_inputs(source_path, output_path, refresh=refresh_inputs)

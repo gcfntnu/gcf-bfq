@@ -143,6 +143,10 @@ def execute(store, run_id, output, files):
     except BaseException as error:
         record["status"] = "interrupted"
         record["errors"]["operation"] = str(error) or type(error).__name__
+        if isinstance(error, OSError):
+            raise StateConflictError(
+                f"FASTQ cleanup interrupted; inspect state and retry: {error}"
+            ) from error
         raise
     else:
         record["status"] = "partial" if record["errors"] else "completed"
