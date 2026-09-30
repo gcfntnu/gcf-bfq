@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
 
+from bcl2fastq_pipeline import processing_times
 from bcl2fastq_pipeline.config import parse_custom_options
 
 SCHEMA_VERSION = 1
@@ -217,6 +218,7 @@ def new_state(  # noqa: PLR0913
         "restart_request": None,
         "archive": {"status": "active", "archived_at": None},
         "attempts": [],
+        "processing_timings": {},
     }
     validate_state(state)
     return state
@@ -274,6 +276,10 @@ def validate_state(state: dict) -> None:
     for stage, detail in state["stages"].items():
         if not isinstance(detail, dict) or detail.get("status") not in STAGE_STATUSES:
             raise StateValidationError(f"Invalid stage state for {stage}")
+    try:
+        processing_times.validate(state.get("processing_timings", {}))
+    except ValueError as error:
+        raise StateValidationError(str(error)) from error
     # Optional in v1: loading an older document must not invent mail to send.
     if "delivery_notifications" in state:
         _validate_delivery_notifications(state["delivery_notifications"])
@@ -616,6 +622,7 @@ class FlowcellStateStore:
         def update(state: dict) -> dict:
             if output_path is not None:
                 state["output_path"] = str(output_path)
+            processing_times.invalidate(state, start_stage)
             _invalidate_delivery_notifications(state, start_stage, f"Restart from {start_stage}")
             if start_stage == "demultiplexing" and state.get("sequencing_qc"):
                 state.setdefault("sequencing_qc_history", []).append(state.pop("sequencing_qc"))
@@ -643,6 +650,7 @@ class FlowcellStateStore:
             if any(item["status"] == "pending" for item in state.get("index_corrections", [])):
                 raise StateConflictError("Recover pending index toggle history before queueing")
             validate_restart_boundary(state, start_stage)
+            processing_times.invalidate(state, start_stage)
             _invalidate_delivery_notifications(state, start_stage, f"Restart from {start_stage}")
             if start_stage == "demultiplexing" and state.get("sequencing_qc"):
                 state.setdefault("sequencing_qc_history", []).append(state.pop("sequencing_qc"))
@@ -882,6 +890,7 @@ class FlowcellStateStore:
                 f"Processing failed at {stage}",
                 preserve_sequencing=bool(state.get("sequencing_qc")),
             )
+            processing_times.interrupt(state)
             state["status"] = "interrupted" if interrupted else "failed"
             state["current_stage"] = stage
             state["failed_at"] = now
