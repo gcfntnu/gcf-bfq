@@ -37,7 +37,7 @@ Install the Python application from the repository root with the in-house
 
 ```console
 python -m pip install . \
-  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/bdd94a1d944120ac8a096ea8876c0de98dd51ab3.zip"
+  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/master.zip"
 ```
 
 The installation provides these commands:
@@ -56,28 +56,71 @@ the run. See [input validation and correction](docs/input-preflight.md) and the
 The legacy executable names `bfq.py` and `flowcell_manager.py` are not
 installed.
 
-## Development and production releases
+## Versions and production updates
 
-`bfq-dev` is the default development branch; `master` is the production branch.
+BFQ uses a generation number to mark substantial changes in how the system
+operates. **BFQ 2** marks the transition to the state-based operational model
+and its associated management capabilities. Generation changes are infrequent
+and discretionary: routine fixes, features, and improvements do not require an
+increment. There is no strict major/minor/patch policy. Git commits identify
+exact source revisions.
+
+`pyproject.toml` defines the package version. The installed package supplies the
+version reported by all three commands, without loading site configuration or
+starting processing:
+
+```console
+bfq --version
+fm --version
+flowcell-manager --version
+```
+
+Each prints `BFQ 2`. The flowcell state schema has its own independent version.
+
+`bfq-dev` remains the default branch for development and integration testing.
+A normal clone gets this upstream development code:
+
+```bash
+git clone https://github.com/gcfntnu/gcf-bfq.git
+```
+
+Select `master` explicitly for stable production code:
+
+```bash
+git clone --branch master https://github.com/gcfntnu/gcf-bfq.git
+```
+
+Install or build directly from the selected checkout using the normal
+instructions. No release archive, release tag, or GitHub Release is required.
+Tested changes are promoted to `master` when ready, without waiting for a
+bundled release:
 
 1. Create an issue branch from current `bfq-dev` (including when using an issue's
    **Development** section), and target its feature PR at `bfq-dev`. Link the issue
    with `Closes #NUMBER` in the PR description so merging closes it.
 2. Run the relevant automated and integration checks, then merge the feature PR.
-3. When the tested development changes are ready for production, open a promotion
-   PR from `bfq-dev` to `master` with a short summary of the included changes.
-   Review and merge that PR deliberately before building the production image.
+3. When tested changes are ready for production, open a promotion PR from
+   `bfq-dev` to `master` with a short summary of changes and testing. Review and
+   merge it deliberately before building the production image. Use a regular
+   merge to preserve shared history between these long-lived branches.
 4. From the updated `master` checkout, build and push with the existing script,
-   manually choosing the next `prod-N` tag. For example, **if the previous release
-   was `prod-60`**, the next release is:
+   manually choosing the next `prod2-N` tag. The first production build of this
+   generation uses:
 
    ```bash
-   bash build-tag-push.sh prod prod-61
+   bash build-tag-push.sh prod prod2-1
    ```
 
-The script builds and immediately pushes `gcfntnu/bfq:prod-61` in this example;
-it does not deploy the image. Release numbers are selected manually. No separate
-release manifest or coordinated version increment for supporting tools is required.
+The script builds and immediately pushes `gcfntnu/bfq:prod2-1` in this example;
+it does not deploy the image. Subsequent production builds use `prod2-2`,
+`prod2-3`, and so on. Never reuse a published production tag. The image number
+identifies a build of the complete environment, so it also increments when only
+supporting tools, workflows, or the base image change. BFQ can remain version
+`2` across many builds. The build mode remains `prod`.
+
+Supporting repositories evolve independently. No separate release manifest or
+coordinated version increment is required; their production branches must supply
+the dependencies expected by the BFQ version being built.
 
 Production sources are selected explicitly, independently of repository defaults:
 
@@ -97,7 +140,9 @@ The **Analysis pipeline** entry in each project QC report records the
 `gcf-workflows` commit that produced that analysis. This is the primary analysis
 version for project deliverables. BFQ JSON `versions` describes the current
 attempt's execution environment; `attempts[].versions` retains that metadata
-for earlier attempts.
+for earlier attempts. Its `bfq` value comes from installed package metadata,
+independently of any site labels in `[Version]`. Existing historical records
+are preserved; new runs and attempts record the installed version.
 
 `rerun --from analysis` executes the complete analysis workflow using the installed
 workflow checkout and regenerates project reports before reporting/finalization.
@@ -230,7 +275,8 @@ finished_to = sequencing@example.org
 error_to = pipeline-errors@example.org, sequencing-oncall@example.org
 
 [Version]
-pipeline = 0.3.1
+; Optional site labels, preserved in configuration snapshots.
+; The installed BFQ version comes from package metadata, not this section.
 
 [Commands]
 multiqc_options = -f -q --interactive
@@ -527,9 +573,15 @@ Before rollout:
 
 ### `[Version]`
 
-This section is optional. BFQ preserves all entries in the configuration
-snapshot written to the run output. It is suitable for site-managed release or
-deployment identifiers; the current pipeline does not branch on these values.
+This section is optional and contains site-managed labels only. BFQ preserves
+all entries in the configuration snapshot written to the run output, but does
+not use them to identify the installed application or select processing behavior.
+For example, a site can set `deployment = local-label` when useful.
+
+The old `pipeline = 0.3.1` setting can be removed. Existing configurations remain
+readable and their labels remain in snapshots, but `pipeline` no longer overrides
+the installed BFQ version in new run/attempt metadata. Use `bfq --version` or
+`fm --version` to inspect the application version.
 
 ### `[Commands]`
 
