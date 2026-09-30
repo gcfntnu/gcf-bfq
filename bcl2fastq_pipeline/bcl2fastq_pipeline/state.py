@@ -493,11 +493,18 @@ class FlowcellStateStore:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def execution_active(self, run_id: str) -> bool:
+        """Probe an existing lease without creating or changing any files."""
         try:
-            with self.execution_lease(run_id):
-                return False
-        except ExecutionLeaseError:
-            return True
+            handle = self._execution_path(run_id).open("r")
+        except FileNotFoundError:
+            return False
+        with handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            return False
 
     def exists(self, run_id: str) -> bool:
         return self.state_path(run_id).exists()
@@ -609,6 +616,8 @@ class FlowcellStateStore:
             raise StateValidationError(f"Unsupported stage: {start_stage}")
 
         def update(state: dict) -> dict:
+            if any(item["status"] == "pending" for item in state.get("index_corrections", [])):
+                raise StateConflictError("Recover pending index toggle history before queueing")
             validate_restart_boundary(state, start_stage)
             _invalidate_delivery_notifications(state, start_stage, f"Restart from {start_stage}")
             if start_stage == "demultiplexing" and state.get("sequencing_qc"):
@@ -663,6 +672,7 @@ class FlowcellStateStore:
                     "outcome": "running",
                     "versions": copy.deepcopy(state["versions"]),
                     "failure": None,
+                    "index_correction_id": request.get("index_correction_id"),
                 }
             )
             return state
