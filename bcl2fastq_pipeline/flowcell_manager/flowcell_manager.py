@@ -26,7 +26,7 @@ from bcl2fastq_pipeline.state import (
     validate_restored_fastqs,
 )
 
-from bcl2fastq_pipeline import analysis_snapshots, notification_delivery, preflight
+from bcl2fastq_pipeline import analysis_snapshots, fastq_cleanup, notification_delivery, preflight
 
 pd.set_option("display.max_rows", 5000)
 pd.set_option("display.max_columns", 12)
@@ -246,6 +246,7 @@ def rerun_flowcell(**args):
     validate_restart_boundary(state, from_stage)
     output_path = resolve_output_path(state["output_path"], run_id, cfg)
     state = {**state, "output_path": str(output_path)}
+    fastq_cleanup.require_restored(state, output_path, from_stage)
     paths = _cleanup_for_state(state, from_stage)
     _print_plan("Rerun", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
     if from_stage in {"demultiplexing", "analysis"} or refresh_inputs:
@@ -261,6 +262,7 @@ def rerun_flowcell(**args):
             raise StateConflictError("Run changed while preparing the command; inspect and retry")
         if _cleanup_for_state(state, from_stage) != paths:
             raise StateConflictError("Output paths changed after the preview; inspect and retry")
+        fastq_cleanup.require_restored(state, output_path, from_stage)
         selected = None
         if from_stage in {"demultiplexing", "analysis"} or refresh_inputs:
             selected, _result = preflight.require_valid_inputs(
@@ -380,6 +382,56 @@ def validate_flowcell(**args):
     print(f"Input validation: {run_id}")
     _selection, result = preflight.require_valid_inputs(
         source_path, output_path, refresh=args.get("refresh_inputs", False)
+    )
+    return result
+
+
+def clean_fastqs(**args):
+    cfg = get_cfg()
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    run_id = _run_id(args["flowcell"])
+    if not store.exists(run_id):
+        raise StateConflictError(
+            "clean-fastqs requires state-backed completed finalization; legacy inventory alone "
+            "does not establish eligibility"
+        )
+    state = store.read(run_id)
+    output = resolve_output_path(state["output_path"], run_id, cfg)
+    resolve_output_path(args["flowcell"], run_id, cfg)
+    if store.execution_active(run_id):
+        raise StateConflictError(f"{run_id} has an active execution lease")
+    files = fastq_cleanup.plan(output)
+    retained = fastq_cleanup.required_archives(state, output, files)
+    print(f"Clean FASTQs: {run_id}\nOutput directory: {output}")
+    print("FASTQs selected for deletion:")
+    for name, info in files.items():
+        print(f"  {output / name}" + (" (symlink only)" if info["symlink"] else ""))
+    if not files:
+        print("  (none)")
+    print("Required delivery archives/checksums retained:")
+    for path in retained:
+        print(f"  {path}")
+    size = sum(info["size"] for info in files.values() if not info["symlink"])
+    print(
+        f"Estimated recoverable space: {size:,} bytes ({size / 1024**3:.2f} GiB; excludes symlink targets)"
+    )
+    if args.get("dry_run", False):
+        return state
+    if not _confirm(f"Delete the selected FASTQs for {run_id}", args.get("force", False)):
+        print("Skipping...")
+        return state
+    with store.execution_lease(run_id):
+        current = store.read(run_id)
+        if current["updated_at"] != state["updated_at"]:
+            raise StateConflictError("Run changed while preparing the command; inspect and retry")
+        resolve_output_path(current["output_path"], run_id, cfg)
+        resolve_output_path(args["flowcell"], run_id, cfg)
+        if fastq_cleanup.plan(output) != files:
+            raise StateConflictError("FASTQs changed after the preview; inspect and retry")
+        fastq_cleanup.required_archives(current, output, files)
+        result = fastq_cleanup.execute(store, run_id, output, files)
+    print(
+        f"Removed {len(result['fastq_cleanup']['removed_files'])} FASTQ files/links; processing remains completed."
     )
     return result
 
@@ -540,6 +592,9 @@ def status_flowcell(**args):
     if store.exists(run_id):
         state = store.recover_interrupted(run_id)
         print(f"{run_id}: {state['status']} ({state['current_stage']})")
+        cleanup = state.get("fastq_cleanup")
+        if cleanup:
+            print(f"  FASTQ cleanup: {cleanup['status']} (started {cleanup['started_at']})")
         results = state["stages"]["finalization"]["metadata"].get("analysis_snapshots", {})
         retained = state.get("analysis_snapshots", {})
         for project in sorted(results.keys() | retained.keys()):
@@ -646,6 +701,18 @@ def main():
     parser_rerun.add_argument("--force", action="store_true")
     parser_rerun.add_argument("--reason")
     parser_rerun.add_argument("--refresh-inputs", action="store_true")
+
+    parser_clean = subparsers.add_parser(
+        "clean-fastqs", help="Remove delivered FASTQs while retaining archives and other products."
+    )
+    parser_clean.set_defaults(func=clean_fastqs)
+    parser_clean.add_argument("flowcell", help="Run ID or flowcell output path.")
+    parser_clean.add_argument("--dry-run", action="store_true")
+    parser_clean.add_argument(
+        "--force",
+        action="store_true",
+        help="Confirm deletion non-interactively; retain all eligibility checks.",
+    )
 
     parser_initialize = subparsers.add_parser(
         "initialize", help="Explicitly initialize ambiguous existing output."

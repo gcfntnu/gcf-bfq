@@ -608,6 +608,8 @@ flowcell-manager rerun RUN_ID --from reporting
 flowcell-manager rerun RUN_ID --from finalization
 flowcell-manager initialize RUN_ID --from demultiplexing
 flowcell-manager initialize RUN_ID --from analysis
+flowcell-manager clean-fastqs RUN_ID --dry-run
+flowcell-manager clean-fastqs RUN_ID
 flowcell-manager archive RUN_ID
 flowcell-manager list-processed
 ```
@@ -670,6 +672,58 @@ queued only after cleanup succeeds. This prevents partial destructive work from
 being mistaken for a runnable state. Rerun and archive cleanup acquire the same execution lease as processing and
 notification retries. A live lease cannot be overridden with `--force`; stop the
 active process before retrying the command. `--force` skips confirmation only.
+
+`clean-fastqs` is an earlier, narrower space-reclamation operation for delivered
+data. It recursively removes regular files and file symlinks ending in `.fastq.gz`,
+`.fq.gz`, `.fastq` or `.fq`, including nested project and Undetermined reads. It
+preserves archives, checksum manifests, reports, inputs, configurations, encryption
+passwords and all other non-FASTQ products. It leaves directories in place, never
+traverses directory symlinks, and unlinks FASTQ symlinks without deleting targets.
+The configured flowcell output root itself must be a real directory, not a symlink;
+validated argument aliases may identify that directory.
+
+```console
+flowcell-manager clean-fastqs RUN_ID --dry-run
+flowcell-manager clean-fastqs /mnt/bfq/output/RUN_ID/
+flowcell-manager clean-fastqs RUN_ID --force
+```
+
+The command requires state-backed **completed processing and finalization**, plus
+`<project>_<run-date>.7za` and `md5sum_<project>_<run-date>_archive.txt` for every
+known project. Legacy inventory alone is not sufficient proof of finalization;
+legacy-only runs are rejected rather than migrated or marked complete implicitly.
+It checks file existence only: it does not hash files, list archive contents,
+extract archives or test archive integrity. Delivery/redundancy remain operational
+prerequisites, not new automated delivery tracking. Pending/failed notifications
+do not prevent cleanup, and retained notifications can still be retried.
+
+Preview shows the resolved output directory, selected files, required retained
+archive/checksum pairs and estimated space. The estimate sums regular file lengths,
+excludes symlink targets, and may differ from physical disk savings (hard links,
+compression or snapshots). A dry run or declined confirmation leaves output and
+state unchanged. `--force` only answers confirmation; it never bypasses eligibility
+or execution locking. Eligibility and the file plan are rechecked under the same
+per-run execution lease used by the daemon and other manager commands.
+
+Cleanup records its selected paths before deletion in `fastq_cleanup` state, then
+records completion, removed paths and individual errors without changing processing
+completion or notification state. `show` gives the full record; `status` displays
+its outcome. Partial failures can be retried with the same command. An abrupt process
+kill may leave `in_progress`; its persisted manifest still protects reruns, and a
+repeat cleanup safely reconciles remaining files. Repeating completed cleanup is
+harmless.
+
+Analysis, reporting and finalization reruns are refused while any previously
+selected FASTQ is missing or a restored regular file differs from its recorded
+size. Restore all selected FASTQs (including Undetermined reads) from the retained
+delivery archives to their original paths before queueing those reruns. This is
+an existence/size check, not integrity verification. **Keep the archives until
+restoration succeeds**: those reruns invalidate delivery archives when queued.
+Alternatively, rerun from demultiplexing to regenerate reads from instrument data;
+a successful demultiplexing stage clears the old restoration requirement.
+
+See [clean-fastqs integration checks](docs/clean-fastqs-integration-tests.md) for
+server-side validation before merging.
 
 `archive` remains separate from pipeline finalization. It removes delivery data
 from the output tree while preserving canonical JSON state and retained
