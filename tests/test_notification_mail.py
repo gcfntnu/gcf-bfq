@@ -71,8 +71,10 @@ def smtp(monkeypatch):
 @pytest.fixture
 def processed(mail_cfg, monkeypatch):
     entry = entry_for(mail_cfg, "processed")
+    # Pending notifications from before the split retain their original contents.
+    entry["payload"].pop("email_version")
     project = "GCF-2026-043"
-    (mail_cfg.output_path / "Stats").mkdir()
+    (mail_cfg.output_path / "Stats").mkdir(exist_ok=True)
     (mail_cfg.output_path / f"multiqc_{project}_260918.html").write_text("<html>Analysis</html>")
     (mail_cfg.output_path / "Stats" / f"sequencer_stats_{project}.html").write_text(
         "<html>Sequencer</html>"
@@ -131,6 +133,7 @@ def test_processed_mail_preserves_metrics_and_attachments(mail_cfg, processed, m
 
     monkeypatch.setattr(misc, "parseSampleSheetMetrics", sample_metrics)
     message = notifications.build_message(mail_cfg, processed)
+    assert message["Subject"] == "[bcl2fastq_pipeline] GCF-2026-043 processed"
     html = message.get_body(preferencelist=("html",)).get_content()
     for text in ("Sample groups", "Flowcell metrics", "Disk summary", "Saved User", "2x150"):
         assert text in html
@@ -353,4 +356,163 @@ def test_unsupported_notification_kind_fails_before_delivery(mail_cfg, smtp):
     entry["kind"] = "early-qc"
     with pytest.raises(ValueError, match="Unsupported completion notification"):
         notifications.send_notification(mail_cfg, entry)
+    smtp[0].assert_not_called()
+
+
+@pytest.fixture
+def sequencing(mail_cfg):
+    report = mail_cfg.output_path / "Stats" / "sequencing_qc" / "sequencing_qc.html"
+    report.parent.mkdir(parents=True)
+    report.write_text("<html>Early sequencing QC</html>")
+    summary = {
+        "projects": ["GCF-2026-043"],
+        "report_path": str(report),
+        "summary_text": "Planned samples: 3\nR1 Q30: 93.2%; Undetermined: 1.8%\nRead geometry: 2x150",
+        "summary_html": "Planned samples: 3<br>R1 Q30: 93.2%; Undetermined: 1.8%<br>Read geometry: 2x150",
+    }
+    return {
+        "id": "sequencing:1",
+        "kind": "sequencing",
+        "created_at": "2026-09-30T07:00:00+00:00",
+        "payload": notifications.make_payload(
+            mail_cfg, "sequencing", run_time=timedelta(minutes=12), sequencing_qc=summary
+        ),
+    }
+
+
+def test_early_qc_requires_no_excel_analysis_or_stats_json(mail_cfg, sequencing, monkeypatch):
+    forbidden = Mock(side_effect=AssertionError("Early email attempted analysis-dependent work"))
+    monkeypatch.setattr(misc, "parseSampleSheetMetrics", forbidden)
+    monkeypatch.setattr(misc, "analysisSampleMetrics", forbidden)
+    monkeypatch.setattr(misc, "getFCmetricsImproved", forbidden)
+    monkeypatch.setattr(afterFastq, "get_read_geometry", forbidden)
+    monkeypatch.setattr(afterFastq, "get_project_dirs", forbidden)
+    assert not mail_cfg.run.sample_sheet.exists()
+    assert not mail_cfg.run.sample_submission_form.exists()
+    assert not (mail_cfg.output_path / "Stats" / "Stats.json").exists()
+    message = notifications.build_message(mail_cfg, sequencing)
+    assert "Demultiplexing complete — sequencing QC" in message["Subject"]
+    assert "analyst@example.org" in message["To"]
+    for kind in ("plain", "html"):
+        body = message.get_body(preferencelist=(kind,)).get_content()
+        for value in (
+            "Saved User",
+            mail_cfg.run.run_id,
+            "0:12:00",
+            "Planned samples: 3",
+            "93.2%",
+            "1.8%",
+            "2x150",
+            "Current free space for output",
+        ):
+            assert value in body
+    assert [part.get_filename() for part in message.iter_attachments()] == ["sequencing_qc.html"]
+    forbidden.assert_not_called()
+
+
+def test_early_payload_does_not_discover_fastqs(mail_cfg, sequencing, monkeypatch):
+    monkeypatch.setattr(
+        afterFastq, "get_project_dirs", Mock(side_effect=AssertionError("FASTQ scan"))
+    )
+    monkeypatch.setattr(Path, "open", Mock(side_effect=AssertionError("Input read")))
+    payload = notifications.make_payload(
+        mail_cfg, "sequencing", sequencing_qc=sequencing["payload"]["sequencing_qc"]
+    )
+    assert json.loads(json.dumps(payload))["projects"] == ["GCF-2026-043"]
+
+
+def test_early_missing_report_fails_before_smtp(mail_cfg, sequencing, smtp):
+    Path(sequencing["payload"]["sequencing_qc"]["report_path"]).unlink()
+    with pytest.raises(FileNotFoundError):
+        notifications.send_notification(mail_cfg, sequencing)
+    smtp[0].assert_not_called()
+
+
+def test_early_delivery_uses_mock_smtp(mail_cfg, sequencing, smtp):
+    notifications.send_notification(mail_cfg, sequencing)
+    assert smtp[1].send_message.call_args.kwargs["to_addrs"] == [
+        "analyst@example.org",
+        "other@example.org",
+    ]
+
+
+def test_new_analysis_mail_keeps_metadata_and_only_analysis_attachments(
+    mail_cfg, processed, monkeypatch
+):
+    processed["payload"]["email_version"] = 2
+    processed["payload"]["analysis_qc"] = {
+        "summary_text": "Read retention: 95.00%; 2 samples discovered; missing",
+        "summary_html": "<strong>Read retention: 95.00%</strong><br>2 samples discovered<br>missing",
+    }
+    monkeypatch.setattr(
+        misc,
+        "analysisSampleMetrics",
+        lambda cfg,
+        projects: "2 samples discovered in FASTQs.\nPlanned samples without FASTQs: missing.",
+    )
+    forbidden = Mock(side_effect=AssertionError("Analysis email attempted old sequencing metrics"))
+    monkeypatch.setattr(misc, "getFCmetricsImproved", forbidden)
+    monkeypatch.setattr(afterFastq, "get_read_geometry", forbidden)
+    (mail_cfg.output_path / "Stats" / "sequencer_stats_GCF-2026-043.html").unlink()
+    message = notifications.build_message(mail_cfg, processed)
+    assert "Analysis complete — QC summary" in message["Subject"]
+    for kind in ("plain", "html"):
+        body = message.get_body(preferencelist=(kind,)).get_content()
+        for value in (
+            "Sample groups",
+            "95.00%",
+            "2 samples discovered",
+            "missing",
+            "Saved User",
+            "2:00:00",
+        ):
+            assert value in body
+    assert [part.get_filename() for part in message.iter_attachments()] == [
+        "multiqc_GCF-2026-043_260918.html"
+    ]
+    forbidden.assert_not_called()
+
+
+def test_new_analysis_mail_escapes_user_and_retains_single_cell_report(mail_cfg, processed):
+    processed["payload"].update(
+        email_version=2, user="<script>User</script>", libprep="Parse Biosciences"
+    )
+    summary = mail_cfg.output_path / "all_samples_web_summary_GCF-2026-043_260918.html"
+    summary.write_text("<html>Single cell</html>")
+    message = notifications.build_message(mail_cfg, processed)
+    html = message.get_body(preferencelist=("html",)).get_content()
+    assert "&lt;script&gt;User&lt;/script&gt;" in html
+    assert "<script>User</script>" not in html
+    assert summary.name in [part.get_filename() for part in message.iter_attachments()]
+
+
+def test_legacy_rerun_analysis_mail_includes_sequencing_qc(mail_cfg, processed, sequencing):
+    processed["payload"].update(
+        email_version=2,
+        sequencing_qc=sequencing["payload"]["sequencing_qc"],
+    )
+    message = notifications.build_message(mail_cfg, processed)
+    for kind in ("plain", "html"):
+        body = message.get_body(preferencelist=(kind,)).get_content()
+        assert "Sequencing QC is included here for this legacy run" in body
+        assert "no separate early notification was created" in body
+        assert "covered in the early sequencing report" not in body
+        for value in ("93.2%", "1.8%", "2x150", "Sample groups"):
+            assert value in body
+    assert [part.get_filename() for part in message.iter_attachments()] == [
+        "multiqc_GCF-2026-043_260918.html",
+        "sequencing_qc.html",
+    ]
+
+
+def test_legacy_rerun_missing_sequencing_attachment_fails_before_smtp(
+    mail_cfg, processed, sequencing, smtp
+):
+    processed["payload"].update(
+        email_version=2,
+        sequencing_qc=sequencing["payload"]["sequencing_qc"],
+    )
+    Path(processed["payload"]["sequencing_qc"]["report_path"]).unlink()
+    with pytest.raises(FileNotFoundError):
+        notifications.send_notification(mail_cfg, processed)
     smtp[0].assert_not_called()
