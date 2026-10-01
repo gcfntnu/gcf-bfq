@@ -1,0 +1,25 @@
+BFQ 2 operational baseline
+
+This annotated tag records the production promotion commit establishing the
+BFQ 2 generation. It is a permanent historical milestone, not a moving pointer
+to current production and not the start of a bundled-release schedule.
+
+The modernization includes:
+- Durable flowcell state, explicit restart boundaries, and searchable history.
+- Preserved and validated run inputs, shared workflow selection, and supported
+  index-orientation correction.
+- Earlier sequencing QC, independent notification recovery, and persisted
+  successful-processing timings.
+- Run-scoped delivery, retained analysis workdirs, and deliberate FASTQ cleanup.
+- Shared configuration, modern packaging/runtime, container wrappers, clearer
+  diagnostics, and regression coverage supporting those operations.
+
+See docs/bfq2.md at this commit for the operator-facing account, changed data
+flow, recovery and retention considerations, and the modernization history.
+
+A normal clone selects bfq-dev. Select master explicitly for current stable
+production source; later BFQ 2 fixes continue there without moving this tag.
+BFQ generation 2 is discretionary and long-lived. Production image builds use
+prod2-N independently; the tag itself does not build, deploy, or freeze the
+complete production environment. No GitHub Release or release bundle is needed
+to install or update BFQ.

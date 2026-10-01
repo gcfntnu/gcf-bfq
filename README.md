@@ -8,6 +8,11 @@ The pipeline is developed for the Genomics Core Facility at NTNU. Its paths,
 sample-sheet extensions, workflow selection, and delivery conventions are
 site-specific. The GCF Docker images are the supported production runtime.
 
+For the changes that define this generation, see **[BFQ 2: operational
+modernization](docs/bfq2.md)**. It explains the changed data flow, recovery,
+notifications, and delivery/retention practices, including the work leading up
+to the BFQ 2 milestone.
+
 ## Runtime overview
 
 BFQ runs as a long-lived process:
@@ -117,6 +122,12 @@ it does not deploy the image. Subsequent production builds use `prod2-2`,
 identifies a build of the complete environment, so it also increments when only
 supporting tools, workflows, or the base image change. BFQ can remain version
 `2` across many builds. The build mode remains `prod`.
+
+An optional annotated `bfq2-baseline` tag records the production promotion
+commit that establishes this generation. It is a permanent historical marker;
+later BFQ 2 updates continue on the branches above. It is not a moving stable
+pointer or a requirement for installation, builds, or future promotions. See the
+[milestone document](docs/bfq2.md) and [one-time tagging procedure](docs/bfq2-tagging.md).
 
 Supporting repositories evolve independently. No separate release manifest or
 coordinated version increment is required; their production branches must supply
