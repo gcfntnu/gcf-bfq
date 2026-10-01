@@ -13,23 +13,13 @@ import tempfile as tmp
 import traceback
 import xml.etree.ElementTree as ET
 
-from argparse import Namespace
 from datetime import UTC, datetime
 from email.message import EmailMessage
-from email.mime.application import MIMEApplication
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from email.utils import formatdate, getaddresses
+from html import escape
 
-import configmaker.configmaker as cm
 import pandas as pd
 
-from bcl2fastq_pipeline.afterFastq import (
-    get_project_dirs,
-    get_project_names,
-    get_read_geometry,
-    get_sequencer,
-)
 from bcl2fastq_pipeline.config import PipelineConfig
 
 style = """
@@ -61,14 +51,16 @@ def getSampleID(sampleTuple, project, lane, sampleName):
     return " "
 
 
-def getFCmetricsImproved():
-    cfg = PipelineConfig.get()
+def getFCmetricsImproved(cfg=None):
+    cfg = cfg if cfg is not None else PipelineConfig.get()
     message = ""
     try:
         with (cfg.output_path / "Stats" / "interop_summary.csv").open() as fh:
             header = False
             while not header:
                 line = fh.readline()
+                if not line:
+                    raise ValueError("Missing table header in Stats/interop_summary.csv")
                 if line.startswith("\n"):
                     line = fh.readline()
                     header = True
@@ -118,37 +110,87 @@ def getFCmetricsImproved():
     return message
 
 
-def parseSampleSheetMetrics(cfg):
-    project_dirs = get_project_dirs(cfg)
-    project_names = get_project_names(project_dirs)
-    msg = "<strong>Sample sheet info</strong>\n"
-    for pid in project_names:
-        args = Namespace(
-            samplesheet=[cfg.run.sample_sheet],
-            project_id=[pid],
+def parseSampleSheetMetrics(cfg, projects=None):
+    """Render current planned metadata without relying on configmaker log files.
+
+    Revalidate the actual bytes on every composition: an edited workbook must
+    never inherit a previous success. Invalid inputs produce readable findings
+    instead of breaking the notification that is meant to describe them.
+    """
+    from configmaker.validation import validate_inputs  # noqa: PLC0415
+
+    result = validate_inputs(
+        [cfg.run.sample_sheet] if cfg.run.sample_sheet else [],
+        [cfg.run.sample_submission_form] if cfg.run.sample_submission_form else [],
+    )
+    summary = result.to_dict()["summary"]
+    lines = ["<strong>Planned input samples (current metadata)</strong>"]
+    selected = set(projects) if projects is not None else None
+    for project in summary.get("projects", []):
+        pid = project["project_id"]
+        if selected is None or pid in selected:
+            lines.append(
+                f"<strong>{escape(str(pid))}</strong>: "
+                f"{project['sample_count']} unique samples in SampleSheet."
+            )
+    lines.append(
+        f"{summary.get('planned_sample_count', 0)} unique planned samples "
+        f"across {summary.get('samplesheet_rows', 0)} SampleSheet rows."
+    )
+    lines.append(
+        f"{summary.get('submission_sample_count', 0)} samples in effective submission metadata; "
+        f"{summary.get('extra_submission_sample_count', 0)} additional submission samples allowed."
+    )
+    groups = summary.get("sample_groups", {})
+    lines.append(
+        "<strong>Sample_Group in effective submission metadata (including extras)</strong>"
+    )
+    values = groups.get("values", [])
+    if values:
+        lines.append(
+            f"Sample_Group has {len(values)} unique values: "
+            f"{escape(', '.join(str(value) for value in values))}."
         )
-        sample_df, _, _ = cm.get_project_samples_from_samplesheet(args)
-        msg += f"<strong>{pid}</strong>: Found {len(sample_df)} samples in samplesheet.\n"
-
-    ssub_df, _ = cm.sample_submission_form_parser(cfg.run.sample_submission_form)
-    msg += f"\nFound {len(ssub_df.index)} samples in sample submission form.\n"
-    if "Sample_Group" in ssub_df:
-        if ssub_df["Sample_Group"].notnull().all():
-            unique = ssub_df["Sample_Group"].unique().astype(str)
-            msg += f"Sample_Group has {len(unique)} unique values: {', '.join(unique)}.\n"
-        elif ssub_df["Sample_Group"].isnull().all():
-            msg += "Sample_Group has not been provided.\n"
-        else:
-            n_missing = ssub_df["Sample_Group"].isnull().values.sum()
-            n_groups = len(ssub_df["Sample_Group"].dropna().unique())
-            group_names = ", ".join(ssub_df["Sample_Group"].dropna().unique().astype(str))
-            msg += f"Sample_Group has {n_groups} unique values: {group_names}.\n"
-            grammar = "s" if n_missing > 1 else ""
-            msg += f"Missing Sample_Group for {n_missing} sample{grammar}.\n"
+        missing = groups.get("missing_count", 0)
+        if missing:
+            lines.append(f"Missing Sample_Group for {missing} samples.")
     else:
-        msg += "Sample_Group has not been provided.\n"
+        lines.append("Sample_Group has not been provided.")
+    if not result.ok:
+        lines.append("<strong>Current input validation failed; summary may be incomplete.</strong>")
+    # Include the complete contextual findings, including warnings on valid pairs.
+    lines.append(f"<pre>{escape(result.render_text())}</pre>")
+    return "\n".join(lines) + "\n"
 
-    return msg
+
+def analysisSampleMetrics(cfg, projects):
+    """Report observed FASTQ samples independently of the current input plan."""
+    lines = ["<strong>Samples discovered in FASTQs at analysis initialization</strong>"]
+    for project in projects:
+        report = cfg.output_path / f"configmaker-analysis-{project}.json"
+        label = escape(str(project))
+        try:
+            summary = json.loads(report.read_text(encoding="utf-8"))
+            if (
+                not isinstance(summary, dict)
+                or summary.get("kind") != "fastq_discovery"
+                or summary.get("schema_version") != 1
+            ):
+                raise ValueError("Unsupported FASTQ discovery summary")
+            count = summary["sample_count"]
+            missing = summary.get("missing_sample_ids", [])
+            if type(count) is not int or count < 0:
+                raise ValueError("Invalid FASTQ discovery sample count")
+            if not isinstance(missing, list) or not all(isinstance(sid, str) for sid in missing):
+                raise ValueError("Invalid missing sample list in FASTQ discovery summary")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            log.info("FASTQ discovery summary unavailable for %s: %s", project, error)
+            lines.append(f"{label}: discovery summary unavailable for this analysis.")
+            continue
+        lines.append(f"{label}: {count} samples discovered in FASTQs.")
+        if missing:
+            lines.append(f"Planned samples without FASTQs: {escape(', '.join(map(str, missing)))}.")
+    return "\n".join(lines) + "\n"
 
 
 def parserDemultiplexStats(cfg):
@@ -222,6 +264,10 @@ def write_error_report(errTuple, msg):
             if isinstance(command_output, bytes):
                 command_output = command_output.decode("utf-8", errors="replace")
             msg += f"\nCaptured command output (last 400 lines):\n{command_output}"
+        validation = getattr(errTuple[1], "validation_result", None)
+        if validation is not None:
+            msg += "\n\nComplete structured input preflight report:\n"
+            msg += json.dumps(validation.to_dict(), ensure_ascii=False, indent=2)
 
     report_path = report_dir / f"{cfg.run.run_id}.error"
     report_path.write_text(msg, encoding="utf-8")
@@ -245,7 +291,16 @@ def error_failure_signature(stage, error_info, message):
         output = output.decode("utf-8", errors="replace")
     if output:
         details.append(output)
-    return hashlib.sha256(json.dumps(details, ensure_ascii=False).encode("utf-8")).hexdigest()
+    validation = getattr(error, "validation_result", None)
+    if validation is not None:
+        report = validation.to_dict()
+        # Only stable content contributes; retry time and report path do not.
+        details.append(
+            {key: report.get(key) for key in ("validator", "inputs", "errors", "warnings", "info")}
+        )
+    return hashlib.sha256(
+        json.dumps(details, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
 
 def send_error_report(cfg, report_path, stage, error_info, store, signature):  # noqa: PLR0913
@@ -283,6 +338,15 @@ def send_error_report(cfg, report_path, stage, error_info, store, signature):  #
         f"Host: {socket.gethostname()}\nReport: {report_path.resolve()}\n"
     )
     message.add_attachment(report, subtype="plain", filename=report_path.name)
+    validation = getattr(error, "validation_result", None)
+    if validation is not None:
+        # Attach the in-memory result, never a stale sidecar from an earlier run.
+        message.add_attachment(
+            json.dumps(validation.to_dict(), ensure_ascii=False, indent=2).encode("utf-8"),
+            maintype="application",
+            subtype="json",
+            filename=f"{cfg.run.run_id}.input-preflight.json",
+        )
 
     def deliver():
         with smtplib.SMTP(cfg.static.email["host"], timeout=30) as smtp:
@@ -295,93 +359,3 @@ def send_error_report(cfg, report_path, stage, error_info, store, signature):  #
     sent = store.deliver_failure_notification(cfg.run.run_id, signature, deliver)
     log.info("Error email %s for %s", "sent" if sent else "duplicate suppressed", cfg.run.run_id)
     return sent
-
-
-def finishedEmail(msg, runTime, extra_html=True):
-    cfg = PipelineConfig.get()
-    projects = get_project_names(get_project_dirs(cfg))
-
-    message = f"<strong>Short summary for {', '.join(projects)}. </strong>\n\n"
-    message += f"<strong>User: {cfg.run.user} </strong>\n" if cfg.run.user != "N/A" else ""
-    message += f"Flow cell: {cfg.run.run_id} \n"
-    seq = get_sequencer(cfg.run.run_id)
-    message += f"Sequencer: {seq} \n"
-    read_geo = get_read_geometry(cfg.output_path)
-    message += f"Read geometry: {read_geo} \n\n"
-    message += f"bcl2fastq_pipeline run time: {runTime} \n"
-    # message += "Data transfer: %s\n" % transferTime
-    message = message.replace("\n", "\n<br>")
-    message += msg
-
-    sample_sheet_metrics = parseSampleSheetMetrics(cfg)
-    sample_sheet_metrics = sample_sheet_metrics.replace("\n", "\n<br>")
-
-    message = (
-        "<html>\n<body>\n<head>\n"
-        + style
-        + "\n</head>\n"
-        + message
-        + "<br>"
-        + sample_sheet_metrics
-        + "\n</body>\n</html>"
-    )
-
-    msg = MIMEMultipart()
-    msg["Subject"] = f"[bcl2fastq_pipeline] {', '.join(projects)} processed"
-    msg["From"] = cfg.static.email["from_address"]
-    msg["To"] = cfg.static.email["finished_to"]
-    msg["Date"] = formatdate(localtime=True)
-
-    msg.attach(MIMEText(message, "html"))
-
-    date = cfg.run.run_id.split("_")[0]
-
-    for p in projects:
-        with (cfg.output_path / f"multiqc_{p}_{date}.html").open("rb") as report:
-            part = MIMEApplication(report.read(), report.name)
-        part["Content-Disposition"] = f'attachment; filename="multiqc_{p}_{date}.html"'
-        msg.attach(part)
-
-        if (
-            cfg.run.libprep.startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences"))
-            and extra_html
-        ):
-            f = cfg.output_path / f"all_samples_web_summary_{p}_{date}.html"
-            if f.exists():
-                fname = f.name
-                with f.open("rb") as report:
-                    part = MIMEApplication(report.read(), report.name)
-                part["Content-Disposition"] = f'attachment; filename="{fname}"'
-                msg.attach(part)
-    project_str = "_".join(projects)
-    with (cfg.output_path / "Stats" / f"sequencer_stats_{project_str}.html").open("rb") as report:
-        part = MIMEApplication(report.read(), report.name)
-    part["Content-Disposition"] = f'attachment; filename="sequencer_stats_{project_str}.html"'
-    msg.attach(part)
-
-    s = smtplib.SMTP(cfg.static.email["host"])
-    s.send_message(msg)
-    s.quit()
-
-
-def finalizedEmail(msg, finalizeTime, runTime):
-    cfg = PipelineConfig.get()
-
-    projects = get_project_names(get_project_dirs(cfg))
-
-    message = f"{', '.join(projects)} has been finalized and prepared for delivery.\n\n"
-    message += f"md5sum and 7zip runtime: {finalizeTime}\n"
-    message += f"Total runtime for bcl2fastq_pipeline: {runTime}\n"
-    message += msg
-
-    msg = MIMEMultipart()
-    msg["Subject"] = f"[bcl2fastq_pipeline] {', '.join(projects)} finalized"
-    msg["From"] = cfg.static.email["from_address"]
-    msg["To"] = cfg.static.email["error_to"]
-    msg["Date"] = formatdate(localtime=True)
-
-    msg.attach(MIMEText(message))
-
-    s = smtplib.SMTP(cfg.static.email["host"])
-    s.send_message(msg)
-    s.quit()

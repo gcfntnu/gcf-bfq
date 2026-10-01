@@ -15,17 +15,19 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 
-import yaml
-
 from configmaker.configmaker import SEQUENCERS
+from configmaker.validation import VALIDATOR_VERSION
 
+from bcl2fastq_pipeline import analysis_snapshots, processing_times, workflow_config
 from bcl2fastq_pipeline.config import PipelineConfig
-from bcl2fastq_pipeline.interop import prepare_index_metrics, run_interop_csv
+from bcl2fastq_pipeline.workflow_config import select_workflow
 
 log = logging.getLogger(__name__)
 COMMAND_OUTPUT_TAIL_LINES = 400
@@ -150,20 +152,91 @@ def get_sequencer(run_id):
     return SEQUENCERS.get(run_id.split("_")[1], "Sequencer could not be automatically determined.")
 
 
-def md5sum_worker(cfg):
-    project_dirs = get_project_dirs(cfg)
-    pnames = get_project_names(project_dirs)
-    for p in pnames:
-        md_path = Path(f"md5sum_{p}_fastq.txt")
-        if not (cfg.output_path / md_path).exists():
-            fastqs = sorted((cfg.output_path / p).rglob("*.fastq.gz"))
-            log.info(f"[md5sum_worker] Processing {cfg.output_path}/{p}")
+def _md5_filename(path):
+    """Encode filenames using GNU md5sum's escaped-line convention."""
+    name = str(path)
+    escaped = any(char in name for char in "\\\n\r")
+    name = name.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r")
+    return ("\\" if escaped else "", name)
+
+
+def _complete_fastq_manifest(manifest, relative_paths):
+    """Check syntax and exact file coverage without reading FASTQ contents."""
+    expected = {_md5_filename(path) for path in relative_paths}
+    seen = set()
+    try:
+        with manifest.open(encoding="utf-8", newline="") as handle:
+            for line in handle:
+                match = re.fullmatch(r"(\\?)[0-9a-fA-F]{32} [ *]([^\n]*)\n", line)
+                if match is None or match.groups() not in expected or match.groups() in seen:
+                    return False
+                seen.add(match.groups())
+    except (FileNotFoundError, UnicodeError):
+        return False
+    return seen == expected
+
+
+def _write_fastq_manifest(manifest, fastqs, output_path):
+    """Publish a complete manifest atomically; never expose a partial write."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            dir=manifest.parent,
+            prefix=f".{manifest.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
             with ThreadPoolExecutor(max_workers=5) as executor:
                 checksums = executor.map(file_md5, fastqs)
-                with (cfg.output_path / md_path).open("w") as output_fh:
-                    for fastq, checksum in zip(fastqs, checksums, strict=True):
-                        relative_path = fastq.relative_to(cfg.output_path)
-                        output_fh.write(f"{checksum}  {relative_path}\n")
+                for fastq, checksum in zip(fastqs, checksums, strict=True):
+                    prefix, name = _md5_filename(fastq.relative_to(output_path))
+                    handle.write(f"{prefix}{checksum}  {name}\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, manifest)
+        directory_fd = os.open(manifest.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def md5sum_worker(cfg, *, force=False, store=None):
+    """Generate demultiplexing checksums, or repair legacy manifests once.
+
+    A reused manifest retains its timing; checking coverage is not a new hashing
+    execution. When repair is needed, time the enclosing generation once, not
+    each project or parallel worker.
+    """
+    jobs = []
+    for project in sorted(get_project_names(get_project_dirs(cfg))):
+        manifest = cfg.output_path / f"md5sum_{project}_fastq.txt"
+        fastqs = sorted((cfg.output_path / project).rglob("*.fastq.gz"))
+        relative_paths = [path.relative_to(cfg.output_path) for path in fastqs]
+        if not force and _complete_fastq_manifest(manifest, relative_paths):
+            continue
+        jobs.append((project, manifest, fastqs))
+    timer = (
+        processing_times.measure(store, cfg.run.run_id, "fastq_checksums")
+        if store is not None and (jobs or force)
+        else nullcontext()
+    )
+    with timer:
+        for project, manifest, fastqs in jobs:
+            log.info("[md5sum_worker] Generating FASTQ checksums for %s", project)
+            try:
+                _write_fastq_manifest(manifest, fastqs, cfg.output_path)
+            except Exception as error:
+                raise RuntimeError(
+                    f"FASTQ checksum generation failed for {project}: {error}"
+                ) from error
 
 
 def md5sum_archive(archive_path: Path):
@@ -186,88 +259,10 @@ def md5sum_archive_worker(cfg):
 
 
 def multiqc_stats(cfg):
-    in_confs = sorted(cfg.output_path.glob(".multiqc_config*.yaml"))
-    if not in_confs:
-        raise RuntimeError(
-            "Missing analysis-generated MultiQC configuration in "
-            f"{cfg.output_path}; recover with flowcell-manager rerun "
-            f"{cfg.output_path.name} --from analysis"
-        )
+    """Compatibility entry point for metadata-independent sequencing reporting."""
+    from bcl2fastq_pipeline import sequencing_qc  # noqa: PLC0415
 
-    cwd = cfg.output_path / "Stats"
-
-    shutil.copy2(cfg.run.flowcell_path / "RunInfo.xml", cfg.output_path / "RunInfo.xml")
-    # Illumina sequencer update - RunParameters.xml -> runParameters.xml
-    shutil.copy2(
-        list(cfg.run.flowcell_path.glob("[Rr]unParameters.xml"))[0],
-        cfg.output_path / "RunParameters.xml",
-    )
-
-    # Illumina interop
-    out_f = cfg.output_path / "Stats" / "interop_summary.csv"
-    log.info(f"[multiqc_worker] Interop summary on {cfg.output_path}")
-    run_interop_csv("interop_summary", cfg.output_path, out_f, cwd)
-
-    prepare_index_metrics(cfg.output_path)
-    out_f = cfg.output_path / "Stats" / "interop_index-summary.csv"
-    log.info(f"[multiqc_worker] Interop index summary on {cfg.output_path}")
-    run_interop_csv("interop_index-summary", cfg.output_path, out_f, cwd)
-
-    samples_custom_data = dict()
-    for c in in_confs:
-        with c.open() as c_fh:
-            mqc_conf = yaml.load(c_fh, Loader=yaml.FullLoader)
-        samples_custom_data.update(mqc_conf["custom_data"]["general_statistics"]["data"])
-
-    # use one of the existing multiqc_config.yaml as template
-    with in_confs[0].open() as in_conf_fh:
-        mqc_conf = yaml.load(in_conf_fh, Loader=yaml.FullLoader)
-
-    pnames = get_project_names(get_project_dirs(cfg))
-    pnames = ", ".join(pnames)
-    mqc_conf["title"] = pnames
-    mqc_conf["intro_text"] = (
-        "This report is generated for projects run at Genomics Core Facility, NTNU, Trondheim. The results are reported per sample."
-    )
-    mqc_conf["custom_data"]["general_statistics"]["data"] = samples_custom_data
-
-    conf_pth = cfg.output_path / "Stats" / ".multiqc_config.yaml"
-    with conf_pth.open("w+") as out_conf_fh:
-        yaml.dump(mqc_conf, out_conf_fh)
-
-    force_bcl2fastq = os.environ.get("FORCE_BCL2FASTQ", None)
-    demultiplexer_module = "bcl2fastq" if force_bcl2fastq else "bclconvert"
-
-    multiqc_opts = cfg.static.commands["multiqc_options"]
-    pname = pnames.replace(", ", "_")
-    multiqc_out = cfg.output_path / "Stats" / f"sequencer_stats_{pname}.html"
-
-    cmd = command_args("multiqc", multiqc_opts)
-    cmd.extend(
-        [
-            "--config",
-            str(conf_pth),
-            str(cfg.output_path / "Stats"),
-            "--filename",
-            str(multiqc_out),
-            "-m",
-            "interop",
-            "-m",
-            demultiplexer_module,
-        ]
-    )
-    log.info(f"[multiqc_worker] Processing {cfg.output_path}")
-
-    if os.environ.get("BFQ_TEST", None) and not force_bcl2fastq:
-        if not (cfg.output_path / "Stats" / "Demultiplex_Stats.csv").exists():
-            log.warning(
-                "BFQ-TEST: Testflowcell was generated with bcl2fastq but environment is configured for bcl-convert. Using bcl2fastq paths and mqc modules."
-            )
-            cmd = [arg.replace("Reports", "Stats") for arg in cmd]
-            cmd[cmd.index("bclconvert")] = "bcl2fastq"
-            log.info(f"[multiqc_worker] Running: {shlex.join(cmd)}")
-
-    subprocess.check_call(cmd, cwd=cwd)
+    return sequencing_qc.generate(cfg)["projects"]
 
 
 def generate_password(cfg, prefix: str) -> str:
@@ -310,6 +305,7 @@ def archive_worker(cfg):
         pw = generate_password(cfg, p) if cfg.run.sensitive else None
         report_dir = cfg.output_path / "Reports"
         archive_inputs = [cfg.output_path / p, cfg.output_path / "Stats"]
+        archive_inputs.extend(sorted(cfg.output_path.glob("sequencer_stats_*.html")))
         if report_dir.exists():
             archive_inputs.append(report_dir)
         archive_inputs.extend(sorted(cfg.output_path.glob("Undetermined*.fastq.gz")))
@@ -395,27 +391,29 @@ def post_workflow(project_id, base_dir, pipeline):
 
 
 def full_align(cfg):
-    # old_wd = Path.cwd()
-
-    # os.chdir(os.environ["TMPDIR"])
+    selection = select_workflow(cfg)
     project_names = get_project_names(get_project_dirs(cfg))
     run_date = str(cfg.output_path.name).split("_")[0]
-    for p in project_names:
-        analysis_dir = Path(os.environ["TMPDIR"]) / f"{p}_{run_date}"
+    workdirs = {}
+    for p in sorted(project_names):
+        analysis_dir = analysis_snapshots.workdir_path(cfg.run.run_id, p)
         analysis_dir.mkdir(parents=True, exist_ok=True)
         (analysis_dir / "src").mkdir(parents=True, exist_ok=True)
         (analysis_dir / "data").mkdir(parents=True, exist_ok=True)
         log.info(f"Setting up analysis for {analysis_dir}")
 
-        # os.chdir(analysis_dir)
+        workdirs[p] = analysis_snapshots.identify_workdir(analysis_dir, cfg.run.run_id, p)
 
-        src = Path("/opt/gcf-workflows")
+        src = workflow_config.AUTHORITATIVE_CONFIG.parent
         dst = analysis_dir / "src" / "gcf-workflows"
 
         # copy snakemake pipeline
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst)
+        # copytree sees mutable working-tree files; overwrite the config with the
+        # exact bytes captured for this execution, including uncommitted edits.
+        selection.config.write(dst / "libprep.config")
 
         machine = get_sequencer(cfg.run.run_id)
         # create config.yaml
@@ -426,13 +424,26 @@ def full_align(cfg):
             "-p",
             str(p),
             "--libkit",
-            str(cfg.run.libprep),
+            selection.kit,
             "--machine",
             str(machine),
+            "--expected-validation-version",
+            VALIDATOR_VERSION,
+            "--libprep-config",
+            str(dst / "libprep.config"),
+            "--libprep-sha256",
+            selection.config.sha256,
+            "--libprep-entry",
+            selection.entry,
+            "--expected-read-geometry",
+            *(str(n) for n in selection.read_geometry),
         ]
-        if Path("data/raw/fastq").exists():
+        if (analysis_dir / "data/raw/fastq").exists():
             cmd.append("--skip-create-fastq-dir")
         subprocess.check_call(cmd, cwd=analysis_dir)
+        discovery_summary = analysis_dir / "configmaker.analysis-summary.json"
+        if discovery_summary.is_file():
+            shutil.copy2(discovery_summary, cfg.output_path / f"configmaker-analysis-{p}.json")
 
         # run snakemake pipeline
         cmd = [
@@ -478,55 +489,70 @@ def full_align(cfg):
             cfg.output_path / f".multiqc_config_{p}.yaml",
         )
 
-    # os.chdir(old_wd)
-    return True
+    return workdirs
 
 
 def _disk_usage_message(cfg):
     """Build the operational disk-usage summary used by completion mail."""
-    total, _used, free = shutil.disk_usage(cfg.static.paths.output_dir)
-    total /= 1024**3
-    free /= 1024**3
-    message = (
-        f"Current free space for output: {free:.0f} of {total:.0f} GiB "
-        f"({100 * free / total:5.2f}%)\n<br>"
-    )
-
-    total, _used, free = shutil.disk_usage(cfg.run.flowcell_path.parent)
-    total /= 1024**3
-    free /= 1024**3
-    message += (
-        f"Current free space for instruments: {free:.0f} of {total:.0f} GiB "
-        f"({100 * free / total:5.2f}%)\n<br>\n<br>"
-    )
+    message = ""
+    sources = [("output", cfg.output_path.parent)]
+    if cfg.run.flowcell_path is not None:
+        sources.append(("instruments", cfg.run.flowcell_path.parent))
+    for label, path in sources:
+        try:
+            total, _used, free = shutil.disk_usage(path)
+        except OSError:
+            message += f"Current free space for {label}: unavailable\n<br>"
+            continue
+        total /= 1024**3
+        free /= 1024**3
+        message += (
+            f"Current free space for {label}: {free:.0f} of {total:.0f} GiB "
+            f"({100 * free / total:5.2f}%)\n<br>"
+        )
     return message
 
 
 def analysis_steps():
     """Run work invalidated by the public analysis restart boundary."""
     cfg = PipelineConfig.get()
-    cfg.run.set_pipeline_from_yaml(Path("/opt/gcf-workflows/libprep.config"))
-    md5sum_worker(cfg)
-    full_align(cfg)
+    return full_align(cfg)
 
 
 def reporting_steps():
     """Generate reporting products while preserving completed workflow results."""
     cfg = PipelineConfig.get()
-    multiqc_stats(cfg)
+    # Early reports belong to the conversion execution. Never regenerate them
+    # merely because analysis/reporting is rerun. Legacy runs have no early event.
+    from bcl2fastq_pipeline.state import FlowcellStateStore  # noqa: PLC0415
+
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    state = store.read(cfg.run.run_id) if store.exists(cfg.run.run_id) else {}
+    if not state.get("sequencing_qc"):
+        multiqc_stats(cfg)
+    projects = sorted(get_project_names(get_project_dirs(cfg)))
     cfg.to_file(cfg.output_path / "bcl2fastq.ini")
-    return _disk_usage_message(cfg)
+    return projects
 
 
 def postMakeSteps():
     """Compatibility wrapper for callers that still expect the combined operation."""
     analysis_steps()
-    return reporting_steps()
+    reporting_steps()
+    return _disk_usage_message(PipelineConfig.get())
 
 
-def finalize():
+def finalize(*, store=None):
     cfg = PipelineConfig.get()
-    # zip arhive
-    archive_worker(cfg)
-    # md5sum archive
-    md5sum_archive_worker(cfg)
+    with (
+        processing_times.measure(store, cfg.run.run_id, "archiving")
+        if store is not None
+        else nullcontext()
+    ):
+        archive_worker(cfg)
+    with (
+        processing_times.measure(store, cfg.run.run_id, "archive_checksums")
+        if store is not None
+        else nullcontext()
+    ):
+        md5sum_archive_worker(cfg)

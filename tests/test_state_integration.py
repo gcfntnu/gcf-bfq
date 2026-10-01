@@ -8,8 +8,9 @@ import pytest
 
 from bcl2fastq_pipeline.config import Paths, PipelineConfig, RunContext, StaticConfig
 from bcl2fastq_pipeline.state import FlowcellStateStore, StateConflictError, new_state
+from openpyxl import Workbook
 
-from bcl2fastq_pipeline import afterFastq, cli, findFlowCells, makeFastq, misc
+from bcl2fastq_pipeline import afterFastq, cli, findFlowCells, makeFastq, misc, notifications
 
 RUN_ID = "260918_MN00686_0026_A000HCMFHF"
 
@@ -52,10 +53,21 @@ def configured_bfq(tmp_path):
 def write_inputs(directory, suffix=""):
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "SampleSheet.csv").write_text(
-        f"[CustomOptions]\nLibprep,Illumina DNA Prep\nUser,test{suffix}\n",
+        f"[CustomOptions]\nLibprep,Illumina DNA Prep\nUser,test{suffix}\n"
+        "[Data]\nSample_ID,Sample_Project,index\nsample,GCF-2026-001,ACGT\n",
         encoding="utf-8",
     )
-    (directory / "Sample-Submission-Form.xlsx").write_bytes(f"form{suffix}".encode())
+    workbook = Workbook()
+    customer = workbook.active
+    customer.title = "Sample-Submission-Form"
+    customer.cell(15, 1, "Unique Sample ID")
+    customer.cell(15, 2, "Sample Group")
+    customer.cell(16, 1, "sample")
+    customer.cell(16, 2, f"group{suffix}")
+    lab = workbook.create_sheet("INFO (GCF-lab only)")
+    lab.append(["Sample_ID"])
+    lab.append(["sample"])
+    workbook.save(directory / "Sample-Submission-Form.xlsx")
 
 
 def write_fastq(path):
@@ -277,7 +289,9 @@ def test_rerun_refresh_inputs_is_explicit(tmp_path):
     )
 
     assert "test-instrument" in (output / "SampleSheet.csv").read_text()
-    assert (output / "Sample-Submission-Form.xlsx").read_bytes() == b"form-instrument"
+    assert (output / "Sample-Submission-Form.xlsx").read_bytes() == (
+        source / "Sample-Submission-Form.xlsx"
+    ).read_bytes()
 
 
 def test_initialize_analysis_requires_recognized_restored_fastqs(tmp_path):
@@ -458,15 +472,19 @@ def test_daemon_executes_only_from_queued_analysis_boundary(tmp_path, monkeypatc
     monkeypatch.setattr(makeFastq, "rename_fastqs", lambda: calls.append("rename"))
     monkeypatch.setattr(afterFastq, "analysis_steps", lambda: calls.append("analysis"))
     monkeypatch.setattr(cli, "_run_reporting", lambda *_args: calls.append("reporting"))
-    monkeypatch.setattr(afterFastq, "finalize", lambda: calls.append("finalization"))
-    monkeypatch.setattr(misc, "finalizedEmail", lambda *_args: calls.append("final-email"))
+    monkeypatch.setattr(afterFastq, "finalize", lambda **_kwargs: calls.append("finalization"))
+    monkeypatch.setattr(
+        notifications,
+        "send_notification",
+        lambda _cfg, entry: calls.append(entry["kind"] + "-email"),
+    )
     monkeypatch.setattr(findFlowCells, "markFinished", lambda: ["GCF-2026-001"])
 
     cli._run_state_backed_flowcell(cfg, store, logging.getLogger("test"))
 
     assert "demultiplexing" not in calls
     assert "rename" not in calls
-    assert calls == ["analysis", "reporting", "finalization", "final-email"]
+    assert calls == ["analysis", "reporting", "processed-email", "finalization", "finalized-email"]
     state = store.read(RUN_ID)
     assert state["status"] == "completed"
     assert state["attempt"] == 1
@@ -506,3 +524,102 @@ def test_daemon_failure_is_recorded_in_state(tmp_path, monkeypatch):
     assert state["current_stage"] == "analysis"
     assert "workflow bad" in state["last_error"]["summary"]
     assert state["last_error"]["report_path"] == str(report)
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_demultiplexing_hashes_renamed_fastqs_before_completion(tmp_path, monkeypatch, failure):
+    cfg, source, output = configured_bfq(tmp_path)
+    write_inputs(output)
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    store.create(
+        new_state(RUN_ID, source, output, origin="new", start_stage="demultiplexing", cfg=cfg)
+    )
+    calls = []
+    monkeypatch.setattr(misc, "enoughFreeSpace", lambda: True)
+    monkeypatch.setattr(makeFastq, "bcl2fq", lambda: ("bcl-convert", "4"))
+
+    def rename():
+        calls.append("rename")
+        write_fastq(output / "GCF-2026-001/renamed_R1.fastq.gz")
+
+    real_hash = afterFastq.file_md5
+
+    def checksum(path):
+        assert calls == ["rename"]
+        assert path.name == "renamed_R1.fastq.gz"
+        assert store.read(RUN_ID)["stages"]["demultiplexing"]["status"] == "running"
+        calls.append("checksum")
+        if failure:
+            raise OSError("checksum read failure")
+        return real_hash(path)
+
+    def analysis():
+        assert (output / "md5sum_GCF-2026-001_fastq.txt").exists()
+        assert store.read(RUN_ID)["stages"]["demultiplexing"]["status"] == "completed"
+        calls.append("analysis")
+
+    monkeypatch.setattr(makeFastq, "rename_fastqs", rename)
+    monkeypatch.setattr(afterFastq, "file_md5", checksum)
+    monkeypatch.setattr(afterFastq, "analysis_steps", analysis)
+    monkeypatch.setattr(cli, "_run_reporting", lambda *_: None)
+    monkeypatch.setattr(afterFastq, "finalize", lambda **_kwargs: None)
+    monkeypatch.setattr(notifications, "send_notification", lambda *_: None)
+    monkeypatch.setattr(findFlowCells, "markFinished", lambda: ["GCF-2026-001"])
+    monkeypatch.setattr(
+        misc, "write_error_report", lambda *_: cfg.static.paths.report_dir / "test.error"
+    )
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("test"))
+    state = store.read(RUN_ID)
+    if failure:
+        assert calls == ["rename", "checksum"]
+        assert state["stages"]["demultiplexing"]["status"] == "failed"
+        assert "FASTQ checksum generation failed" in state["last_error"]["summary"]
+        assert not (output / "md5sum_GCF-2026-001_fastq.txt").exists()
+    else:
+        assert calls == ["rename", "checksum", "analysis"]
+        assert state["status"] == "completed"
+
+
+@pytest.mark.parametrize("stage", ["analysis", "reporting", "finalization"])
+@pytest.mark.parametrize("failure", [False, True])
+def test_downstream_entry_repairs_legacy_checksums_before_work(
+    tmp_path, monkeypatch, stage, failure
+):
+    cfg, source, output = configured_bfq(tmp_path)
+    write_inputs(output)
+    write_fastq(output / "GCF-2026-001/sample_R1.fastq.gz")
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    store.create(
+        new_state(
+            RUN_ID, source, output, origin="restored_legacy_fastq", start_stage=stage, cfg=cfg
+        )
+    )
+    manifest = output / "md5sum_GCF-2026-001_fastq.txt"
+    calls = []
+
+    def work(*_args, **_kwargs):
+        assert manifest.exists()
+        calls.append("work")
+
+    monkeypatch.setattr(misc, "enoughFreeSpace", lambda: True)
+    monkeypatch.setattr(makeFastq, "bcl2fq", Mock(side_effect=AssertionError("BCL conversion")))
+    monkeypatch.setattr(afterFastq, "analysis_steps", work)
+    monkeypatch.setattr(cli, "_run_reporting", work)
+    monkeypatch.setattr(afterFastq, "finalize", work)
+    monkeypatch.setattr(notifications, "send_notification", lambda *_: None)
+    monkeypatch.setattr(findFlowCells, "markFinished", lambda: ["GCF-2026-001"])
+    monkeypatch.setattr(
+        misc, "write_error_report", lambda *_: cfg.static.paths.report_dir / "test.error"
+    )
+    if failure:
+        monkeypatch.setattr(afterFastq, "file_md5", Mock(side_effect=OSError("disk error")))
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("test"))
+    state = store.read(RUN_ID)
+    if failure:
+        assert not calls
+        assert not manifest.exists()
+        assert state["stages"][stage]["status"] == "failed"
+        assert "FASTQ checksum generation failed" in state["last_error"]["summary"]
+    else:
+        assert calls
+        assert state["status"] == "completed"

@@ -26,6 +26,7 @@ def test_console_scripts_are_installed():
 
     flowcell_manager = "flowcell_manager.flowcell_manager:main"
     assert scripts["flowcell-manager"] == flowcell_manager
+    assert scripts["fm"] == flowcell_manager
     assert "flowcell_manager.py" not in scripts
 
     container_scripts = {

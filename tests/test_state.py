@@ -324,7 +324,7 @@ def test_cleanup_boundaries_preserve_expected_products(tmp_path):
     assert qc in analysis_paths
     assert report in analysis_paths
     assert archive in analysis_paths
-    assert checksum in analysis_paths
+    assert checksum not in analysis_paths
     assert fastq not in analysis_paths
 
     reporting_paths = cleanup_plan(output, "reporting")

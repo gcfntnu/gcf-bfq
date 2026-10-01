@@ -8,9 +8,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from bcl2fastq_pipeline.state import apply_cleanup, cleanup_plan
+from bcl2fastq_pipeline.state import FlowcellStateStore, apply_cleanup, cleanup_plan, new_state
+from configmaker.libprep import LibprepConfig
+from test_state_integration import RUN_ID, configured_bfq, write_inputs
 
-from bcl2fastq_pipeline import afterFastq, makeFastq
+from bcl2fastq_pipeline import afterFastq, makeFastq, sequencing_qc
 
 
 @pytest.fixture(autouse=True)
@@ -247,55 +249,12 @@ def test_10x_demultiplexing_ignores_legacy_executable_settings(
     assert all(not argument.startswith("/legacy/") for argument in command)
 
 
-@pytest.mark.parametrize("restart", [False, True])
-def test_multiqc_ignores_legacy_executable_setting(tmp_path, monkeypatch, restart):
-    flowcell_path = tmp_path / "flowcell"
-    flowcell_path.mkdir()
-    (flowcell_path / "RunInfo.xml").touch()
-    (flowcell_path / "RunParameters.xml").touch()
-    output_path = tmp_path / "output"
-    (output_path / "Stats").mkdir(parents=True)
-    (output_path / ".multiqc_config_project.yaml").write_text(
-        "custom_data:\n  general_statistics:\n    data: {}\n"
-    )
-    cfg = SimpleNamespace(
-        output_path=output_path,
-        run=SimpleNamespace(flowcell_path=flowcell_path),
-        static=SimpleNamespace(
-            commands={
-                "multiqc_command": "/legacy/custom/multiqc",
-                "multiqc_options": "--force --quiet",
-            }
-        ),
-    )
-    check_call = Mock()
-    monkeypatch.setattr(afterFastq, "run_interop_csv", Mock())
-    monkeypatch.setattr(afterFastq, "prepare_index_metrics", Mock())
-    monkeypatch.setattr(afterFastq, "get_project_names", Mock(return_value={"GCF-2026-001"}))
-    monkeypatch.setattr(afterFastq, "get_project_dirs", Mock(return_value=set()))
-    monkeypatch.setattr(afterFastq.subprocess, "check_call", check_call)
-    monkeypatch.delenv("FORCE_BCL2FASTQ", raising=False)
-    monkeypatch.delenv("BFQ_TEST", raising=False)
-
-    project_report = output_path / "multiqc_GCF-2026-001_260918.html"
-    extra_report = output_path / "all_samples_web_summary_GCF-2026-001_260918.html"
-    for report in (project_report, extra_report):
-        report.write_text("analysis report")
-    if restart:
-        aggregate = output_path / "Stats" / ".multiqc_config.yaml"
-        aggregate.write_text("stale aggregate")
-        apply_cleanup(cleanup_plan(output_path, "reporting"))
-        assert not aggregate.exists()
-
-    afterFastq.multiqc_stats(cfg)
-
-    for report in (project_report, extra_report):
-        assert report.read_text() == "analysis report"
-    assert (output_path / "Stats" / ".multiqc_config.yaml").is_file()
-
-    command = check_call.call_args.args[0]
-    assert command[:3] == ["multiqc", "--force", "--quiet"]
-    assert "/legacy/custom/multiqc" not in command
+def test_multiqc_compatibility_entry_point_does_not_need_analysis_config(tmp_path, monkeypatch):
+    cfg = SimpleNamespace(output_path=tmp_path)
+    generate = Mock(return_value={"projects": ["GCF-2026-001"]})
+    monkeypatch.setattr(sequencing_qc, "generate", generate)
+    assert afterFastq.multiqc_stats(cfg) == ["GCF-2026-001"]
+    generate.assert_called_once_with(cfg)
 
 
 @pytest.mark.parametrize("restart", [False, True])
@@ -306,6 +265,8 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
     (output_path / "Stats").mkdir()
     (output_path / "Reports").mkdir()
     (output_path / "Undetermined lane_R1.fastq.gz").touch()
+    sequencer_report = output_path / "sequencer_stats_GCF-2026-001_GCF-2026-002_260923.html"
+    sequencer_report.write_text("<html>Sequencing QC</html>")
     (output_path / f"{project}_samplesheet.tsv").touch()
     (output_path / "SampleSheet.csv").touch()
     (output_path / "Sample-Submission-Form.xlsx").touch()
@@ -343,6 +304,7 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
     assert fastq_command[:2] == ["7za", "a"]
     assert str(output_path / "Undetermined lane_R1.fastq.gz") in fastq_command
     assert str(output_path / project) in fastq_command
+    assert str(sequencer_report) in fastq_command
     assert qc_command == [
         "7za",
         "a",
@@ -417,6 +379,10 @@ def test_workflow_commands_keep_config_values_as_single_arguments(tmp_path, monk
     monkeypatch.setenv("TMPDIR", str(work_root))
     monkeypatch.setenv("SINGULARITY_CACHEDIR", str(tmp_path / "cache with spaces"))
 
+    selection = LibprepConfig("test", b"RNA prep;not-a-command PE: {workflow: rnaseq}").select(
+        cfg.run.libprep, [150, 150]
+    )
+    monkeypatch.setattr(afterFastq, "select_workflow", lambda _cfg: selection)
     afterFastq.full_align(cfg)
 
     configmaker_command = check_call.call_args_list[0].args[0]
@@ -478,10 +444,16 @@ def test_python_sources_do_not_enable_shell_execution():
                 ), f"shell=True remains in {source_path}:{node.lineno}"
 
 
-def test_reporting_missing_analysis_config_has_recovery_instruction(tmp_path, monkeypatch):
-    cfg = SimpleNamespace(output_path=tmp_path)
-    interop = Mock()
-    monkeypatch.setattr(afterFastq, "run_interop_csv", interop)
-    with pytest.raises(RuntimeError, match="flowcell-manager rerun .* --from analysis"):
-        afterFastq.multiqc_stats(cfg)
-    interop.assert_not_called()
+def test_reporting_keeps_valid_early_report(tmp_path, monkeypatch):
+    cfg, source, output = configured_bfq(tmp_path)
+    write_inputs(output)
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    state = new_state(RUN_ID, source, output, origin="new", start_stage="demultiplexing", cfg=cfg)
+    store.create(state)
+    store.begin_attempt(RUN_ID)
+    store.record_demultiplexing_execution(RUN_ID, "bcl-convert", "4", {})
+    generate = Mock(side_effect=AssertionError("Must not generate early QC during later reporting"))
+    monkeypatch.setattr(afterFastq, "multiqc_stats", generate)
+    assert afterFastq.reporting_steps() == []
+    assert (output / "bcl2fastq.ini").exists()
+    generate.assert_not_called()

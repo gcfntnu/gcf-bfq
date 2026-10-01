@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import datetime
 import importlib
+import json
 import logging
 import os
 import signal
 import sys
+import time
 
 from pathlib import Path
 from threading import Event
@@ -16,8 +18,24 @@ import bcl2fastq_pipeline.findFlowCells
 import bcl2fastq_pipeline.makeFastq
 import bcl2fastq_pipeline.misc
 
+from bcl2fastq_pipeline import (
+    analysis_qc,
+    analysis_snapshots,
+    notification_delivery,
+    notifications,
+    preflight,
+    processing_times,
+    sequencing_delivery,
+    workflow_config,
+)
 from bcl2fastq_pipeline.config import PipelineConfig
-from bcl2fastq_pipeline.state import ExecutionLeaseError, FlowcellStateStore
+from bcl2fastq_pipeline.state import (
+    ExecutionLeaseError,
+    FlowcellStateStore,
+    StateConflictError,
+    output_entries,
+    resolve_output_path,
+)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 gotHUP = Event()
@@ -75,30 +93,47 @@ def report_run_error(cfg, log, message, store=None, stage=None):
 
 
 def _run_reporting(cfg, start_time):
-    message = bcl2fastq_pipeline.afterFastq.reporting_steps()
-    message += bcl2fastq_pipeline.misc.getFCmetricsImproved()
-    run_time = datetime.datetime.now() - start_time
-
-    retry_email = False
-    try:
-        bcl2fastq_pipeline.misc.finishedEmail(message, run_time)
-    except Exception:
-        if cfg.run.libprep.startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences")):
-            retry_email = True
-        else:
-            raise
-
-    if retry_email:
-        logging.getLogger("bfq").info("Retry completion email without extra html")
-        bcl2fastq_pipeline.misc.finishedEmail(message, run_time, False)
+    # Email-only metrics and composition happen after this stage is committed.
+    return bcl2fastq_pipeline.afterFastq.reporting_steps()
 
 
-def _run_state_backed_flowcell(cfg, store, log):
+def _prepare_workflow(cfg, store, state):
+    """Use completed analysis metadata for downstream-only retries."""
+    stage = state["current_stage"]
+    workflow = state["stages"]["analysis"]["metadata"].get("workflow")
+    if stage in ("reporting", "finalization") and workflow is None:
+        projects = state["projects"] or bcl2fastq_pipeline.afterFastq.get_project_names(
+            bcl2fastq_pipeline.afterFastq.get_project_dirs(cfg)
+        )
+        workflow = workflow_config.workflow_from_projects(cfg, projects)
+
+        def record_workflow(current):
+            current["stages"]["analysis"]["metadata"]["workflow"] = workflow
+            return current
+
+        store.mutate(cfg.run.run_id, record_workflow)
+    workflow_config.prepare_execution(cfg, stage, workflow=workflow)
+
+
+def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
     run_id = cfg.run.run_id
     with store.execution_lease(run_id):
+        analysis_snapshots.recover(store, run_id)
+        if prepare:
+            current = store.read(run_id)
+            if current["status"] != "queued":
+                raise StateConflictError(f"Run {run_id} is no longer queued; inspect its state")
+            output = resolve_output_path(current["output_path"], run_id, cfg)
+            output_entries(output, allow_missing=current["current_stage"] == "demultiplexing")
+            if current["output_path"] != str(output):
+                store.write({**current, "output_path": str(output)})
+            bcl2fastq_pipeline.findFlowCells.newFlowCell()
+            if not cfg.run.run_id:
+                return
         state = store.begin_attempt(run_id, cfg=cfg)
         first_stage = state["current_stage"]
         start_time = datetime.datetime.now()
+        processing_started = time.monotonic()
 
         if not bcl2fastq_pipeline.misc.enoughFreeSpace():
             raise RuntimeError("Insufficient free space!")
@@ -112,10 +147,36 @@ def _run_state_backed_flowcell(cfg, store, log):
                 store.start_stage(run_id, stage)
 
             try:
+                if stage in {"demultiplexing", "analysis"}:
+                    preflight.run_preflight(cfg, store, stage)
+                    if prepare and not cfg.run.custom:
+                        raise RuntimeError("BFQ SampleSheet is missing usable [CustomOptions]")
+                if prepare and index == start_index:
+                    _prepare_workflow(cfg, store, current)
+                if index == start_index and stage != "demultiplexing":
+                    log.info("Checking FASTQ manifests before %s: %s", stage, run_id)
+                    bcl2fastq_pipeline.afterFastq.md5sum_worker(cfg, store=store)
                 if stage == "demultiplexing":
                     log.info("Starting demultiplexing: %s", run_id)
-                    tool, version = bcl2fastq_pipeline.makeFastq.bcl2fq()
-                    bcl2fastq_pipeline.makeFastq.rename_fastqs()
+                    with processing_times.measure(store, run_id, "demultiplexing"):
+                        tool, version = bcl2fastq_pipeline.makeFastq.bcl2fq()
+                        bcl2fastq_pipeline.makeFastq.rename_fastqs()
+                    before_early = time.monotonic()
+                    sequencing_delivery.record_conversion(
+                        cfg,
+                        store,
+                        tool,
+                        version,
+                        run_time=str(datetime.timedelta(seconds=before_early - processing_started)),
+                    )
+                    sequencing_delivery.ensure_report(
+                        cfg,
+                        store,
+                        run_id,
+                        run_time=str(datetime.timedelta(seconds=before_early - processing_started)),
+                    )
+                    notification_delivery.deliver_pending(cfg, store, run_id, kind="sequencing")
+                    bcl2fastq_pipeline.afterFastq.md5sum_worker(cfg, force=True, store=store)
                     store.complete_stage(
                         run_id,
                         stage,
@@ -123,30 +184,102 @@ def _run_state_backed_flowcell(cfg, store, log):
                     )
                 elif stage == "analysis":
                     log.info("Starting analysis: %s", run_id)
-                    bcl2fastq_pipeline.afterFastq.analysis_steps()
-                    store.complete_stage(run_id, stage)
+                    with processing_times.measure(store, run_id, "analysis"):
+                        workdirs = bcl2fastq_pipeline.afterFastq.analysis_steps()
+                    store.complete_stage(
+                        run_id, stage, {"workflow": cfg.run.pipeline, "workdirs": workdirs or {}}
+                    )
                 elif stage == "reporting":
                     log.info("Starting reporting: %s", run_id)
-                    _run_reporting(cfg, start_time)
-                    store.complete_stage(run_id, stage)
+                    with processing_times.measure(store, run_id, "reporting"):
+                        projects = _run_reporting(cfg, start_time)
+                        if projects is None:
+                            projects = current["projects"]
+                        legacy_qc = None
+                        legacy_summary = cfg.output_path / "Stats/sequencing_qc/summary.json"
+                        if not current.get("sequencing_qc") and legacy_summary.is_file():
+                            legacy_qc = json.loads(legacy_summary.read_text())
+                        analysis_summary = analysis_qc.collect(cfg, projects)
+                    timed = store.read(run_id)
+                    payload = notifications.make_payload(
+                        cfg,
+                        "processed",
+                        projects=projects,
+                        processing_timing=processing_times.snapshot(timed),
+                        analysis_qc=analysis_summary,
+                        sequencing_qc=legacy_qc,
+                    )
+                    late_seconds = timed["processing_timings"]["reporting"][-1]["duration_seconds"]
+                    early = store.read(run_id).get("sequencing_qc", {})
+                    early_seconds = (
+                        early.get("duration_seconds")
+                        if early.get("status") == "completed"
+                        else None
+                    )
+                    store.complete_stage(
+                        run_id,
+                        stage,
+                        {
+                            "analysis_reporting_duration_seconds": late_seconds,
+                            "sequencing_qc_duration_seconds": early_seconds,
+                            "duration_seconds": late_seconds + (early_seconds or 0),
+                        },
+                        notification={"kind": "processed", "payload": payload},
+                    )
                 elif stage == "finalization":
                     log.info("Starting finalization: %s", run_id)
-                    before_finalize = datetime.datetime.now()
-                    bcl2fastq_pipeline.afterFastq.finalize()
-                    finalize_time = datetime.datetime.now() - before_finalize
-                    run_time = datetime.datetime.now() - start_time
-                    bcl2fastq_pipeline.misc.finalizedEmail("", finalize_time, run_time)
+                    bcl2fastq_pipeline.afterFastq.finalize(store=store)
                     projects = bcl2fastq_pipeline.findFlowCells.markFinished()
-                    store.complete_run(run_id, projects)
+                    payload = notifications.make_payload(
+                        cfg,
+                        "finalized",
+                        projects=projects,
+                        processing_timing=processing_times.snapshot(store.read(run_id)),
+                    )
+                    snapshots = analysis_snapshots.prepare(store.read(run_id), projects)
+                    store.complete_run(
+                        run_id,
+                        projects,
+                        notification={"kind": "finalized", "payload": payload},
+                        snapshots=snapshots,
+                    )
             except Exception as error:
-                report_run_error(
-                    cfg,
-                    log,
-                    f"Got an error during {stage}: {error}",
-                    store=store,
-                    stage=stage,
-                )
-                return
+                try:
+                    analysis_snapshots.recover(store, run_id)
+                except Exception:
+                    log.exception("Snapshot recovery deferred for %s", run_id)
+                # A state write can raise on its directory fsync after the
+                # atomic completion commit. Do not subsequently fail a delivery
+                # whose snapshot may already have been published by recovery.
+                committed = store.read(run_id)
+                if stage == "finalization" and committed["status"] == "completed":
+                    log.exception(
+                        "Finalization was committed for %s despite a state write error", run_id
+                    )
+                else:
+                    report_run_error(
+                        cfg,
+                        log,
+                        f"Got an error during {stage}: {error}",
+                        store=store,
+                        stage=stage,
+                    )
+                    return
+
+            if stage == "finalization":
+                try:
+                    analysis_snapshots.recover(store, run_id)
+                except Exception:
+                    log.exception(
+                        "Analysis snapshot publication pending for %s; completed delivery "
+                        "and staged snapshot preserved. BFQ will retry publication on its next scan.",
+                        run_id,
+                    )
+
+            # Delivery errors (including state I/O after SMTP) must never enter
+            # the processing failure path above. The intent is already durable.
+            if stage in {"reporting", "finalization"}:
+                notification_delivery.deliver_pending(cfg, store, run_id)
 
             # complete_run finalizes the final stage itself.
             if index == len(stages) - 1:
@@ -213,6 +346,9 @@ def main():
             sleep(cfg)
             continue
 
+        analysis_snapshots.recover_pending(store)
+        notification_delivery.recover_pending(cfg, store)
+
         for flowcell_path in candidate_flowcells(cfg, store):
             cfg.run.begin(flowcell_path, cfg.static.paths)
             log.debug("Initiate %s", flowcell_path)
@@ -226,17 +362,13 @@ def main():
                 cfg.run.reset()
                 continue
 
-            bcl2fastq_pipeline.findFlowCells.newFlowCell()
-            if not cfg.run.run_id:
-                continue
-            cfg.run.set_pipeline_from_yaml(
-                os.environ.get("BFQ_LIBPREP_CONFIG", "/opt/gcf-workflows/libprep.config")
-            )
-
             try:
-                _run_state_backed_flowcell(cfg, store, log)
+                _run_state_backed_flowcell(cfg, store, log, prepare=True)
             except ExecutionLeaseError:
                 log.info("Skipping active flowcell %s", cfg.run.run_id)
+                cfg.run.reset()
+            except StateConflictError as error:
+                log.error("Cannot prepare %s: %s", cfg.run.run_id, error)
                 cfg.run.reset()
             except Exception as error:
                 state = store.read(cfg.run.run_id)
