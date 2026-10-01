@@ -86,7 +86,7 @@ class StaticConfig:
         • paths        – Paths()
         • system       – dict of [System] section
         • email        – dict of [Email] section
-        • version      – dict of [Version] section
+        • version      – optional site labels from [Version], not the installed BFQ version
         • commands     – dict of tool command strings (bcl2fastq, cellranger, etc.)
     """
 
@@ -322,7 +322,7 @@ class PipelineConfig:
                 ekista_base_dir: /mnt/seq/ekista
                 ...
               version:
-                gcf_bfq: "1.4.0"
+                deployment: "site-label"
             run:
               run_id: 240415_A01295_0345_BHXXXXXX
               instrument_source: nova

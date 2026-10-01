@@ -21,11 +21,11 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from importlib import metadata
 from pathlib import Path
 
 from bcl2fastq_pipeline import processing_times
 from bcl2fastq_pipeline.config import parse_custom_options
+from bcl2fastq_pipeline.version import package_version
 
 SCHEMA_VERSION = 1
 STAGES = ("demultiplexing", "analysis", "reporting", "finalization")
@@ -147,16 +147,9 @@ def _stage_map(start_stage: str, completed_before: bool = False) -> dict[str, di
     return stages
 
 
-def collect_versions(cfg=None) -> dict[str, str | None]:
+def collect_versions() -> dict[str, str | None]:
     """Collect version metadata without making it a prerequisite for processing."""
-    bfq_version = None
-    if cfg is not None:
-        bfq_version = cfg.static.version.get("pipeline")
-    if not bfq_version:
-        try:
-            bfq_version = metadata.version("bcl2fastq-pipeline")
-        except metadata.PackageNotFoundError:
-            bfq_version = None
+    bfq_version = package_version()
 
     workflows_revision = None
     workflows_dir = Path("/opt/gcf-workflows")
@@ -206,7 +199,7 @@ def new_state(  # noqa: PLR0913
         "failed_at": None,
         "projects": [],
         "stages": _stage_map(start_stage, completed_before=inferred),
-        "versions": collect_versions(cfg),
+        "versions": collect_versions(),
         "demultiplexing": {"tool": None, "version": None},
         "last_error": None,
         "notification": {
@@ -688,7 +681,7 @@ class FlowcellStateStore:
             state["status"] = "running"
             state["started_at"] = state["started_at"] or now
             state["failed_at"] = None
-            state["versions"].update(collect_versions(cfg))
+            state["versions"].update(collect_versions())
             state["stages"][stage]["status"] = "running"
             state["stages"][stage]["started_at"] = now
             request = state.get("restart_request") or {}

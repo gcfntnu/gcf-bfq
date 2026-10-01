@@ -25,6 +25,7 @@ from bcl2fastq_pipeline.state import (
     validate_restart_boundary,
     validate_restored_fastqs,
 )
+from bcl2fastq_pipeline.version import add_version_argument
 
 from bcl2fastq_pipeline import (
     analysis_snapshots,
@@ -860,6 +861,7 @@ def main():
         description="Manage flowcells. fm and flowcell-manager provide the same commands.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    add_version_argument(parser)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     parser_add = subparsers.add_parser("add", help="Add a project to the compatibility inventory.")
