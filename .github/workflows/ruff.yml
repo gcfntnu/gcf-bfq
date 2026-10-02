@@ -1,4 +1,4 @@
-name: Ruff Linting
+name: Development checks
 
 on:
   pull_request:
@@ -7,64 +7,26 @@ on:
 
 jobs:
   tests:
-    name: Unit tests
+    name: Local checks and clean wheel
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      # Immutable companion revision from gcf-tools PR #58 (validation API 1, >=0.3.0).
-      - name: Install BFQ and development dependencies
-        run: >-
-          pip install -e ".[dev]"
-          "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/bdd94a1d944120ac8a096ea8876c0de98dd51ab3.zip"
-
-      - name: Verify installed dependencies
-        run: python -m pip check
-
-      - name: Build package artifacts
-        run: python -m build
-
-      - name: Run unit tests
-        run: python -m pytest
-
-  ruff:
-    name: Ruff lint & format check
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Ruff
-        run: pip install ruff==0.14.0
-
-      # Lint and annotate results on PRs
-      - name: Run Ruff lint with annotations
-        id: ruff
-        run: |
-          ruff check --no-fix . --output-format=github
-
-      # Enforce formatting consistency
-      - name: Verify Ruff formatting
-        run: |
-          ruff format --check .
-
-      # Optional: summary step (visible in job summary tab)
-      - name: Summarize Ruff results
+      - name: Prepare isolated dependencies
+        run: python3.11 scripts/dev.py setup
+      - name: Run shared offline checks
+        run: python3.11 scripts/dev.py check all
+      - name: Retain check identity on failure
         if: failure()
-        run: |
-          echo "⚠️ Ruff reported one or more issues. Please review inline PR comments or the CI logs for details."
+        uses: actions/upload-artifact@v4
+        with:
+          name: development-check-identity
+          path: |
+            .dev/runs/*/identity.json
+            .dev/runs/*/packages.txt
+          if-no-files-found: ignore

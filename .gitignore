@@ -17,3 +17,7 @@ splitFastq
 *.rpm
 old/
 tmp/
+.dev/
+.venv/
+.pytest_cache/
+.ruff_cache/

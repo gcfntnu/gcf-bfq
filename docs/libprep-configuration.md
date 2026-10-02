@@ -27,7 +27,8 @@ the captured configuration bytes then replace the copied `libprep.config`.
    `libprep_selection` diagnostics (source, SHA-256, kit, entry, geometry and
    workflow). The original authoritative source and selection are also logged.
    There are no separate libprep configuration or manifest files in flowcell
-   output. #124 owns retention of the actual successful analysis workdir.
+   output. Successful workdir retention is described in the
+   [operational README](../README.md#retained-analysis-workdir-snapshots).
 5. On successful analysis, BFQ records only the selected workflow name in the
    existing `stages.analysis.metadata.workflow` state field. No state-schema
    version change is needed. Reporting/finalization retries use this name without
@@ -55,25 +56,23 @@ QC, choose a configured entry whose `workflow` is `default`, such as
 the effective output SampleSheet or add the appropriate authoritative kit entry,
 then queue the normal analysis restart.
 
-The shared `configmaker.libprep` API is portable and can be called by the future
-preflight work in #121 / gcf-tools#56. This change does not implement workbook
-validation, metadata correction, or broader workflow-specific parameter checks.
+The shared `configmaker.libprep` API is used alongside the implemented
+[metadata preflight](input-preflight.md) (#121 / gcf-tools#56). Preflight validates
+the effective SampleSheet/workbook pair before processing; it does not silently
+correct curated metadata or validate every workflow-specific scientific option.
 
 ## Build and dependency order
 
-Companion dependency: [gcf-tools PR #57](https://github.com/gcfntnu/gcf-tools/pull/57),
-branch `bfq-123-shared-libprep-config`, package version 0.2. BFQ now requires
-`gcf-tools>=0.2`. Both BFQ and `/opt/conda/bin/configmaker.py` must use that version.
-BFQ CI pins the tested companion commit so it can verify this PR before merging
-the dependency. Production promotion must include gcf-tools in `master` before
-building BFQ's updated production image.
+BFQ requires `gcf-tools>=0.3.0` and metadata validation API 1, including the shared
+libprep API. BFQ's interpreter and `/opt/conda/bin/configmaker.py` must both use
+compatible tools. Production builds select gcf-tools `master`; local development
+and CI use the immutable baseline in [requirements-dev.txt](../requirements-dev.txt).
+The earlier shared-libprep PR #57 / package 0.2 established this API, but is no
+longer a sufficient dependency baseline for current BFQ.
 
-From BFQ branch `123-authoritative-libprep-config`, use the existing build-and-push
-helper with your chosen test tag:
-
-```bash
-bash build-tag-push.sh test YOUR_TEST_TAG -t bfq-123-shared-libprep-config
-```
+Use the existing [build instructions](../README.md) with your chosen test tag.
+For a coordinated tools change, select its actual branch explicitly with `-t`;
+do not reuse the historical `bfq-123-shared-libprep-config` branch as a default.
 
 Keep the image's normal `BFQ_ENV=test` setting. Within the image, check:
 

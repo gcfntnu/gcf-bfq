@@ -102,7 +102,8 @@ bundled release:
 
 1. Create an issue branch from current `bfq-dev` (including when using an issue's
    **Development** section), and target its feature PR at `bfq-dev`. Link the issue
-   with `Closes #NUMBER` in the PR description so merging closes it.
+   with `Closes #NUMBER` in the PR description. Verify the issue closes after
+   merging; if GitHub leaves it open, close it with a link to the merged PR.
 2. Run the relevant automated and integration checks, then merge the feature PR.
 3. When tested changes are ready for production, open a promotion PR from
    `bfq-dev` to `master` with a short summary of changes and testing. Review and
@@ -1068,32 +1069,33 @@ The exact project analysis content is defined by the selected workflow in
 
 ## Development and testing
 
-Create an editable environment from the repository root:
+Start with **[CONTRIBUTING.md](CONTRIBUTING.md)** for the contributor and agent
+working agreement, isolated worktrees, verification and PR handoff. The
+[development guide](docs/development.md) owns the supported setup/check recipe;
+[architecture and compatibility](docs/development-architecture.md) maps the code
+to operational contracts. Agents should also read [AGENTS.md](AGENTS.md).
+
+On Linux with Python 3.11 and Git, from a clean checkout:
 
 ```console
-python -m pip install -e ".[dev]" \
-  "gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/bdd94a1d944120ac8a096ea8876c0de98dd51ab3.zip"
+python3.11 scripts/dev.py setup
+python3.11 scripts/dev.py check all
 ```
 
-The tools revision above is the companion metadata validation API from
-[gcf-tools PR #58](https://github.com/gcfntnu/gcf-tools/pull/58). BFQ requires
-`gcf-tools>=0.3.0`; keep the configmaker subprocess environment in sync. Deploy
-the matching tools first. The Dockerfiles check the API in `/opt/conda/bin/python`,
-and BFQ passes its validator version to configmaker for an explicit compatibility
-check before project initialization.
+Setup acquires dependencies once into this checkout's `.dev/` directory. Checks
+reuse them offline: non-mutating lint/format checks, the existing tests, installed
+editable commands, and a fresh wheel installation outside the source directory.
+No environment activation, instrument mounts or bioinformatics tools are needed.
+The immutable development companion is declared once in
+[requirements-dev.txt](requirements-dev.txt); production branch selection above
+is unchanged. BFQ and configmaker still require `gcf-tools>=0.3.0` with shared
+metadata validation API 1; keep both interpreters compatible in deployed images.
 
-Run the local checks:
-
-```console
-python -m pip check
-python -m pytest
-ruff check .
-ruff format --check .
-python -m build
-```
-
-Unit tests use temporary files and do not require sequencing data, mounted
-instrument storage, external services, or bioinformatics applications.
+For a shorter loop use `python3.11 scripts/dev.py check fast`. This runs the
+existing automated suite without rebuilding/reinstalling the wheel. Tests use
+synthetic temporary files and mock external boundaries; they do not validate
+scientific outputs, actual notification delivery or the production container
+stack. The reusable operational scenario profile is follow-up [#140](https://github.com/gcfntnu/gcf-bfq/issues/140).
 
 ### Server-side integration testing for state management
 

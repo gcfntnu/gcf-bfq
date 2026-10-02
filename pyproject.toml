@@ -51,6 +51,7 @@ indent-width = 4
 
 # Exclude generated or data-heavy dirs
 extend-exclude = [
+    ".dev/",
     "files/",
     "__pycache__/",
     "*.egg-info",
