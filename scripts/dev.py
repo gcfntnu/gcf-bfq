@@ -4,20 +4,26 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import hashlib
 import json
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
-import venv
 
 from contextlib import contextmanager
 from pathlib import Path
+
+try:
+    import fcntl
+    import tomllib
+except ImportError as error:
+    raise SystemExit(
+        "Development checks require Linux and Python 3.11 with venv support."
+    ) from error
 
 ROOT = Path(__file__).resolve().parents[1]
 DEV = ROOT / ".dev"
@@ -26,7 +32,10 @@ GUARD = ROOT / "tests" / "support"
 
 
 def run(args, *, env, cwd=ROOT):
-    print("+ " + " ".join(map(str, args)), flush=True)
+    display = list(map(str, args))
+    if "-c" in display and "\n" in display[display.index("-c") + 1]:
+        display[display.index("-c") + 1] = "<installed-command smoke>"
+    print("+ " + shlex.join(display), flush=True)
     subprocess.run(list(map(str, args)), cwd=cwd, env=env, check=True)
 
 
@@ -49,7 +58,9 @@ def environment(work, *, guarded=False, python=None):
     for key in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX", "PYTEST_ADDOPTS"):
         env.pop(key, None)
     for key in tuple(env):
-        if key.startswith(("PIP_", "UV_")):
+        if key.startswith("PYTHON"):
+            env.pop(key)
+        elif key.startswith(("PIP_", "UV_")):
             if not guarded and key in {
                 "PIP_INDEX_URL",
                 "PIP_EXTRA_INDEX_URL",
@@ -147,13 +158,15 @@ def setup(args):
     work = workspace("setups")
     print(f"Setup artifacts: {work}", flush=True)
     python = work / "venv" / "bin" / "python"
-    venv.EnvBuilder(with_pip=True, symlinks=True).create(python.parent.parent)
     env = environment(work, python=python)
+    run([Path(sys.executable).resolve(), "-m", "venv", python.parent.parent], env=env)
     wheelhouse = work / "wheels"
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    metadata = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    project = metadata["project"]
+    build_requirements = [*metadata["build-system"]["requires"], "wheel"]
     dependencies = [dep for dep in project["dependencies"] if not dep.startswith("gcf-tools")]
     dependencies += project["optional-dependencies"]["dev"]
-    dependencies += ["setuptools>=68", "wheel"]
+    dependencies += build_requirements
     selection = {"baseline": BASELINE.read_text()}
     if companion:
         snapshot = work / "gcf-tools"
@@ -173,8 +186,7 @@ def setup(args):
             "--no-index",
             "--find-links",
             wheelhouse,
-            "setuptools>=68",
-            "wheel",
+            *build_requirements,
         ],
         env=offline,
     )
@@ -243,6 +255,7 @@ def check(args):
         "setup": state,
         "platform": platform.platform(),
         "profile": args.profile,
+        "pytest_args": args.pytest_args,
     }
     (work / "identity.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2), flush=True)
@@ -280,18 +293,18 @@ def check(args):
         smoke(python, "editable", env)
     if args.profile in ("all", "wheel"):
         source = work / "source"
-        source.mkdir()
-        for name in ("pyproject.toml", "README.md"):
-            shutil.copy2(ROOT / name, source / name)
-        copy_source(ROOT / "bcl2fastq_pipeline", source / "bcl2fastq_pipeline")
+        copy_source(ROOT, source)
         run(
             [python, "-m", "build", "--no-isolation", "--outdir", work / "dist", source],
             env=env,
             cwd=work,
         )
         wheel_python = work / "wheel-venv" / "bin" / "python"
-        venv.EnvBuilder(with_pip=True, symlinks=True).create(wheel_python.parent.parent)
         wheel_env = environment(work, guarded=True, python=wheel_python)
+        run(
+            [Path(sys.executable).resolve(), "-m", "venv", wheel_python.parent.parent],
+            env=wheel_env,
+        )
         wheel = next((work / "dist").glob("*.whl"))
         run(
             [
@@ -339,6 +352,8 @@ def main():
         parser.error("Git is required for source identity; install git and retry")
     if args.command == "check" and args.pytest_args[:1] == ["--"]:
         args.pytest_args = args.pytest_args[1:]
+    if args.command == "check" and args.profile == "wheel" and args.pytest_args:
+        parser.error("The wheel profile does not run pytest; use check fast/all -- TEST_SELECTION")
     try:
         with checkout_lock():
             setup(args) if args.command == "setup" else check(args)

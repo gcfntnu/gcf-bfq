@@ -50,8 +50,8 @@ Production intentionally selects BFQ `master`, tools `master` and workflows
 companion baseline, with an explicit local override for coordinated changes;
 see [development.md](development.md). Updating that baseline does not alter the
 production branch policy. The installed package currently requires
-`gcf-tools>=0.3.0`; older feature documents describe their original companion PRs
-and must not be used as current dependency pins.
+`gcf-tools>=0.3.0`; feature-specific companion PR references explain historical changes,
+not current dependency pins.
 
 These are operational paths, **not local development targets**:
 
@@ -128,7 +128,7 @@ Use the relevant existing guide to specify the remaining manual integration:
 | Changed boundary | Operational reference / manual checks |
 | --- | --- |
 | Input selection and validation | [Input preflight](input-preflight.md), [coordinated preflight checks](preflight-integration-tests.md) |
-| Libprep selection and configmaker propagation | [Library-prep authority](libprep-configuration.md); use current dependency/build policy, not its historical companion branch |
+| Libprep selection and configmaker propagation | [Library-prep authority](libprep-configuration.md) |
 | Restart/state and notification recovery | [README](../README.md), [notification recovery](notification-recovery.md) |
 | Index corrections and conversion | [Index orientation checks](index-orientation-integration-tests.md) |
 | Early QC and notifications | [Early sequencing QC checks](early-sequencing-qc-integration-tests.md) |
