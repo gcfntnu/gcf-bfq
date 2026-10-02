@@ -33,7 +33,9 @@ installation and command entry points; the operational profile uses editable BFQ
 
 Measured on Linux x86_64, CPython 3.11.16 and the pinned companion on 2026-10-02:
 all four scenarios passed in **15.6 seconds**, retaining **1.2 MiB** of case
-artifacts. The enclosing full check reported a peak child RSS of **120 MiB**
+artifacts. Two concurrent independent runs took **20.6/20.8 seconds** with
+about **102 MiB** peak child RSS each; CI scenarios took **21.6 seconds**. The
+enclosing full check reported a peak child RSS of **120 MiB**
 (the summary reports the maximum across children so far, not total simultaneous
 memory). These are observations, not performance assertions.
 
@@ -188,6 +190,37 @@ Inspect each log's printed artifact path and outcome independently. Removal of
 one completed invocation's exact run directory must leave the other workspace's
 inputs, state, outputs and reports unchanged. This is development isolation, not
 permission for concurrent production daemons to share state or scratch.
+
+## Verification record (2026-10-02)
+
+The issue branch started at `7e934f864b64b0af636274aa0d9a52de9fb75543`
+(merged #141). Implementation checkpoint
+`76ecd27c1587f88a0a5d4400b699d9728c347c32` was verified with the pinned
+`gcf-tools` baseline `bdd94a1d944120ac8a096ea8876c0de98dd51ab3`:
+
+- Fresh setup and `check all`: **711 fast/guard tests and four scenarios passed**,
+  Ruff lint/format, sdist/wheel build, offline clean-wheel installation and all
+  installed command checks passed. [CI run 36975680629](https://github.com/gcfntnu/gcf-bfq/actions/runs/36975680629)
+  passed the same complete command from a clean checkout.
+- Two detached worktrees at that checkpoint independently ran setup, then
+  `check scenarios` concurrently; both passed, using distinct venvs, wheelhouses,
+  caches and run roots. Same-checkout overlap was rejected by the existing lock.
+- A second concurrent pair appended one deliberately failing test only in
+  disposable worktree A: A returned 1 with the injected diagnostic in its log and
+  JUnit report; B returned 0. A's failed invocation was archived for inspection
+  before its exact printed run directory was removed. All **282 files** in B's
+  retained runs kept identical content hashes and modification times; A's earlier
+  successful invocation and both setups remained present. The injected test was
+  removed, leaving both source worktrees clean.
+- Direct pytest with startup `PYTHONPATH` unset and an independent review checked
+  harness startup. No production behavior defect was found. The host-dependent
+  `/opt/gcf-workflows` revision lookup is explicitly doubled, as described above.
+
+The failure probe tests development diagnostics/isolation; it is not a production
+failure or a change to the four committed scenarios. The local failure archive,
+transcripts and machine-readable comparison remain under the implementing
+checkout's `.dev/isolation-evidence/`; routine scenario artifacts are retained
+by the documented runner. PR #142 records subsequent final-head CI evidence.
 
 ## Remaining manual integration
 
