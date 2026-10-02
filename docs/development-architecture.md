@@ -117,11 +117,12 @@ regression coverage and review, even when a refactor appears internal:
 ## Choosing verification
 
 Start with the tests listed above and the common
-[local checks](development.md). Fixtures in `tests/test_state_integration.py`
-already supply temporary configuration, metadata and tiny FASTQs; several tests
-reuse them. Keep any extraction of those helpers bounded. Dedicated reusable
-operational scenarios are follow-up [#140](https://github.com/gcfntnu/gcf-bfq/issues/140),
-not a claim made by the current local suite.
+[local checks](development.md). Shared helpers in `tests/support/fixtures.py`
+supply temporary configuration,
+metadata and tiny FASTQs; `test_state_integration.py` retains its existing helper
+imports for compatibility. The [operational scenarios](operational-scenarios.md)
+add deterministic paired data and installed-manager commands without replacing
+the detailed restart, notification and snapshot regression tests.
 
 Use the relevant existing guide to specify the remaining manual integration:
 

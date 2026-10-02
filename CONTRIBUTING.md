@@ -87,9 +87,11 @@ python3.11 scripts/dev.py check all
 ```
 
 `fast` covers the existing automated suite, lint/format checks and installed
-editable-command smoke checks. `all` additionally checks the built wheel in a
-separate environment. The [development guide](docs/development.md) defines the
-exact profiles, dependency preparation and diagnostics. Keep lint and formatting
+editable-command smoke checks. `all` additionally runs the compact operational
+scenarios and checks the built wheel in a separate environment. Run
+`python3.11 scripts/dev.py check scenarios` for the operational profile alone.
+The [development guide](docs/development.md) defines the exact profiles,
+dependency preparation and diagnostics. Keep lint and formatting
 checks non-mutating; make intentional formatting edits as normal source changes.
 
 Tests must not send real email. Use mocked SMTP and the development harness's
@@ -101,10 +103,10 @@ checks are safe entry points exercised by the harness.
 
 Existing tests named `*_integration.py` exercise multiple BFQ components using
 temporary files and doubles at external boundaries. They are part of the local
-suite, not proof of a server integration pass. Reusable operational scenarios
-and their dedicated entry point are tracked in
-[#140](https://github.com/gcfntnu/gcf-bfq/issues/140); that profile is not yet part
-of this development foundation.
+suite, not proof of a server integration pass. The
+[operational scenario guide](docs/operational-scenarios.md) describes the
+dedicated installed-command/recovery profile, its deterministic synthetic data,
+retained artifacts, and external boundaries.
 
 For operational behavior changes, select the applicable manual guide(s) from the
 architecture map and specify remaining real-server checks. A maintainer runs

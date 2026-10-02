@@ -82,11 +82,11 @@ authentication into tracked requirements or diagnostics.
 
 | Command | Evidence | Does not establish |
 | --- | --- | --- |
-| `python3.11 scripts/dev.py check fast` | `pip check`, non-mutating Ruff lint/format, complete existing pytest suite, editable installed-command smoke | Clean wheel packaging or real external processing |
+| `python3.11 scripts/dev.py check fast` | `pip check`, non-mutating Ruff lint/format, existing pytest suite (excluding the dedicated scenarios), editable installed-command smoke | Clean wheel packaging or real external processing |
 | `python3.11 scripts/dev.py check fast -- tests/test_state.py -q` | Same lint/smoke checks with the explicit pytest selection | Tests outside that selection; report the selection in handoff |
 | `python3.11 scripts/dev.py check wheel` | Fresh sdist/wheel build, new venv, offline wheel/dependency install, `pip check`, installed-command smoke | Full pytest suite or scientific workflows |
-| `python3.11 scripts/dev.py check all` | Full fast profile plus wheel profile; same command used in CI | Server/container/scientific integration |
-| Reusable operational scenarios (#140, pending) | Will exercise compact installed-CLI/state/file scenarios with declared external doubles | Not implemented by this PR; no current `scenario` command |
+| `python3.11 scripts/dev.py check all` | Full fast profile, operational scenarios and wheel profile; same command used in CI | Server/container/scientific integration |
+| `python3.11 scripts/dev.py check scenarios` | [Synthetic operational scenarios](operational-scenarios.md): real parsing, shared validation, installed manager commands, persistent state, restart/recovery and snapshot retention | Bioinformatics results, real reports, containers or SMTP delivery |
 | Relevant [manual integration guides](development-architecture.md#choosing-verification) | Real tools, mounts, reports, workflow outputs, notifications and deployment behavior | Replaced by neither fast nor wheel checks |
 
 Installed-command smoke invokes `bfq`, `fm` and `flowcell-manager` with `--version`
@@ -96,10 +96,12 @@ that BFQ/manager/configmaker imports come from that clean environment. It never
 runs bare `bfq` or container wrapper `--help` commands, which can launch work.
 
 Tests named `*_integration.py` in today's suite already test multiple Python
-components with temporary data; they remain included in `fast`. They are not the
-future dedicated scenario profile or server integration. Keep #140's synthetic
-fixture/scenario work inside the same invocation-owned path convention, reuse
-existing tests where useful, and state which external outputs are doubles.
+components with temporary data; they remain included in `fast`. The dedicated
+`scenarios` profile adds a compact end-to-end operational story;
+`all` runs both profiles in separate pytest processes, then checks packaging.
+`scenarios` always runs its complete compact set and rejects pytest selections.
+A selection supplied to `fast` or `all` changes only the fast test selection.
+Neither profile is server integration. See the [fixture and boundary contract](operational-scenarios.md).
 
 ## Isolation and mail protection
 
@@ -122,16 +124,22 @@ This is an accidental-mail guard for normal Python subprocesses, not an OS
 sandbox: `python -I`/`-S`, a replaced environment, non-Python mail tools or custom
 socket clients can bypass startup hooks. Do not introduce those execution paths
 into local checks. Future subprocess helpers must preserve and verify the guard;
-external processing must remain explicitly doubled. Real notification delivery
-belongs to separately arranged server integration.
+external processing must remain explicitly doubled. The scenario profile adds
+a stricter test-only audit guard: only its absolute installed manager executables
+may be launched, their child environment must retain the guard, and network
+connections and shell/exec/spawn commands are refused. See the scenario guide
+for the exact limits. Real notification delivery belongs to separately arranged
+server integration.
 
 ## Failure evidence and cleanup
 
 Every check prints its owned artifact directory and source/dependency identity.
 `identity.json` records current BFQ Git revision/status, setup identity, profile
-and platform; `packages.txt` lists installed packages. Console output carries the
-commands and failures. CI uploads these identity files on failure. Include the
-command, relevant failure and identity in a PR rather than copying all test data.
+and platform; `packages.txt` lists installed packages. Each pytest invocation
+retains a console transcript, JUnit report and timing/peak-child-memory
+summary even on failure. Scenario case directories also retain synthetic inputs,
+state, CLI transcripts and external-double outputs. CI uploads identity, test
+logs and scenario artifacts on failure for seven days. Include the command, relevant failure and identity in a PR rather than copying all test data.
 Local paths and uncommitted status may be meaningful; do not attach sensitive
 operational files or credentials.
 
