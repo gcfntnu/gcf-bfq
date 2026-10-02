@@ -7,7 +7,7 @@ on:
 
 jobs:
   tests:
-    name: Local checks and clean wheel
+    name: Local checks, operational scenarios and clean wheel
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -21,12 +21,18 @@ jobs:
         run: python3.11 scripts/dev.py setup
       - name: Run shared offline checks
         run: python3.11 scripts/dev.py check all
-      - name: Retain check identity on failure
+      - name: Retain check diagnostics and synthetic scenario artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: development-check-identity
+          name: development-check-evidence
           path: |
             .dev/runs/*/identity.json
             .dev/runs/*/packages.txt
+            .dev/runs/*/*.log
+            .dev/runs/*/*-junit.xml
+            .dev/runs/*/*-summary.json
+            .dev/runs/*/scenarios/**
+          include-hidden-files: true
+          retention-days: 7
           if-no-files-found: ignore

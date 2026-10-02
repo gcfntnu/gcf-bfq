@@ -8,11 +8,13 @@ import hashlib
 import json
 import os
 import platform
+import resource
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 from contextlib import contextmanager
 from pathlib import Path
@@ -31,12 +33,75 @@ BASELINE = ROOT / "requirements-dev.txt"
 GUARD = ROOT / "tests" / "support"
 
 
-def run(args, *, env, cwd=ROOT):
+def run(args, *, env, cwd=ROOT, log=None):
     display = list(map(str, args))
     if "-c" in display and "\n" in display[display.index("-c") + 1]:
         display[display.index("-c") + 1] = "<installed-command smoke>"
     print("+ " + shlex.join(display), flush=True)
-    subprocess.run(list(map(str, args)), cwd=cwd, env=env, check=True)
+    if log is None:
+        subprocess.run(list(map(str, args)), cwd=cwd, env=env, check=True)
+        return
+    with log.open("w") as transcript:
+        transcript.write("+ " + shlex.join(display) + "\n")
+        with subprocess.Popen(
+            list(map(str, args)),
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+        ) as process:
+            for line in process.stdout:
+                print(line, end="", flush=True)
+                transcript.write(line)
+                transcript.flush()
+            returncode = process.wait()
+        if returncode:
+            raise subprocess.CalledProcessError(returncode, args)
+
+
+def pytest_check(python, env, work, selection, *, scenarios=False):
+    """One pytest invocation, with durable diagnostics even when it fails."""
+    name = "scenarios" if scenarios else "tests"
+    test_env = env.copy()
+    if scenarios:
+        test_env["BFQ_TEST_SCENARIOS"] = "1"
+        test_env["BFQ_TEST_ALLOWED_EXECUTABLES"] = json.dumps(
+            [str(python.parent / command) for command in ("fm", "flowcell-manager")]
+        )
+    started = time.monotonic()
+    outcome = "failed"
+    try:
+        run(
+            [
+                python,
+                "-m",
+                "pytest",
+                "-o",
+                f"cache_dir={work / (name + '-cache')}",
+                "--basetemp",
+                work / name,
+                "--junitxml",
+                work / (name + "-junit.xml"),
+                "-ra",
+                *selection,
+            ],
+            env=test_env,
+            log=work / (name + ".log"),
+        )
+        outcome = "passed"
+    finally:
+        summary = {
+            "outcome": outcome,
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "peak_child_rss_kib_so_far": resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,
+            "artifacts": str(work / name),
+            "transcript": str(work / (name + ".log")),
+            "junit": str(work / (name + "-junit.xml")),
+        }
+        (work / (name + "-summary.json")).write_text(json.dumps(summary, indent=2) + "\n")
+        print(json.dumps(summary, indent=2), flush=True)
 
 
 def identity(path):
@@ -58,7 +123,7 @@ def environment(work, *, guarded=False, python=None):
     for key in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX", "PYTEST_ADDOPTS"):
         env.pop(key, None)
     for key in tuple(env):
-        if key.startswith("PYTHON"):
+        if key.startswith(("PYTHON", "BFQ_TEST_")):
             env.pop(key)
         elif key.startswith(("PIP_", "UV_")):
             if not guarded and key in {
@@ -273,24 +338,24 @@ def check(args):
         cwd=work,
     )
     run([python, "-m", "pip", "check"], env=env)
-    if args.profile != "wheel":
+    if args.profile in ("fast", "all"):
         run([python, "-m", "ruff", "check", "--no-fix", ROOT], env=env)
         run([python, "-m", "ruff", "format", "--check", ROOT], env=env)
-        selection = args.pytest_args or [str(ROOT / "tests")]
-        run(
-            [
-                python,
-                "-m",
-                "pytest",
-                "-o",
-                f"cache_dir={work / 'pytest-cache'}",
-                "--basetemp",
-                work / "pytest",
-                *selection,
-            ],
-            env=env,
-        )
+        selection = args.pytest_args or [
+            str(ROOT / "tests"),
+            "--ignore",
+            str(ROOT / "tests/test_operational_scenarios.py"),
+        ]
+        pytest_check(python, env, work, selection)
         smoke(python, "editable", env)
+    if args.profile in ("scenarios", "all"):
+        pytest_check(
+            python,
+            env,
+            work,
+            [str(ROOT / "tests/test_operational_scenarios.py")],
+            scenarios=True,
+        )
     if args.profile in ("all", "wheel"):
         source = work / "source"
         copy_source(ROOT, source)
@@ -338,7 +403,7 @@ def main():
         "check", help="Run offline checks using the last successful setup"
     )
     check_parser.add_argument(
-        "profile", nargs="?", default="fast", choices=("fast", "all", "wheel")
+        "profile", nargs="?", default="fast", choices=("fast", "scenarios", "all", "wheel")
     )
     check_parser.add_argument(
         "pytest_args", nargs=argparse.REMAINDER, help="Optional pytest selection after --"
@@ -352,8 +417,11 @@ def main():
         parser.error("Git is required for source identity; install git and retry")
     if args.command == "check" and args.pytest_args[:1] == ["--"]:
         args.pytest_args = args.pytest_args[1:]
-    if args.command == "check" and args.profile == "wheel" and args.pytest_args:
-        parser.error("The wheel profile does not run pytest; use check fast/all -- TEST_SELECTION")
+    if args.command == "check" and args.profile in ("wheel", "scenarios") and args.pytest_args:
+        parser.error(
+            f"The {args.profile} profile does not accept pytest selection; "
+            "use check fast/all -- TEST_SELECTION"
+        )
     try:
         with checkout_lock():
             setup(args) if args.command == "setup" else check(args)
