@@ -1,0 +1,3 @@
+# Immutable companion baseline for local checks and CI (gcf-tools PR #58 / API 1).
+# Production Docker builds deliberately continue selecting the production branch.
+gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/bdd94a1d944120ac8a096ea8876c0de98dd51ab3.zip
