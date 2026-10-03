@@ -126,3 +126,11 @@ route.
 8. Compare planned samples in the preflight report with configmaker's actual
    FASTQ-discovered analysis summary; missing FASTQs must not be reported as
    successfully analyzed merely because their inputs passed validation.
+
+## Explicit analysis resume
+
+`fm rerun --from analysis --resume` preserves the retained execution context.
+Shared input validation still applies; curated identifiers/wells must agree with
+the retained configuration. It does not regenerate configmaker output or read
+installed libprep settings. See [analysis resume](analysis-resume.md) for the
+binding checks, operator correction path and server verification.

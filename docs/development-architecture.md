@@ -22,7 +22,7 @@ delivery failures remain separate from processing failures.
 | Input validation | `preflight.py` | Resolve effective inputs and call shared `gcf-tools` validation before demultiplexing/analysis. `tests/test_input_preflight.py`. |
 | Stage orchestration | `cli.py: _run_state_backed_flowcell` | Run the four restart boundaries; commit processing outcomes separately from notification delivery. `tests/test_notification_integration.py`, `tests/test_early_qc_integration.py`. |
 | Demultiplexing and corrections | `makeFastq.py`, `index_corrections.py`, `index_sequences.py` | Conversion selection, FASTQ naming and explicit index-orientation corrections. `tests/test_index_cli.py`, `tests/test_index_corrections.py`. |
-| Analysis and finalization | `afterFastq.py`, `workflow_config.py` | Capture library-prep configuration, invoke configmaker/Snakemake, copy reports, create archives/checksums. `tests/test_after_fastq.py`, `tests/test_workflow_config.py`, `tests/test_fastq_checksums.py`. |
+| Analysis and finalization | `afterFastq.py`, `workflow_config.py`, `analysis_resume.py` | Capture library-prep configuration, invoke configmaker/Snakemake, copy reports, create archives/checksums. `tests/test_after_fastq.py`, `tests/test_workflow_config.py`, `tests/test_fastq_checksums.py`. |
 | Operator CLI and cleanup | `../flowcell_manager/flowcell_manager.py`, `state.py: cleanup_plan`, `fastq_cleanup.py` | Shared `fm`/`flowcell-manager`, validation and rerun previews, explicit initialization, search/status, cleanup and archive operations. `tests/test_state_integration.py`, `tests/test_flowcell_search.py`, `tests/test_fastq_cleanup.py`. |
 | Analysis retention | `analysis_snapshots.py` | Retain the actual successful analysis workdir, stage/commit/recover publication, preserve the previous successful archive. `tests/test_analysis_snapshots.py`, `tests/test_snapshot_integration.py`. |
 | QC and notifications | `sequencing_qc.py`, `sequencing_delivery.py`, `analysis_qc.py`, `notifications.py`, `notification_delivery.py`, `misc.py` | Early sequencing report, analysis summary, durable delivery/retry, production error reporting. `tests/test_sequencing_qc.py`, `tests/test_analysis_qc.py`, `tests/test_notification_mail.py`, `tests/test_error_reporting.py`. |
@@ -93,7 +93,9 @@ regression coverage and review, even when a refactor appears internal:
   existing state mechanisms rather than introducing competing completion markers.
 - **Restart boundaries:** retain `demultiplexing`, `analysis`, `reporting` and
   `finalization`. An analysis rerun preserves FASTQs and their valid MD5
-  manifests, then rebuilds downstream analysis/results. Reporting/finalization
+  manifests, then rebuilds downstream analysis/results. Explicit `--resume` instead
+  validates and reuses owned workdirs and their repaired configuration; see
+  [analysis resume](analysis-resume.md). Reporting/finalization
   preserve completed project analysis and its recorded workflow identity. Use
   the actual cleanup plan and CLI preview rather than reproducing a glob list in
   new code. `clean-fastqs` and `archive` are distinct explicit operator actions.

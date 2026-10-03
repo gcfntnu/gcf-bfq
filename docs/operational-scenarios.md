@@ -241,3 +241,12 @@ arrange checks with disposable operational data:
 - Deployment configuration/mount authority, discovery/daemon restart, legacy data,
   resource behavior and production image identity. Promotion and deployment
   remain separate human decisions.
+
+## Analysis resume
+
+The installed-command resume scenario preserves a repaired owned workspace,
+Snakemake metadata and a synthetic completed branch across preview, queue and
+failure. A doubled no-op then completes copying, reports, archives, snapshots
+and state even when the SMTP double fails. The separate tiny real DAG test runs
+in the fast profile, not under the scenario subprocess allowlist. See
+[analysis resume](analysis-resume.md) for the complete boundary and manual checks.

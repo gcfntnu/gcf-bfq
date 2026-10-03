@@ -164,6 +164,20 @@ original workflow commit. A finalization-only rerun likewise preserves those
 reports. Consequently, a later reporting/finalization attempt's runtime revision
 can differ from the analysis revision correctly recorded in the preserved report.
 
+### Resume analysis without resetting its workspace
+
+Use `fm rerun RUN_ID --from analysis --resume --dry-run` to preview reuse of
+existing owned analysis workdirs, then omit `--dry-run` to queue it. This preserves
+local config/workflow repairs and `.snakemake` metadata; Snakemake chooses which
+jobs rerun. BFQ still completes report copying, reporting and finalization after
+a successful run or no-op. Curated inputs must validate and agree with retained
+identities; correct both the output-side workbook and retained config when
+repairing well IDs. `--refresh-inputs` is incompatible with resume.
+
+See [analysis resume](docs/analysis-resume.md) for prerequisites, validation,
+provenance, limitations and manual integration checks. Without `--resume`, the
+existing invalidating analysis restart remains unchanged.
+
 ### Retained analysis workdir snapshots
 
 After successful finalization BFQ retains one archive per project at:

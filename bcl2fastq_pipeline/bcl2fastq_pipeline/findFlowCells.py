@@ -12,6 +12,7 @@ import bcl2fastq_pipeline.afterFastq as af
 
 from bcl2fastq_pipeline.config import PipelineConfig, parse_custom_options
 from bcl2fastq_pipeline.preflight import (
+    InputSelection,
     copy_run_inputs,
     has_custom_options_marker,
     select_run_inputs,
@@ -112,7 +113,12 @@ def newFlowCell():
     output = resolve_output_path(state["output_path"], cfg.run.run_id, cfg)
     output_entries(output, allow_missing=state["current_stage"] == "demultiplexing")
 
-    selection = select_run_inputs(cfg.run.flowcell_path, output)
+    resume = (state.get("restart_request") or {}).get("analysis_resume")
+    selection = (
+        InputSelection(output / "SampleSheet.csv", output / "Sample-Submission-Form.xlsx")
+        if resume
+        else select_run_inputs(cfg.run.flowcell_path, output)
+    )
     opts = {}
     malformed_opt_in = False
     try:
@@ -133,7 +139,7 @@ def newFlowCell():
         cfg.run.reset()
         return
 
-    copied = copy_run_inputs(selection, output)
+    copied = selection if resume else copy_run_inputs(selection, output)
     cfg.run.apply_custom(opts, copied.sample_sheet, copied.submission_form)
     log.info(
         "Prepared %s from state origin=%s stage=%s",

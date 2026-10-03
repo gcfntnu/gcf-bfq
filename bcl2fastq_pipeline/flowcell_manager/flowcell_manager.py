@@ -28,6 +28,7 @@ from bcl2fastq_pipeline.state import (
 from bcl2fastq_pipeline.version import add_version_argument
 
 from bcl2fastq_pipeline import (
+    analysis_resume,
     analysis_snapshots,
     fastq_cleanup,
     index_corrections,
@@ -268,6 +269,9 @@ def _initialize_source(value, cfg):
 def rerun_flowcell(**args):
     from_stage = args.get("from_stage") or "demultiplexing"
     indexes = _requested_indexes(args, from_stage)
+    resume = args.get("resume", False)
+    if resume and (from_stage != "analysis" or args.get("refresh_inputs", False)):
+        raise StateConflictError("--resume requires --from analysis and forbids --refresh-inputs")
     cfg = get_cfg()
     store = FlowcellStateStore(cfg.static.paths.manager_dir)
     run_id, state, legacy = _resolve_state_or_legacy(args["flowcell"], cfg, store)
@@ -277,6 +281,8 @@ def rerun_flowcell(**args):
     reason = args.get("reason")
 
     if state is None:
+        if resume:
+            raise StateConflictError("--resume requires existing BFQ state and owned workdirs")
         if legacy.empty:
             raise StateConflictError(f"No state or legacy inventory entry exists for {run_id}")
         output_path = _legacy_output_path(legacy, run_id, cfg)
@@ -311,11 +317,14 @@ def rerun_flowcell(**args):
     state = {**state, "output_path": str(output_path)}
     _require_separate_source(state["source_path"], output_path)
     fastq_cleanup.require_restored(state, output_path, from_stage)
-    paths = _cleanup_for_state(state, from_stage)
+    context = analysis_resume.inspect(state) if resume else None
+    paths = [] if resume else _cleanup_for_state(state, from_stage)
+    if context:
+        analysis_resume.print_plan(context)
     _print_plan("Rerun", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
     correction = None
     selected = None
-    if from_stage in {"demultiplexing", "analysis"} or refresh_inputs:
+    if not resume and (from_stage in {"demultiplexing", "analysis"} or refresh_inputs):
         selected, _result = preflight.require_valid_inputs(
             state["source_path"], output_path, refresh=refresh_inputs
         )
@@ -334,12 +343,14 @@ def rerun_flowcell(**args):
     with store.execution_lease(run_id):
         if not creating and store.read(run_id)["updated_at"] != state["updated_at"]:
             raise StateConflictError("Run changed while preparing the command; inspect and retry")
-        if _cleanup_for_state(state, from_stage) != paths:
+        if not resume and _cleanup_for_state(state, from_stage) != paths:
             raise StateConflictError("Output paths changed after the preview; inspect and retry")
         _require_separate_source(state["source_path"], output_path)
         fastq_cleanup.require_restored(state, output_path, from_stage)
         selected = None
-        if from_stage in {"demultiplexing", "analysis"} or refresh_inputs:
+        if resume:
+            analysis_resume.verify(context, analysis_resume.inspect(state))
+        if not resume and (from_stage in {"demultiplexing", "analysis"} or refresh_inputs):
             selected, _result = preflight.require_valid_inputs(
                 state["source_path"], output_path, refresh=refresh_inputs
             )
@@ -368,6 +379,7 @@ def rerun_flowcell(**args):
                 reason=reason,
                 refresh_inputs=refresh_inputs,
                 output_path=output_path,
+                analysis_resume=context,
             )
 
         if selected is not None:
@@ -889,6 +901,11 @@ def main():
     parser_rerun.add_argument("--force", action="store_true")
     parser_rerun.add_argument("--reason")
     parser_rerun.add_argument("--refresh-inputs", action="store_true")
+    parser_rerun.add_argument(
+        "--resume",
+        action="store_true",
+        help="Reuse owned analysis workdirs/configuration; requires --from analysis, forbids --refresh-inputs.",
+    )
     _add_index_options(parser_rerun)
 
     parser_clean = subparsers.add_parser(

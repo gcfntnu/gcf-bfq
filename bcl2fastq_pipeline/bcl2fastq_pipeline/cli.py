@@ -4,6 +4,7 @@ import importlib
 import json
 import logging
 import os
+import shutil
 import signal
 import sys
 import time
@@ -20,6 +21,7 @@ import bcl2fastq_pipeline.misc
 
 from bcl2fastq_pipeline import (
     analysis_qc,
+    analysis_resume,
     analysis_snapshots,
     notification_delivery,
     notifications,
@@ -147,11 +149,37 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                 store.start_stage(run_id, stage)
 
             try:
+                resume = (current.get("restart_request") or {}).get("analysis_resume")
                 if stage in {"demultiplexing", "analysis"}:
-                    preflight.run_preflight(cfg, store, stage)
+                    result = preflight.run_preflight(cfg, store, stage)
+                    if resume and stage == "analysis":
+                        context = analysis_resume.inspect(
+                            current,
+                            selection=preflight.InputSelection(
+                                cfg.output_path / "SampleSheet.csv",
+                                cfg.output_path / "Sample-Submission-Form.xlsx",
+                            ),
+                            result=result,
+                        )
+                        analysis_resume.verify(resume, context)
+
+                        def record_execution(current_state):
+                            current_state["attempts"][-1]["analysis_resume"]["execution"] = {
+                                "snakemake_executable": shutil.which("snakemake"),
+                                "command": bcl2fastq_pipeline.afterFastq.snakemake_command(
+                                    resume=True
+                                ),
+                                "bfq_python": sys.executable,
+                            }
+                            return current_state
+
+                        store.mutate(run_id, record_execution)
+                        workflow_config.prepare_execution(
+                            cfg, "reporting", workflow=resume["workflow"]
+                        )
                     if prepare and not cfg.run.custom:
                         raise RuntimeError("BFQ SampleSheet is missing usable [CustomOptions]")
-                if prepare and index == start_index:
+                if prepare and index == start_index and not (resume and stage == "analysis"):
                     _prepare_workflow(cfg, store, current)
                 if index == start_index and stage != "demultiplexing":
                     log.info("Checking FASTQ manifests before %s: %s", stage, run_id)
@@ -185,7 +213,10 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                 elif stage == "analysis":
                     log.info("Starting analysis: %s", run_id)
                     with processing_times.measure(store, run_id, "analysis"):
-                        workdirs = bcl2fastq_pipeline.afterFastq.analysis_steps()
+                        if resume:
+                            workdirs = bcl2fastq_pipeline.afterFastq.analysis_steps(resume=resume)
+                        else:
+                            workdirs = bcl2fastq_pipeline.afterFastq.analysis_steps()
                     store.complete_stage(
                         run_id, stage, {"workflow": cfg.run.pipeline, "workdirs": workdirs or {}}
                     )

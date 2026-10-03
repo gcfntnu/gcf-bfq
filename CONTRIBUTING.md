@@ -143,3 +143,8 @@ preserve the shared history. Follow the existing [production policy](README.md#v
 for image tags and builds; a successful local check does not merge, promote,
 deploy or send notifications. No new release scheme or per-PR release manifest
 is required.
+
+The issue #143 regression is an explicit exception to the prohibition on local
+workflow execution: `tests/test_resume_snakemake.py` runs only a tiny synthetic
+text-file DAG in an invocation-owned directory. Do not extend it to scientific
+workflows, production inputs, containers or real mail.

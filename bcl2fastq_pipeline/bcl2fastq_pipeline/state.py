@@ -608,6 +608,7 @@ class FlowcellStateStore:
         refresh_inputs: bool,
         hostname: str | None = None,
         output_path: Path | None = None,
+        analysis_resume: dict | None = None,
     ) -> dict:
         if start_stage not in STAGES:
             raise StateValidationError(f"Unsupported stage: {start_stage}")
@@ -628,6 +629,8 @@ class FlowcellStateStore:
                 "requested_at": utcnow(),
                 "refresh_inputs": bool(refresh_inputs),
             }
+            if analysis_resume is not None:
+                state["restart_request"]["analysis_resume"] = copy.deepcopy(analysis_resume)
             state["completed_at"] = None
             state["failed_at"] = None
             state["last_error"] = None
@@ -690,6 +693,7 @@ class FlowcellStateStore:
                     "attempt": state["attempt"],
                     "restart_from": stage,
                     "reason": request.get("reason"),
+                    "analysis_resume": copy.deepcopy(request.get("analysis_resume")),
                     "requester_host": request.get("hostname"),
                     "started_at": now,
                     "completed_at": None,
