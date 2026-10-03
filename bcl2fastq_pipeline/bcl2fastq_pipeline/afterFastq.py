@@ -299,6 +299,7 @@ def archive_worker(cfg):
         # Archive FASTQ
         # ------------------------------------------------------------------ #
         archive_fastq = cfg.output_path / f"{p}_{run_date}.7za"
+        (cfg.output_path / f"md5sum_{p}_{run_date}_archive.txt").unlink(missing_ok=True)
         if archive_fastq.exists():
             archive_fastq.unlink()
 
@@ -334,6 +335,7 @@ def archive_worker(cfg):
         # Archive pipeline output (QC)
         # ------------------------------------------------------------------ #
         qc_archive = cfg.output_path / f"QC_{p}_{run_date}.7za"
+        (cfg.output_path / f"md5sum_QC_{p}_{run_date}_archive.txt").unlink(missing_ok=True)
         if qc_archive.exists():
             qc_archive.unlink()
 
@@ -390,76 +392,111 @@ def post_workflow(project_id, base_dir, pipeline):
     return True
 
 
-def full_align(cfg):
-    selection = select_workflow(cfg)
+def snakemake_command(*, resume=False):
+    command = [
+        "snakemake",
+        "--use-singularity",
+        "--singularity-prefix",
+        os.environ["SINGULARITY_CACHEDIR"],
+        "--cores",
+        "32",
+        "--scheduler",
+        "greedy",
+        "-p",
+        "multiqc_report",
+    ]
+    if resume:
+        # Keep normal failed-job cleanup: Snakemake 9.7.1 can mark a
+        # failed job complete when --keep-incomplete retains partial files.
+        command[1:1] = ["--rerun-incomplete"]
+    return command
+
+
+def full_align(cfg, *, resume=None):
+    selection = None if resume else select_workflow(cfg)
     project_names = get_project_names(get_project_dirs(cfg))
     run_date = str(cfg.output_path.name).split("_")[0]
     workdirs = {}
+    if resume and set(project_names) != set(resume["projects"]):
+        raise RuntimeError("Resume projects differ from available FASTQs; inspect and requeue")
     for p in sorted(project_names):
         analysis_dir = analysis_snapshots.workdir_path(cfg.run.run_id, p)
-        analysis_dir.mkdir(parents=True, exist_ok=True)
-        (analysis_dir / "src").mkdir(parents=True, exist_ok=True)
-        (analysis_dir / "data").mkdir(parents=True, exist_ok=True)
-        log.info(f"Setting up analysis for {analysis_dir}")
+        if resume:
+            entry = resume["projects"][p]
+            analysis_dir = Path(entry["identity"]["path"])
+            workdirs[p] = entry["identity"]
+            log.info("Resuming retained analysis in %s", analysis_dir)
+        else:
+            analysis_dir.mkdir(parents=True, exist_ok=True)
+            (analysis_dir / "src").mkdir(parents=True, exist_ok=True)
+            (analysis_dir / "data").mkdir(parents=True, exist_ok=True)
+            log.info(f"Setting up analysis for {analysis_dir}")
 
-        workdirs[p] = analysis_snapshots.identify_workdir(analysis_dir, cfg.run.run_id, p)
+            workdirs[p] = analysis_snapshots.identify_workdir(analysis_dir, cfg.run.run_id, p)
 
-        src = workflow_config.AUTHORITATIVE_CONFIG.parent
-        dst = analysis_dir / "src" / "gcf-workflows"
+            src = workflow_config.AUTHORITATIVE_CONFIG.parent
+            dst = analysis_dir / "src" / "gcf-workflows"
 
-        # copy snakemake pipeline
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.copytree(src, dst)
-        # copytree sees mutable working-tree files; overwrite the config with the
-        # exact bytes captured for this execution, including uncommitted edits.
-        selection.config.write(dst / "libprep.config")
+            # copy snakemake pipeline
+            if dst.exists():
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+            # copytree sees mutable working-tree files; overwrite the config with the
+            # exact bytes captured for this execution, including uncommitted edits.
+            selection.config.write(dst / "libprep.config")
 
-        machine = get_sequencer(cfg.run.run_id)
-        # create config.yaml
-        cmd = [
-            "/opt/conda/bin/python",
-            "/opt/conda/bin/configmaker.py",
-            str(cfg.output_path),
-            "-p",
-            str(p),
-            "--libkit",
-            selection.kit,
-            "--machine",
-            str(machine),
-            "--expected-validation-version",
-            VALIDATOR_VERSION,
-            "--libprep-config",
-            str(dst / "libprep.config"),
-            "--libprep-sha256",
-            selection.config.sha256,
-            "--libprep-entry",
-            selection.entry,
-            "--expected-read-geometry",
-            *(str(n) for n in selection.read_geometry),
-        ]
-        if (analysis_dir / "data/raw/fastq").exists():
-            cmd.append("--skip-create-fastq-dir")
-        subprocess.check_call(cmd, cwd=analysis_dir)
-        discovery_summary = analysis_dir / "configmaker.analysis-summary.json"
-        if discovery_summary.is_file():
-            shutil.copy2(discovery_summary, cfg.output_path / f"configmaker-analysis-{p}.json")
+            machine = get_sequencer(cfg.run.run_id)
+            # create config.yaml
+            cmd = [
+                "/opt/conda/bin/python",
+                "/opt/conda/bin/configmaker.py",
+                str(cfg.output_path),
+                "-p",
+                str(p),
+                "--libkit",
+                selection.kit,
+                "--machine",
+                str(machine),
+                "--expected-validation-version",
+                VALIDATOR_VERSION,
+                "--libprep-config",
+                str(dst / "libprep.config"),
+                "--libprep-sha256",
+                selection.config.sha256,
+                "--libprep-entry",
+                selection.entry,
+                "--expected-read-geometry",
+                *(str(n) for n in selection.read_geometry),
+            ]
+            if (analysis_dir / "data/raw/fastq").exists():
+                cmd.append("--skip-create-fastq-dir")
+            subprocess.check_call(cmd, cwd=analysis_dir)
+            discovery_summary = analysis_dir / "configmaker.analysis-summary.json"
+            if discovery_summary.is_file():
+                shutil.copy2(discovery_summary, cfg.output_path / f"configmaker-analysis-{p}.json")
 
         # run snakemake pipeline
-        cmd = [
-            "snakemake",
-            "--use-singularity",
-            "--singularity-prefix",
-            os.environ["SINGULARITY_CACHEDIR"],
-            "--cores",
-            "32",
-            "--scheduler",
-            "greedy",
-            "-p",
-            "multiqc_report",
-        ]
+        cmd = snakemake_command(resume=bool(resume))
         snakemake_log = cfg.static.paths.log_dir / f"{cfg.run.run_id}_{p}_snakemake.log"
         run_logged_command(cmd, cwd=analysis_dir, log_path=snakemake_log)
+
+        if resume:
+            # Publish current BFQ products only after successful scientific work.
+            # Queueing and failed analysis leave prior delivery files untouched.
+            qc = cfg.output_path / f"QC_{p}"
+            if qc.is_symlink():
+                qc.unlink()
+            elif qc.exists():
+                shutil.rmtree(qc)
+            for name in (
+                f"all_samples_web_summary_{p}_{run_date}.html",
+                f"configmaker-analysis-{p}.json",
+            ):
+                (cfg.output_path / name).unlink(missing_ok=True)
+            discovery = analysis_dir / "configmaker.analysis-summary.json"
+            if discovery.is_file():
+                shutil.copy2(discovery, cfg.output_path / f"configmaker-analysis-{p}.json")
+            post_workflow(p, cfg.output_path, cfg.run.pipeline)
 
         # copy report
         shutil.copy2(
@@ -513,10 +550,10 @@ def _disk_usage_message(cfg):
     return message
 
 
-def analysis_steps():
+def analysis_steps(*, resume=None):
     """Run work invalidated by the public analysis restart boundary."""
     cfg = PipelineConfig.get()
-    return full_align(cfg)
+    return full_align(cfg, resume=resume) if resume else full_align(cfg)
 
 
 def reporting_steps():
