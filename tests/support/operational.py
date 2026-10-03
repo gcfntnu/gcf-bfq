@@ -192,9 +192,32 @@ class Scenario:
             work = Path(cwd)
             assert work.is_relative_to(self.root / "scratch")
             (work / "config.yaml").write_text(
-                yaml.safe_dump({"workflow": "synthetic", "notice": LABEL})
+                yaml.safe_dump(
+                    {
+                        "workflow": "synthetic",
+                        "notice": LABEL,
+                        "project_id": [PROJECT],
+                        "samples": {
+                            "sample": {
+                                "Sample_ID": "sample",
+                                "Flowcell_Name": RUN_ID,
+                                "Flowcell_ID": RUN_ID.split("_")[-1],
+                            }
+                        },
+                    }
+                )
             )
             (work / "Snakefile").write_text(f"# {LABEL}\n")
+            (work / "pep").mkdir(exist_ok=True)
+            (work / "pep/pep_config.yaml").write_text("sample_table: sample_table.csv\n")
+            (work / "pep/sample_table.csv").write_text("sample_name\nsample\n")
+            raw = work / "data/raw/fastq"
+            raw.mkdir(parents=True, exist_ok=True)
+            for fastq in (self.output / PROJECT).glob("*.fastq.gz"):
+                (raw / fastq.name).symlink_to(fastq)
+            workflow = work / "src/gcf-workflows/synthetic/synthetic.smk"
+            workflow.parent.mkdir(exist_ok=True)
+            workflow.write_text(f"# {LABEL}\n")
             (work / "configmaker.analysis-summary.json").write_text(
                 json.dumps(
                     {
@@ -226,7 +249,7 @@ class Scenario:
             )
         work = Path(cwd)
         result = work / "data/tmp/synthetic/bfq"
-        result.mkdir(parents=True)
+        result.mkdir(parents=True, exist_ok=True)
         (result / f"multiqc_{PROJECT}.html").write_text(f"<html><body>{LABEL}</body></html>")
         (result / ".multiqc_config.yaml").write_text("{}\n")
         (work / "data/tmp/sample_info.tsv").write_text("sample\tgroup-curated\n")

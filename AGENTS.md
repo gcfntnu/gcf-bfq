@@ -56,3 +56,8 @@ Start with [CONTRIBUTING.md](CONTRIBUTING.md), the executable
 - Manual operational integration is required before merging affected behavior.
   Merge, production promotion, deployment and issue closure are deliberate steps,
   not effects of the test command. Verify issue closure after an authorized merge.
+
+The issue #143 regression is an explicit exception to the prohibition on local
+workflow execution: `tests/test_resume_snakemake.py` runs only a tiny synthetic
+text-file DAG in an invocation-owned directory. Do not extend it to scientific
+workflows, production inputs, containers or real mail.

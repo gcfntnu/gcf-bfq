@@ -101,6 +101,10 @@ components with temporary data; they remain included in `fast`. The dedicated
 `all` runs both profiles in separate pytest processes, then checks packaging.
 `scenarios` always runs its complete compact set and rejects pytest selections.
 A selection supplied to `fast` or `all` changes only the fast test selection.
+The fast profile also executes the tiny text-file Snakemake DAG described in
+[analysis resume](analysis-resume.md), using the development-only Snakemake pin.
+It tests real scheduler recovery/no-op/invalidation without scientific tools;
+its cache and outputs live in the test invocation directory.
 Neither profile is server integration. See the [fixture and boundary contract](operational-scenarios.md).
 
 ## Isolation and mail protection
