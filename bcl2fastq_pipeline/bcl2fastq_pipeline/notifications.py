@@ -13,13 +13,14 @@ import smtplib
 from datetime import datetime
 from email.headerregistry import HeaderRegistry
 from email.message import EmailMessage
+from email.policy import SMTP
 from email.utils import format_datetime
 from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
 from types import SimpleNamespace
 
-from bcl2fastq_pipeline import processing_times
+from bcl2fastq_pipeline import email_attachments, processing_times
 from bcl2fastq_pipeline.state import DeliveryUncertainError
 
 log = logging.getLogger(__name__)
@@ -125,7 +126,7 @@ def _settings(cfg, kind, *, warn_unknown=True):
         raise ValueError(f"Unsupported completion notification kind: {kind}")
     settings = cfg.static.email
     if warn_unknown:
-        supported = {"host", "from_address", *RECIPIENT_KEYS.values()}
+        supported = {"host", "from_address", "max_message_bytes", *RECIPIENT_KEYS.values()}
         for key in sorted(set(settings) - supported):
             correction = next(
                 (
@@ -205,17 +206,8 @@ def _legacy_processed_message(cfg, message, payload):
         + "</body></html>",
         subtype="html",
     )
-    date = run_id.split("_")[0]
-    for project in projects:
-        _add_report(message, saved_cfg.output_path / f"multiqc_{project}_{date}.html")
-        if (payload.get("libprep") or "").startswith(
-            ("10X Genomics Chromium Single Cell", "Parse Biosciences")
-        ):
-            report = saved_cfg.output_path / f"all_samples_web_summary_{project}_{date}.html"
-            if report.exists():
-                _add_report(message, report)
-    project_names = "_".join(projects)
-    _add_report(message, saved_cfg.output_path / "Stats" / f"sequencer_stats_{project_names}.html")
+    for report in _analysis_reports(payload):
+        _add_report(message, report.path)
 
 
 class _PlainText(HTMLParser):
@@ -315,7 +307,7 @@ def _processed_message(cfg, message, payload):
     saved_cfg = _saved_config(cfg, payload)
     projects = payload["projects"]
     html_sections = [
-        "Analysis and project QC reports are complete. Review the attached MultiQC reports "
+        "Analysis and project QC reports are complete. Review the MultiQC reports "
         "for detailed sample QC; this email does not assign a QC pass/fail status. "
         "Archiving and delivery preparation are reported separately after finalization."
     ]
@@ -351,26 +343,83 @@ def _processed_message(cfg, message, payload):
             )
         )
     _body(message, "Analysis complete — QC summary", _run_summary(payload), html_sections)
+    for report in _analysis_reports(payload):
+        _add_report(message, report.path)
+
+
+def _analysis_reports(payload):
+    output = Path(payload["output_path"])
     date = payload["run_id"].split("_")[0]
+    projects = sorted(set(payload["projects"]))
+    reports = []
     for project in projects:
-        _add_report(message, saved_cfg.output_path / f"multiqc_{project}_{date}.html")
+        reports.append(
+            email_attachments.Report(output / f"multiqc_{project}_{date}.html", "MultiQC report", 2)
+        )
         if (payload.get("libprep") or "").startswith(
             ("10X Genomics Chromium Single Cell", "Parse Biosciences")
         ):
-            report = saved_cfg.output_path / f"all_samples_web_summary_{project}_{date}.html"
+            report = output / f"all_samples_web_summary_{project}_{date}.html"
             if report.exists():
-                _add_report(message, report)
-    if legacy_sequencing:
-        _add_report(message, Path(legacy_sequencing["report_path"]))
+                reports.append(
+                    email_attachments.Report(report, "additional single-cell HTML report", 0)
+                )
+    if payload.get("email_version", 1) < 2:
+        report = output / "Stats" / f"sequencer_stats_{'_'.join(payload['projects'])}.html"
+        reports.append(email_attachments.Report(report, "sequencing HTML report", 1))
+    elif payload.get("sequencing_qc"):
+        reports.append(
+            email_attachments.Report(
+                Path(payload["sequencing_qc"]["report_path"]), "sequencing HTML report", 1
+            )
+        )
+    return reports
 
 
-def build_message(cfg, entry):
+def _message_limit(cfg):
+    value = cfg.static.email.get(
+        "max_message_bytes", str(email_attachments.DEFAULT_MAX_MESSAGE_BYTES)
+    )
+    if not isinstance(value, str) or not value.strip().isascii() or not value.strip().isdecimal():
+        raise NotificationConfigError(
+            "[Email] max_message_bytes must be a positive integer in bytes"
+        )
+    limit = int(value)
+    if limit <= 0:
+        raise NotificationConfigError(
+            "[Email] max_message_bytes must be a positive integer in bytes"
+        )
+    return limit
+
+
+def _relay_limit(smtp, configured):
+    # Negotiation is before DATA: failures here are safe to retry.
+    smtp.ehlo_or_helo_if_needed()
+    advertised = smtp.esmtp_features.get("size", "")
+    limit = configured
+    if isinstance(advertised, str) and advertised.isascii() and advertised.isdecimal():
+        if int(advertised) > 0:
+            limit = min(configured, int(advertised))
+    elif isinstance(advertised, str) and advertised:
+        log.warning("SMTP advertised an invalid SIZE limit; using configured budget")
+    log.info(
+        "Analysis email budget: configured=%d relay_SIZE=%s effective=%d bytes",
+        configured,
+        advertised if isinstance(advertised, str) else "unavailable",
+        limit,
+    )
+    return limit
+
+
+def build_message(cfg, entry, *, apply_size_limit=True):
     """Read reports and compose mail using saved run context and current recipients."""
     kind = entry["kind"]
-    _host, sender_header, _sender, recipient_header, _recipients = _settings(cfg, kind)
+    _host, sender_header, sender, recipient_header, recipients = _settings(cfg, kind)
+    limit = _message_limit(cfg) if kind == "processed" else None
     payload = entry["payload"]
     projects = ", ".join(payload["projects"])
-    message = EmailMessage()
+    international = any(not address.isascii() for address in (sender, *recipients))
+    message = EmailMessage(policy=SMTP.clone(utf8=international))
     label = {
         "sequencing": "Demultiplexing complete — sequencing QC",
         "processed": "Analysis complete — QC summary",
@@ -406,18 +455,30 @@ def build_message(cfg, entry):
             f"{timing}"
             f"{payload['message']}"
         )
+    if kind == "processed" and apply_size_limit:
+        message = email_attachments.limit_reports(message, _analysis_reports(payload), limit)
     return message
 
 
 def send_notification(cfg, entry):
     """Attempt delivery once; signal ambiguous acceptance for an explicit retry."""
-    message = build_message(cfg, entry)
+    message = build_message(cfg, entry, apply_size_limit=False)
     host, _sender_header, sender, _recipient_header, recipients = _settings(
         cfg, entry["kind"], warn_unknown=False
     )
     # Connection failures happen before sending and can safely be retried.
     smtp = smtplib.SMTP(host, timeout=30)
     try:
+        if entry["kind"] == "processed":
+            limit = _relay_limit(smtp, _message_limit(cfg))
+            message = email_attachments.limit_reports(
+                message, _analysis_reports(entry["payload"]), limit
+            )
+            log.info(
+                "Analysis email serialized size=%d limit=%d bytes",
+                email_attachments.message_size(message),
+                limit,
+            )
         try:
             refused = smtp.send_message(message, from_addr=sender, to_addrs=recipients)
         except (
@@ -426,7 +487,13 @@ def send_notification(cfg, entry):
             smtplib.SMTPDataError,
             smtplib.SMTPHeloError,
             smtplib.SMTPNotSupportedError,
-        ):
+        ) as error:
+            if isinstance(error, smtplib.SMTPResponseException):
+                log.error(
+                    "SMTP rejected notification: code=%d response=%r",
+                    error.smtp_code,
+                    error.smtp_error,
+                )
             raise
         except (OSError, smtplib.SMTPException) as error:
             raise DeliveryUncertainError(

@@ -2,6 +2,7 @@
 
 import copy
 import logging
+import smtplib
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -18,6 +19,7 @@ from test_state_integration import RUN_ID, configured_bfq, write_fastq, write_in
 from bcl2fastq_pipeline import (
     afterFastq,
     cli,
+    email_attachments,
     findFlowCells,
     misc,
     notification_delivery,
@@ -455,3 +457,79 @@ def test_legacy_completed_run_does_not_acquire_new_notifications(tmp_path, monke
 
     assert not sender.called
     assert store.state_path(RUN_ID).read_bytes() == before
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_oversize_rejection_then_summary_only_retry_preserves_processing(
+    tmp_path, monkeypatch, version
+):
+    cfg, store, output, calls = prepare_pipeline(tmp_path, monkeypatch)
+    cfg.static.email["max_message_bytes"] = "200000"
+    cfg.run.libprep = "Parse Biosciences"
+    multiqc = output / f"multiqc_{PROJECT}_260918.html"
+    supplementary = output / f"all_samples_web_summary_{PROJECT}_260918.html"
+
+    def report(*_args):
+        calls.append("reporting")
+        multiqc.write_bytes(b"x" * 30_000)
+        supplementary.write_bytes(b"y" * 20_000)
+        (output / "Stats").mkdir(exist_ok=True)
+        (output / "Stats" / f"sequencer_stats_{PROJECT}.html").write_text("Sequencing QC")
+        return [PROJECT]
+
+    monkeypatch.setattr(cli, "_run_reporting", report)
+    monkeypatch.setattr(misc, "parseSampleSheetMetrics", lambda *_args, **_kwargs: "Sample groups")
+    monkeypatch.setattr(misc, "analysisSampleMetrics", lambda *_args: "Analysis summary")
+    monkeypatch.setattr(misc, "getFCmetricsImproved", lambda *_args: "Flowcell metrics")
+    monkeypatch.setattr(afterFastq, "get_read_geometry", lambda *_args: "2x150")
+    monkeypatch.setattr(afterFastq, "_disk_usage_message", lambda *_args: "Disk summary")
+    make_payload = notifications.make_payload
+
+    def versioned_payload(*args, **kwargs):
+        payload = make_payload(*args, **kwargs)
+        payload["email_version"] = version
+        return payload
+
+    monkeypatch.setattr(notifications, "make_payload", versioned_payload)
+    smtp = Mock()
+    smtp.esmtp_features = {}  # A downstream restriction need not appear in EHLO.
+    smtp.send_message.side_effect = [smtplib.SMTPDataError(552, b"message too large"), {}]
+    monkeypatch.setattr(notifications.smtplib, "SMTP", Mock(return_value=smtp))
+    run_pipeline(cfg, store)
+
+    state = store.read(RUN_ID)
+    assert state["status"] == "completed"
+    assert [entry["status"] for entry in state["delivery_notifications"]] == ["failed", "sent"]
+    assert "552" in state["delivery_notifications"][0]["last_error"]
+    assert smtp.send_message.call_count == 2  # No implicit resend after rejection.
+    before_products = products(output)
+    before_processing = processing_state(state)
+    fresh_cfg = PipelineConfig(
+        static=replace(cfg.static, email={**cfg.static.email, "max_message_bytes": "15000"}),
+        run=RunContext(),
+    )
+    PipelineConfig._instance = fresh_cfg
+    smtp.send_message.side_effect = None
+    smtp.send_message.return_value = {}
+    retried = manager.retry_notifications(flowcell=RUN_ID, kind="processed")
+
+    sent = smtp.send_message.call_args.args[0]
+    assert email_attachments.message_size(sent) <= 15_000
+    assert not any(
+        part.get_filename() in {multiqc.name, supplementary.name}
+        for part in sent.iter_attachments()
+    )
+    for kind in ("plain", "html"):
+        body = sent.get_body(preferencelist=(kind,)).get_content()
+        assert str(multiqc) in body
+        assert str(supplementary) in body
+        assert "not attached" in body
+    assert retried["delivery_notifications"][0]["status"] == "sent"
+    assert len(retried["delivery_notifications"][0]["attempts"]) == 2
+    assert products(output) == before_products
+    assert processing_state(retried) == before_processing
+    assert calls == ["analysis", "reporting", "finalization"]
+    assert not fresh_cfg.run.run_id
+    manager.retry_notifications(flowcell=RUN_ID, kind="processed")
+    notification_delivery.recover_pending(fresh_cfg, store)
+    assert smtp.send_message.call_count == 3

@@ -133,6 +133,7 @@ Use the relevant existing guide to specify the remaining manual integration:
 | Input selection and validation | [Input preflight](input-preflight.md), [coordinated preflight checks](preflight-integration-tests.md) |
 | Libprep selection and configmaker propagation | [Library-prep authority](libprep-configuration.md) |
 | Restart/state and notification recovery | [README](../README.md), [notification recovery](notification-recovery.md) |
+| Analysis email size and attachment omission | [Report email size policy and server checks](report-email-size.md) |
 | Index corrections and conversion | [Index orientation checks](index-orientation-integration-tests.md) |
 | Early QC and notifications | [Early sequencing QC checks](early-sequencing-qc-integration-tests.md) |
 | Snapshot lifecycle | [Analysis snapshot checks](analysis-snapshot-integration-tests.md) |
