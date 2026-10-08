@@ -363,9 +363,24 @@ Production error recipients retain their existing duplicate/empty-entry handling
 | `from_address` | Sender used for completion and error messages. |
 | `finished_to` | Recipient for the processing-complete email and attached reports. |
 | `error_to` | Comma-separated recipients for production error notifications. Also retains the existing final archive-completion notification routing. |
+| `max_message_bytes` | Positive integer byte budget for the complete analysis-summary email. Defaults to `20000000` (20 MB decimal), a BFQ fallback policy pending production-relay verification. Delivery uses the lower of this value and a positive SMTP-advertised `SIZE` limit. |
 
 Current SMTP handling does not configure authentication or TLS. Access control
 must therefore be provided by the deployment environment or relay.
+
+Analysis mail measures the complete serialized SMTP message, including headers,
+CRLF, both bodies, Base64 attachments and omission notices. When necessary, it
+omits additional single-cell HTML reports first, legacy sequencing attachments
+next, and MultiQC reports last. Within each group, larger encoded reports are
+omitted first, with output-path ordering breaking ties. Both bodies explain each
+omission and give its exact output path; generated reports remain unchanged.
+The same policy applies to saved legacy notifications and explicit retries, using
+current email settings. A delivered summary with omitted reports counts as sent.
+If even the summary and location notices exceed the budget, notification delivery
+fails before DATA; processing remains complete and the normal retry policy applies.
+Early sequencing mail and finalization/error mail retain their existing handling.
+See [report email size policy and server checks](docs/report-email-size.md) for
+the limit's source, configuration, evidence and remaining production checks.
 
 ### Early sequencing QC and the three notifications
 

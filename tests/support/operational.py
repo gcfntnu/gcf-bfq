@@ -46,9 +46,13 @@ def smtp_double(root, mode="accept"):
     class SMTPDouble:
         def __init__(self, host, **_kwargs):
             assert host == "smtp.invalid"
+            self.esmtp_features = {"size": "20000000"}
             record(root, "SMTP", mode=mode)
             if mode == "fail":
                 raise OSError("controlled synthetic SMTP connection failure")
+
+        def ehlo_or_helo_if_needed(self):
+            record(root, "SMTP-EHLO", features=self.esmtp_features)
 
         def send_message(self, message, **kwargs):
             assert all(address.endswith("@example.test") for address in kwargs["to_addrs"])
