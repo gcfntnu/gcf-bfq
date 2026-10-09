@@ -1,3 +1,7 @@
 files/*.rpm
 files/cellranger*.tar.gz
 files/spaceranger*.tar.gz
+.git
+.dev
+**/__pycache__
+**/*.egg-info
