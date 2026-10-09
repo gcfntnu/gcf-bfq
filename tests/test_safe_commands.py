@@ -353,7 +353,9 @@ def test_fastq_md5_generation_handles_paths_with_shell_metacharacters(tmp_path, 
     ]
 
 
-def test_workflow_commands_keep_config_values_as_single_arguments(tmp_path, monkeypatch):
+@pytest.mark.parametrize("gpu", ["0", "1"])
+def test_workflow_commands_keep_config_values_as_single_arguments(tmp_path, monkeypatch, gpu):
+    monkeypatch.setenv("BFQ_GPU", gpu)
     output_path = tmp_path / "output with spaces;not-a-command"
     output_path.mkdir()
     work_root = tmp_path / "workflow cache with spaces"
@@ -387,6 +389,7 @@ def test_workflow_commands_keep_config_values_as_single_arguments(tmp_path, monk
 
     configmaker_command = check_call.call_args_list[0].args[0]
     snakemake_command = run_logged_command.call_args.args[0]
+    assert ("--singularity-args=--nv" in snakemake_command) == (gpu == "1")
     assert configmaker_command[configmaker_command.index("--libkit") + 1] == cfg.run.libprep
     assert configmaker_command[configmaker_command.index("--machine") + 1] == (
         "Nova Seq;not-a-command"
