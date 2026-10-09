@@ -1,16 +1,34 @@
-FROM gcfntnu/bfq:base-260925
+ARG BASE_IMAGE=gcfntnu/bfq:base-260925
+FROM ${BASE_IMAGE}
+
+ARG BASE_IMAGE
+ARG BFQ_REVISION=unknown
+# Do not retain the Miniconda parent's digest under the selected BFQ base name.
+LABEL org.opencontainers.image.base.name="${BASE_IMAGE}" \
+      org.opencontainers.image.base.digest="" \
+      org.opencontainers.image.revision="${BFQ_REVISION}"
 
 ENV BFQ_ENV=test
 
 ARG GCF_TOOLS_BRANCH=bfq-dev
-ADD https://api.github.com/repos/gcfntnu/gcf-tools/git/refs/heads/$GCF_TOOLS_BRANCH conf_version
+ARG GCF_TOOLS_REV=${GCF_TOOLS_BRANCH}
 # BFQ and its configmaker subprocess must resolve the same validation API.
-RUN /opt/conda/bin/python -m pip install --upgrade https://github.com/gcfntnu/gcf-tools/archive/$GCF_TOOLS_BRANCH.zip && \
+RUN /opt/conda/bin/python -m pip install --upgrade "https://github.com/gcfntnu/gcf-tools/archive/${GCF_TOOLS_REV}.zip" && \
     /opt/conda/bin/python -c "from configmaker.validation import VALIDATION_API_VERSION; assert VALIDATION_API_VERSION == 1"
 
 ARG GCF_WORKFLOWS_BRANCH=bfq-dev
-ADD https://api.github.com/repos/gcfntnu/gcf-workflows/git/refs/heads/$GCF_WORKFLOWS_BRANCH gcf-workflows_version
-RUN cd /opt && git clone https://github.com/gcfntnu/gcf-workflows.git && cd /opt/gcf-workflows && git checkout $GCF_WORKFLOWS_BRANCH
+ARG GCF_WORKFLOWS_REV=${GCF_WORKFLOWS_BRANCH}
+# The build script resolves branch heads once, before Docker builds. Immutable
+# revisions invalidate its cache without rate-limited GitHub API ADD requests.
+RUN git init /opt/gcf-workflows && \
+    cd /opt/gcf-workflows && \
+    git remote add origin https://github.com/gcfntnu/gcf-workflows.git && \
+    git fetch --depth 1 origin "${GCF_WORKFLOWS_REV}" && \
+    git checkout -B "${GCF_WORKFLOWS_BRANCH}" FETCH_HEAD
+LABEL org.gcf.gcf-tools.branch="${GCF_TOOLS_BRANCH}" \
+      org.gcf.gcf-tools.revision="${GCF_TOOLS_REV}" \
+      org.gcf.gcf-workflows.branch="${GCF_WORKFLOWS_BRANCH}" \
+      org.gcf.gcf-workflows.revision="${GCF_WORKFLOWS_REV}"
 
 COPY pyproject.toml /opt/gcf-bfq/pyproject.toml
 COPY bcl2fastq_pipeline /opt/gcf-bfq/bcl2fastq_pipeline

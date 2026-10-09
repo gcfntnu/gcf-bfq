@@ -392,19 +392,31 @@ def post_workflow(project_id, base_dir, pipeline):
     return True
 
 
-def snakemake_command(*, resume=False):
+def gpu_enabled():
+    """Opt into NVIDIA passthrough for every BFQ Snakemake container job."""
+    value = os.environ.get("BFQ_GPU", "0").strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError("BFQ_GPU must be 1 (NVIDIA GPU enabled) or 0 (CPU only)")
+
+
+def snakemake_command(*, resume=False, target="multiqc_report", cores=32):
     command = [
         "snakemake",
         "--use-singularity",
         "--singularity-prefix",
         os.environ["SINGULARITY_CACHEDIR"],
         "--cores",
-        "32",
+        str(cores),
         "--scheduler",
         "greedy",
         "-p",
-        "multiqc_report",
+        target,
     ]
+    if gpu_enabled():
+        command[1:1] = ["--singularity-args=--nv"]
     if resume:
         # Keep normal failed-job cleanup: Snakemake 9.7.1 can mark a
         # failed job complete when --keep-incomplete retains partial files.

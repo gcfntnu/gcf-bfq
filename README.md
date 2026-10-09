@@ -272,6 +272,11 @@ bfq
 Set `BFQ_DEBUG=1` to enable debug logging. Logs from the demultiplexing command
 are written separately to `[Paths] logDir`.
 
+GPU-dependent workflows additionally require Docker GPU passthrough and
+`BFQ_GPU=1`. Follow [NVIDIA GPU execution](docs/gpu-execution.md) to configure
+the host and launcher, build the test images, and run `bfq-gpu-smoke` through
+Snakemake and nested Apptainer before integration testing.
+
 ## Static configuration
 
 BFQ reads `/config/bcl2fastq.ini` using Python's `ConfigParser`. Section and
@@ -1063,6 +1068,7 @@ exist in recognized `GCF-*` project directories.
 | Variable | Effect |
 | --- | --- |
 | `BFQ_DEBUG` | Enables debug logging when set. |
+| `BFQ_GPU` | Set to `1` to pass `--nv` to every Snakemake container job, including analysis resume. Unset or `0` keeps CPU-only execution. Requires Docker GPU passthrough. |
 | `BFQ_TEST` | Enables compatibility handling for test flowcells generated with bcl2fastq while the image defaults to bcl-convert. |
 | `FORCE_BCL2FASTQ` | Uses legacy bcl2fastq instead of bcl-convert for non-10x runs. |
 | `GCF_WORKFLOWS_DOCKER_CONFIG` | Overrides the default `/opt/gcf-workflows/docker.config` image mapping. |
