@@ -3,7 +3,9 @@ FROM ${BASE_IMAGE}
 
 ARG BASE_IMAGE
 ARG BFQ_REVISION=unknown
+# Do not retain the Miniconda parent's digest under the selected BFQ base name.
 LABEL org.opencontainers.image.base.name="${BASE_IMAGE}" \
+      org.opencontainers.image.base.digest="" \
       org.opencontainers.image.revision="${BFQ_REVISION}"
 
 ENV BFQ_ENV=test
