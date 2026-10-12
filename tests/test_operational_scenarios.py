@@ -348,7 +348,7 @@ def test_analysis_resume_preserves_repairs_and_finishes_after_manual_completion(
         assert "--rerun-incomplete" in command
         log_path.write_text("SYNTHETIC DOUBLE: Nothing to be done\n")
 
-    monkeypatch.setattr(afterFastq, "run_logged_command", noop)
+    monkeypatch.setattr(scenario, "workflow", noop)
     monkeypatch.setattr(smtplib, "SMTP", smtp_double(scenario.root, "fail"))
     success = scenario.run_attempt()
     assert len(calls) == 1
