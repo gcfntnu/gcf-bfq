@@ -140,6 +140,7 @@ Use the relevant existing guide to specify the remaining manual integration:
 | FASTQ removal/archive prerequisites | [Cleanup checks](clean-fastqs-integration-tests.md) |
 | Search and CLI inventory | [Search checks](flowcell-search-integration-tests.md) |
 | Processing-time reporting | [Timing checks](processing-time-integration-tests.md) |
+| NVIDIA GPU execution, base image and Docker launchers | [GPU execution and integration checks](gpu-execution.md) |
 
 Real BCL conversion, container bindings, scientific workflow outputs, actual
 MultiQC compatibility, SMTP delivery and deployed mounts need the relevant server

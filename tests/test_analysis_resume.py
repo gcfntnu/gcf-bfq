@@ -160,7 +160,9 @@ def test_active_lease_not_bypassed_by_force(prepared):
         queue()
 
 
-def test_resume_skips_regeneration_and_refreshes_delivery_copies(prepared, monkeypatch):
+@pytest.mark.parametrize("gpu", ["0", "1"])
+def test_resume_skips_regeneration_and_refreshes_delivery_copies(prepared, monkeypatch, gpu):
+    monkeypatch.setenv("BFQ_GPU", gpu)
     cfg, store, output, work = prepared
     context = analysis_resume.inspect(store.read(RUN_ID))
     cfg.run.pipeline = "singlecell"
@@ -181,6 +183,7 @@ def test_resume_skips_regeneration_and_refreshes_delivery_copies(prepared, monke
     assert not stale.exists() and not summary.exists()
     assert (output / f"QC_{PROJECT}/bfq/multiqc_{PROJECT}.html").read_text() == "current report"
     command = run.call_args.args[0]
+    assert ("--singularity-args=--nv" in command) == (gpu == "1")
     assert "--rerun-incomplete" in command and "--keep-incomplete" not in command
     assert not any(flag.startswith("--force") or flag == "--rerun-triggers" for flag in command)
     assert run.call_args.kwargs["cwd"] == work

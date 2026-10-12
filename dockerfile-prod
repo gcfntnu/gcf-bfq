@@ -1,4 +1,4 @@
-FROM gcfntnu/bfq:base-260925
+FROM gcfntnu/bfq:base-261012
 
 ENV BFQ_ENV=production
 

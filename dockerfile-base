@@ -63,6 +63,20 @@ RUN conda --version && \
 # Allow shared loop devices for Apptainer/Singularity.
 RUN sed -i -e 's/shared loop devices = no/shared loop devices = yes/g' /opt/conda/etc/apptainer/apptainer.conf
 
+# Nested --nv must discover the host driver's libraries injected by Docker.
+# Apptainer 1.5 uses binary path (not the retired ldconfig path setting).
+# Prefer the system ldconfig over any executable supplied by a Conda package.
+RUN test -x /sbin/ldconfig && \
+    sed -i 's|^# binary path =.*|binary path = /sbin:/usr/sbin:$PATH:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin|' /opt/conda/etc/apptainer/apptainer.conf && \
+    test "$(apptainer config global --get "binary path")" = '/sbin:/usr/sbin:$PATH:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin' && \
+    printf '%s\n' /usr/local/nvidia/lib /usr/local/nvidia/lib64 > /etc/ld.so.conf.d/nvidia.conf && \
+    /sbin/ldconfig
+
+# Docker's NVIDIA runtime provides these capabilities only when GPU access is
+# requested by the launcher. CPU-only launches need no NVIDIA runtime or GPU.
+# The workflow image supplies CUDA; never bake host driver libraries into BFQ.
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
 FROM dependencies AS base
 
 WORKDIR /opt
