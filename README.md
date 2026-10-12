@@ -272,6 +272,11 @@ bfq
 Set `BFQ_DEBUG=1` to enable debug logging. Logs from the demultiplexing command
 are written separately to `[Paths] logDir`.
 
+GPU-dependent workflows additionally require Docker GPU passthrough and
+`BFQ_GPU=1`. Follow [NVIDIA GPU execution](docs/gpu-execution.md) to configure
+the host and launcher, build the test images, and run `bfq-gpu-smoke` through
+Snakemake and nested Apptainer before integration testing.
+
 ## Static configuration
 
 BFQ reads `/config/bcl2fastq.ini` using Python's `ConfigParser`. Section and
@@ -363,9 +368,24 @@ Production error recipients retain their existing duplicate/empty-entry handling
 | `from_address` | Sender used for completion and error messages. |
 | `finished_to` | Recipient for the processing-complete email and attached reports. |
 | `error_to` | Comma-separated recipients for production error notifications. Also retains the existing final archive-completion notification routing. |
+| `max_message_bytes` | Positive integer byte budget for the complete analysis-summary email. Defaults to `20000000` (20 MB decimal), a BFQ fallback policy pending production-relay verification. Delivery uses the lower of this value and a positive SMTP-advertised `SIZE` limit. |
 
 Current SMTP handling does not configure authentication or TLS. Access control
 must therefore be provided by the deployment environment or relay.
+
+Analysis mail measures the complete serialized SMTP message, including headers,
+CRLF, both bodies, Base64 attachments and omission notices. When necessary, it
+omits additional single-cell HTML reports first, legacy sequencing attachments
+next, and MultiQC reports last. Within each group, larger encoded reports are
+omitted first, with output-path ordering breaking ties. Both bodies explain each
+omission and give its exact output path; generated reports remain unchanged.
+The same policy applies to saved legacy notifications and explicit retries, using
+current email settings. A delivered summary with omitted reports counts as sent.
+If even the summary and location notices exceed the budget, notification delivery
+fails before DATA; processing remains complete and the normal retry policy applies.
+Early sequencing mail and finalization/error mail retain their existing handling.
+See [report email size policy and server checks](docs/report-email-size.md) for
+the limit's source, configuration, evidence and remaining production checks.
 
 ### Early sequencing QC and the three notifications
 
@@ -955,6 +975,21 @@ without re-reading FASTQ contents. A demultiplexing rerun invalidates them and
 regenerates checksums for the newly produced FASTQs. Archive checksums remain
 part of finalization and are invalidated whenever their archives are rebuilt.
 
+For 10X libraries, finalization includes the extra flowcell-named mkfastq
+directory when present. Restored FASTQ layouts may omit that directory; BFQ
+logs its absence and archives the remaining inputs. Required project FASTQs,
+Stats, sample metadata and FASTQ manifests remain required, and every nonzero
+archiver exit still fails finalization.
+
+Archive command output is saved under `logDir` as
+`<run-id>_<project>_archive_fastq.log` and `<run-id>_<project>_archive_qc.log`.
+Each log is replaced when its command is retried. Failure reports include the
+last 400 output lines. An archive left by a failed command is not evidence of
+completed finalization. After correcting the cause, preview
+`fm rerun RUN_ID --from finalization --dry-run`, then queue the same command
+without `--dry-run`. This rebuilds delivery archives and their checksums while
+preserving completed analysis and reports. `--resume` applies only to analysis.
+
 For older runs, restored FASTQs or an interrupted legacy checksum write, queue
 the desired downstream boundary as usual, for example:
 
@@ -1048,6 +1083,7 @@ exist in recognized `GCF-*` project directories.
 | Variable | Effect |
 | --- | --- |
 | `BFQ_DEBUG` | Enables debug logging when set. |
+| `BFQ_GPU` | Set to `1` to pass `--nv` to every Snakemake container job, including analysis resume. Unset or `0` keeps CPU-only execution. Requires Docker GPU passthrough. |
 | `BFQ_TEST` | Enables compatibility handling for test flowcells generated with bcl2fastq while the image defaults to bcl-convert. |
 | `FORCE_BCL2FASTQ` | Uses legacy bcl2fastq instead of bcl-convert for non-10x runs. |
 | `GCF_WORKFLOWS_DOCKER_CONFIG` | Overrides the default `/opt/gcf-workflows/docker.config` image mapping. |

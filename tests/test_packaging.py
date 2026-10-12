@@ -22,6 +22,7 @@ def test_console_scripts_are_installed():
     }
 
     assert scripts["bfq"] == "bcl2fastq_pipeline.entrypoint:main"
+    assert scripts["bfq-gpu-smoke"] == "bcl2fastq_pipeline.gpu_smoke:main"
     assert "bfq.py" not in scripts
 
     flowcell_manager = "flowcell_manager.flowcell_manager:main"

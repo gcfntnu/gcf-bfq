@@ -31,6 +31,14 @@ def main():
             else:
                 assert "usage:" in result.stdout, result.stdout
             print(f"{name} {option}: OK")
+    result = subprocess.run(
+        [str(prefix / "bin" / "bfq-gpu-smoke"), "--help"],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    assert "usage:" in result.stdout, result.stdout
+    print("bfq-gpu-smoke --help: OK")
     print(f"gcf-tools: {metadata.version('gcf-tools')}")
 
 

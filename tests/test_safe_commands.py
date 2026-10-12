@@ -278,6 +278,7 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
 
     cfg = SimpleNamespace(
         output_path=output_path,
+        static=SimpleNamespace(paths=SimpleNamespace(log_dir=tmp_path / "logs")),
         run=SimpleNamespace(
             run_id="260923_A01990_0001_ABC",
             sensitive=False,
@@ -285,10 +286,10 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
             pipeline="rnaseq",
         ),
     )
-    check_call = Mock()
+    run_logged_command = Mock()
     monkeypatch.setattr(afterFastq, "get_project_names", Mock(return_value={project}))
     monkeypatch.setattr(afterFastq, "get_project_dirs", Mock(return_value=set()))
-    monkeypatch.setattr(afterFastq.subprocess, "check_call", check_call)
+    monkeypatch.setattr(afterFastq, "run_logged_command", run_logged_command)
     monkeypatch.setenv("TMPDIR", str(work_root))
 
     if restart:
@@ -296,11 +297,11 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
     afterFastq.archive_worker(cfg)
 
     # Every input passed to the archiver must survive restart cleanup.
-    for call in check_call.call_args_list:
+    for call in run_logged_command.call_args_list:
         assert all(Path(path).exists() for path in call.args[0][3:])
 
-    fastq_command = check_call.call_args_list[0].args[0]
-    qc_command = check_call.call_args_list[1].args[0]
+    fastq_command = run_logged_command.call_args_list[0].args[0]
+    qc_command = run_logged_command.call_args_list[1].args[0]
     assert fastq_command[:2] == ["7za", "a"]
     assert str(output_path / "Undetermined lane_R1.fastq.gz") in fastq_command
     assert str(output_path / project) in fastq_command
@@ -311,7 +312,7 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
         str(output_path / f"QC_{project}_260923.7za"),
         str(qc_dir),
     ]
-    assert all("shell" not in call.kwargs for call in check_call.call_args_list)
+    assert all("shell" not in call.kwargs for call in run_logged_command.call_args_list)
 
 
 def test_archive_md5_uses_file_handles_instead_of_redirection(tmp_path, monkeypatch):
@@ -353,7 +354,9 @@ def test_fastq_md5_generation_handles_paths_with_shell_metacharacters(tmp_path, 
     ]
 
 
-def test_workflow_commands_keep_config_values_as_single_arguments(tmp_path, monkeypatch):
+@pytest.mark.parametrize("gpu", ["0", "1"])
+def test_workflow_commands_keep_config_values_as_single_arguments(tmp_path, monkeypatch, gpu):
+    monkeypatch.setenv("BFQ_GPU", gpu)
     output_path = tmp_path / "output with spaces;not-a-command"
     output_path.mkdir()
     work_root = tmp_path / "workflow cache with spaces"
@@ -387,6 +390,7 @@ def test_workflow_commands_keep_config_values_as_single_arguments(tmp_path, monk
 
     configmaker_command = check_call.call_args_list[0].args[0]
     snakemake_command = run_logged_command.call_args.args[0]
+    assert ("--singularity-args=--nv" in snakemake_command) == (gpu == "1")
     assert configmaker_command[configmaker_command.index("--libkit") + 1] == cfg.run.libprep
     assert configmaker_command[configmaker_command.index("--machine") + 1] == (
         "Nova Seq;not-a-command"

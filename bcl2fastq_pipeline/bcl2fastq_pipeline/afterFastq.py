@@ -289,6 +289,16 @@ def generate_password(cfg, prefix: str) -> str:
     return pw
 
 
+def _run_archive_command(cmd, cfg, project, kind):
+    log_path = cfg.static.paths.log_dir / f"{cfg.run.run_id}_{project}_archive_{kind}.log"
+    try:
+        run_logged_command(cmd, cwd=cfg.output_path, log_path=log_path)
+    except subprocess.CalledProcessError as error:
+        # The password belongs in encryption.<project>, not failure reports/state.
+        error.cmd = ["-p<redacted>" if arg.startswith("-p") else arg for arg in cmd]
+        raise
+
+
 def archive_worker(cfg):
     project_dirs = get_project_dirs(cfg)
     pnames = get_project_names(project_dirs)
@@ -320,8 +330,15 @@ def archive_worker(cfg):
         )
 
         if cfg.run.libprep and "10X Genomics" in cfg.run.libprep:
-            extra = cfg.run.run_id.split("_")[-1][1:]
-            archive_inputs.append(cfg.output_path / extra)
+            extra = cfg.output_path / cfg.run.run_id.split("_")[-1][1:]
+            try:
+                extra.lstat()
+            except FileNotFoundError:
+                # Restored FASTQs need not include the extra mkfastq directory.
+                log.info("[archive_worker] Optional 10X archive input absent: %s", extra)
+            else:
+                # Keep dangling links and unreadable inputs visible to the archiver.
+                archive_inputs.append(extra)
 
         cmd = ["7za", "a"]
         if pw:
@@ -329,7 +346,7 @@ def archive_worker(cfg):
         cmd.extend([str(archive_fastq), *(str(path) for path in archive_inputs)])
 
         log.info(f"[archive_worker] Zipping {archive_fastq}")
-        subprocess.check_call(cmd)
+        _run_archive_command(cmd, cfg, p, "fastq")
 
         # ------------------------------------------------------------------ #
         # Archive pipeline output (QC)
@@ -350,7 +367,7 @@ def archive_worker(cfg):
         cmd.extend([str(qc_archive), str(qc_dir)])
 
         log.info(f"[archive_worker] Archiving QC output → {qc_archive}\n")
-        subprocess.check_call(cmd)
+        _run_archive_command(cmd, cfg, p, "qc")
 
 
 def get_project_names(dirs):
@@ -392,19 +409,31 @@ def post_workflow(project_id, base_dir, pipeline):
     return True
 
 
-def snakemake_command(*, resume=False):
+def gpu_enabled():
+    """Opt into NVIDIA passthrough for every BFQ Snakemake container job."""
+    value = os.environ.get("BFQ_GPU", "0").strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError("BFQ_GPU must be 1 (NVIDIA GPU enabled) or 0 (CPU only)")
+
+
+def snakemake_command(*, resume=False, target="multiqc_report", cores=32):
     command = [
         "snakemake",
         "--use-singularity",
         "--singularity-prefix",
         os.environ["SINGULARITY_CACHEDIR"],
         "--cores",
-        "32",
+        str(cores),
         "--scheduler",
         "greedy",
         "-p",
-        "multiqc_report",
+        target,
     ]
+    if gpu_enabled():
+        command[1:1] = ["--singularity-args=--nv"]
     if resume:
         # Keep normal failed-job cleanup: Snakemake 9.7.1 can mark a
         # failed job complete when --keep-incomplete retains partial files.

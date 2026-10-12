@@ -5,6 +5,7 @@ import smtplib
 
 from datetime import timedelta
 from pathlib import Path
+from smtplib import SMTP as SMTPClient
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -13,7 +14,7 @@ import pytest
 from bcl2fastq_pipeline.config import RunContext
 from bcl2fastq_pipeline.state import DeliveryUncertainError
 
-from bcl2fastq_pipeline import afterFastq, misc, notifications
+from bcl2fastq_pipeline import afterFastq, email_attachments, misc, notifications
 
 
 @pytest.fixture
@@ -518,3 +519,114 @@ def test_legacy_rerun_missing_sequencing_attachment_fails_before_smtp(
     with pytest.raises(FileNotFoundError):
         notifications.send_notification(mail_cfg, processed)
     smtp[0].assert_not_called()
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_analysis_budget_applies_to_current_and_legacy_delivery(mail_cfg, processed, smtp, version):
+    processed["payload"].update(email_version=version, libprep="Parse Biosciences")
+    multiqc = mail_cfg.output_path / "multiqc_GCF-2026-043_260918.html"
+    supplementary = mail_cfg.output_path / "all_samples_web_summary_GCF-2026-043_260918.html"
+    multiqc.write_bytes(b"x" * 30_000)
+    supplementary.write_bytes(b"y" * 20_000)
+    mail_cfg.static.email["max_message_bytes"] = "15000"
+    smtp[1].esmtp_features = {}
+    before = {
+        path: (path.read_bytes(), path.stat().st_mtime_ns) for path in (multiqc, supplementary)
+    }
+    notifications.send_notification(mail_cfg, processed)
+    sent = smtp[1].send_message.call_args.args[0]
+    assert email_attachments.message_size(sent) <= 15_000
+    assert not any(part.get_filename() == multiqc.name for part in sent.iter_attachments())
+    for kind in ("plain", "html"):
+        body = sent.get_body(preferencelist=(kind,)).get_content()
+        assert str(multiqc) in body
+        assert str(supplementary) in body
+        assert "even with no other report attachments" in body
+        assert "Review the attached MultiQC" not in body
+    for path, expected in before.items():
+        assert (path.read_bytes(), path.stat().st_mtime_ns) == expected
+    smtp[1].send_message.assert_called_once()
+
+
+@pytest.mark.parametrize("advertised", ["12000", "0", "", "invalid", "-1", "999999999"])
+def test_relay_size_uses_lower_positive_limit(mail_cfg, processed, smtp, advertised):
+    processed["payload"]["email_version"] = 2
+    report = mail_cfg.output_path / "multiqc_GCF-2026-043_260918.html"
+    report.write_bytes(b"x" * 15_000)
+    smtp[1].esmtp_features = {"size": advertised}
+    mail_cfg.static.email["max_message_bytes"] = "25000"
+    notifications.send_notification(mail_cfg, processed)
+    sent = smtp[1].send_message.call_args.args[0]
+    expected_limit = 12_000 if advertised == "12000" else 25_000
+    assert email_attachments.message_size(sent) <= expected_limit
+    assert bool(list(sent.iter_attachments())) == (advertised != "12000")
+    smtp[1].ehlo_or_helo_if_needed.assert_called_once()
+    smtp[1].quit.assert_called_once()
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "1.5", "20 MB", "", "NaN", "١٢٣"])
+def test_invalid_message_budget_fails_before_smtp(mail_cfg, processed, smtp, value):
+    mail_cfg.static.email["max_message_bytes"] = value
+    with pytest.raises(notifications.NotificationConfigError, match="positive integer in bytes"):
+        notifications.send_notification(mail_cfg, processed)
+    smtp[0].assert_not_called()
+
+
+def test_relay_budget_smaller_than_summary_fails_before_data(mail_cfg, processed, smtp):
+    smtp[1].esmtp_features = {"size": "100"}
+    with pytest.raises(email_attachments.MessageSizeError, match="even without attachments"):
+        notifications.send_notification(mail_cfg, processed)
+    smtp[1].send_message.assert_not_called()
+    smtp[1].quit.assert_called_once()
+
+
+def test_relay_negotiation_failure_is_known_and_closes_session(mail_cfg, processed, smtp):
+    smtp[1].ehlo_or_helo_if_needed.side_effect = smtplib.SMTPServerDisconnected("EHLO lost")
+    with pytest.raises(smtplib.SMTPServerDisconnected):
+        notifications.send_notification(mail_cfg, processed)
+    smtp[1].send_message.assert_not_called()
+    smtp[1].quit.assert_called_once()
+
+
+def test_international_envelope_budget_matches_smtp_utf8_serialization(mail_cfg, processed, smtp):
+    mail_cfg.static.email["finished_to"] = "analyst@example.ø"
+    smtp[1].esmtp_features = {}
+    notifications.send_notification(mail_cfg, processed)
+    sent = smtp[1].send_message.call_args.args[0]
+    assert sent.policy.utf8
+    assert email_attachments.message_size(sent) == len(
+        sent.as_bytes(policy=sent.policy.clone(utf8=True, linesep="\r\n"))
+    )
+
+
+@pytest.mark.parametrize("international", [False, True])
+@pytest.mark.parametrize("below_boundary", [False, True])
+def test_budget_matches_real_send_message_wire_bytes(
+    mail_cfg, processed, monkeypatch, international, below_boundary
+):
+    processed["payload"]["email_version"] = 2
+    if international:
+        mail_cfg.static.email["finished_to"] = "analyst@example.ø"
+    report = mail_cfg.output_path / "multiqc_GCF-2026-043_260918.html"
+    report.write_bytes(b"x" * 10_000)
+    full = notifications.build_message(mail_cfg, processed)
+    limit = email_attachments.message_size(full) - int(below_boundary)
+    # Run the stdlib serializer with only SMTP transport/negotiation replaced.
+    smtp = object.__new__(SMTPClient)
+    smtp.ehlo_or_helo_if_needed = Mock()
+    smtp.has_extn = Mock(return_value=True)
+    smtp.esmtp_features = {"size": str(limit)}
+    smtp.sendmail = Mock(return_value={})
+    smtp.quit = Mock()
+    monkeypatch.setattr(notifications.smtplib, "SMTP", Mock(return_value=smtp))
+    notifications.send_notification(mail_cfg, processed)
+    wire = smtp.sendmail.call_args.args[2]
+    assert isinstance(wire, bytes)
+    assert len(wire) <= limit
+    assert len(wire) == limit if not below_boundary else len(wire) < limit
+    assert (
+        b"Content-Disposition: attachment" in wire
+        if not below_boundary
+        else b"Content-Disposition: attachment" not in wire
+    )
+    assert (b"not attached" in wire) == below_boundary

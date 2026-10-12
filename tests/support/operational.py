@@ -46,9 +46,13 @@ def smtp_double(root, mode="accept"):
     class SMTPDouble:
         def __init__(self, host, **_kwargs):
             assert host == "smtp.invalid"
+            self.esmtp_features = {"size": "20000000"}
             record(root, "SMTP", mode=mode)
             if mode == "fail":
                 raise OSError("controlled synthetic SMTP connection failure")
+
+        def ehlo_or_helo_if_needed(self):
+            record(root, "SMTP-EHLO", features=self.esmtp_features)
 
         def send_message(self, message, **kwargs):
             assert all(address.endswith("@example.test") for address in kwargs["to_addrs"])
@@ -239,6 +243,13 @@ class Scenario:
             raise AssertionError(f"Undeclared external command: {command}")
         return 0
 
+    def logged_command(self, command, cwd, log_path):
+        if command[0] == "snakemake":
+            return self.workflow(command, cwd, log_path)
+        result = self.external_command(command, cwd=cwd)
+        Path(log_path).write_text(LABEL + "\n")
+        return result
+
     def workflow(self, command, cwd, log_path):
         assert command[0] == "snakemake"
         record(self.root, "snakemake", argv=command, failed=self.fail_workflow)
@@ -343,7 +354,7 @@ def make_scenario(root, monkeypatch):
     monkeypatch.setattr(state, "collect_versions", lambda: scenario_versions(root))
     monkeypatch.setattr(workflow_config, "AUTHORITATIVE_CONFIG", workflows / "libprep.config")
     monkeypatch.setattr(afterFastq.subprocess, "check_call", scenario.external_command)
-    monkeypatch.setattr(afterFastq, "run_logged_command", scenario.workflow)
+    monkeypatch.setattr(afterFastq, "run_logged_command", scenario.logged_command)
     monkeypatch.setattr(afterFastq, "multiqc_stats", scenario.sequencing_report)
     monkeypatch.setattr(afterFastq, "md5sum_archive_worker", scenario.archive_checksums)
     monkeypatch.setattr(smtplib, "SMTP", smtp_double(root))
