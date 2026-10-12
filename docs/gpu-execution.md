@@ -82,11 +82,11 @@ current account already has Docker access, set `BFQ_DOCKER=docker` for both
 commands. Record both registry digests, BFQ source commit and the installed
 tools/workflow revisions with the integration results.
 
-After integration approval, publish a separately named production base and
-update the base reference in `dockerfile-prod` as part of production promotion.
-Its current `base-260925` reference does not acquire these changes when
-`base-test` is published. Do not promote either reusable test tag as a production
-release.
+The default test and production base is `gcfntnu/bfq:base-261012`, published
+after integration approval. For future base updates, publish a separately named
+production base and update both Dockerfiles and the build script's test default
+as part of production promotion. Publishing `base-test` does not change those
+references. Do not use either reusable test tag as a production release.
 
 ## Smoke through the real execution path
 

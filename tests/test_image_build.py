@@ -76,12 +76,17 @@ elif command == "docker" and args[0] == "build":
     return run
 
 
-def test_test_build_pins_branches_and_uses_selected_base(build_runner):
+@pytest.mark.parametrize(
+    "base_args,base_image",
+    [
+        ((), "gcfntnu/bfq:base-261012"),
+        (("-b", "gcfntnu/bfq:base-test"), "gcfntnu/bfq:base-test"),
+    ],
+)
+def test_test_build_pins_branches_and_uses_selected_base(build_runner, base_args, base_image):
     # Shell metacharacters in valid refs must remain literal argv values.
     workflow_branch = "issues/148-$(not-a-command)"
-    result, calls = build_runner(
-        "test", "dev-test", "-b", "gcfntnu/bfq:base-test", "-w", workflow_branch
-    )
+    result, calls = build_runner("test", "dev-test", *base_args, "-w", workflow_branch)
     assert result.returncode == 0, result.stderr
     docker_calls = [call for call in calls if call[0] == "docker"]
     assert docker_calls == [
@@ -94,7 +99,7 @@ def test_test_build_pins_branches_and_uses_selected_base(build_runner):
             "-f",
             "dockerfile-test",
             "--build-arg",
-            "BASE_IMAGE=gcfntnu/bfq:base-test",
+            f"BASE_IMAGE={base_image}",
             "--build-arg",
             f"BFQ_REVISION={'c' * 40}",
             "--build-arg",

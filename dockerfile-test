@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=gcfntnu/bfq:base-260925
+ARG BASE_IMAGE=gcfntnu/bfq:base-261012
 FROM ${BASE_IMAGE}
 
 ARG BASE_IMAGE

@@ -9,7 +9,7 @@ Usage: ./build-tag-push.sh [prod|test|base] [docker-tag] [optional args]
 Test image options:
   -t BRANCH       gcf-tools branch (default: bfq-dev)
   -w BRANCH       gcf-workflows branch (default: bfq-dev)
-  -b IMAGE        base image (default: gcfntnu/bfq:base-260925)
+  -b IMAGE        base image (default: gcfntnu/bfq:base-261012)
   -q BRANCH       legacy MultiQC argument (accepted; currently unused)
 
 Set BFQ_DOCKER to a Docker executable or wrapper path to replace "sudo docker".
@@ -37,7 +37,7 @@ fi
 
 gcf_tools=bfq-dev
 gcf_workflows=bfq-dev
-base_image=gcfntnu/bfq:base-260925
+base_image=gcfntnu/bfq:base-261012
 test_options=false
 while getopts ':t:q:w:b:' flag; do
     test_options=true
