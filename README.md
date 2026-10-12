@@ -975,6 +975,21 @@ without re-reading FASTQ contents. A demultiplexing rerun invalidates them and
 regenerates checksums for the newly produced FASTQs. Archive checksums remain
 part of finalization and are invalidated whenever their archives are rebuilt.
 
+For 10X libraries, finalization includes the extra flowcell-named mkfastq
+directory when present. Restored FASTQ layouts may omit that directory; BFQ
+logs its absence and archives the remaining inputs. Required project FASTQs,
+Stats, sample metadata and FASTQ manifests remain required, and every nonzero
+archiver exit still fails finalization.
+
+Archive command output is saved under `logDir` as
+`<run-id>_<project>_archive_fastq.log` and `<run-id>_<project>_archive_qc.log`.
+Each log is replaced when its command is retried. Failure reports include the
+last 400 output lines. An archive left by a failed command is not evidence of
+completed finalization. After correcting the cause, preview
+`fm rerun RUN_ID --from finalization --dry-run`, then queue the same command
+without `--dry-run`. This rebuilds delivery archives and their checksums while
+preserving completed analysis and reports. `--resume` applies only to analysis.
+
 For older runs, restored FASTQs or an interrupted legacy checksum write, queue
 the desired downstream boundary as usual, for example:
 

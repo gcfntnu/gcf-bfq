@@ -278,6 +278,7 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
 
     cfg = SimpleNamespace(
         output_path=output_path,
+        static=SimpleNamespace(paths=SimpleNamespace(log_dir=tmp_path / "logs")),
         run=SimpleNamespace(
             run_id="260923_A01990_0001_ABC",
             sensitive=False,
@@ -285,10 +286,10 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
             pipeline="rnaseq",
         ),
     )
-    check_call = Mock()
+    run_logged_command = Mock()
     monkeypatch.setattr(afterFastq, "get_project_names", Mock(return_value={project}))
     monkeypatch.setattr(afterFastq, "get_project_dirs", Mock(return_value=set()))
-    monkeypatch.setattr(afterFastq.subprocess, "check_call", check_call)
+    monkeypatch.setattr(afterFastq, "run_logged_command", run_logged_command)
     monkeypatch.setenv("TMPDIR", str(work_root))
 
     if restart:
@@ -296,11 +297,11 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
     afterFastq.archive_worker(cfg)
 
     # Every input passed to the archiver must survive restart cleanup.
-    for call in check_call.call_args_list:
+    for call in run_logged_command.call_args_list:
         assert all(Path(path).exists() for path in call.args[0][3:])
 
-    fastq_command = check_call.call_args_list[0].args[0]
-    qc_command = check_call.call_args_list[1].args[0]
+    fastq_command = run_logged_command.call_args_list[0].args[0]
+    qc_command = run_logged_command.call_args_list[1].args[0]
     assert fastq_command[:2] == ["7za", "a"]
     assert str(output_path / "Undetermined lane_R1.fastq.gz") in fastq_command
     assert str(output_path / project) in fastq_command
@@ -311,7 +312,7 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
         str(output_path / f"QC_{project}_260923.7za"),
         str(qc_dir),
     ]
-    assert all("shell" not in call.kwargs for call in check_call.call_args_list)
+    assert all("shell" not in call.kwargs for call in run_logged_command.call_args_list)
 
 
 def test_archive_md5_uses_file_handles_instead_of_redirection(tmp_path, monkeypatch):
