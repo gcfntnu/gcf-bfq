@@ -228,6 +228,14 @@ def _requested_indexes(args, from_stage):
     return tuple(indexes)
 
 
+def _require_single_pair_index_toggle(selection):
+    if len(getattr(selection, "pairs", (selection,))) > 1:
+        raise StateConflictError(
+            "Index-toggle options require a single input pair; edit the relevant project-qualified "
+            "SampleSheet explicitly and queue a project correction. No inputs or results were changed."
+        )
+
+
 def _require_separate_source(source_path, output_path):
     source = Path(source_path).resolve()
     output = Path(output_path).resolve()
@@ -338,6 +346,7 @@ def rerun_flowcell(**args):
             state["source_path"], output_path, refresh=refresh_inputs
         )
         if indexes:
+            _require_single_pair_index_toggle(selected)
             correction = index_corrections.plan(
                 store, run_id, selected, state["source_path"], indexes, reason=reason
             )
@@ -364,6 +373,7 @@ def rerun_flowcell(**args):
                 state["source_path"], output_path, refresh=refresh_inputs
             )
         if correction is not None:
+            _require_single_pair_index_toggle(selected)
             current = index_corrections.plan(
                 store, run_id, selected, state["source_path"], indexes, reason=reason
             )
@@ -514,6 +524,7 @@ def initialize_flowcell(**args):
     )
     correction = None
     if indexes:
+        _require_single_pair_index_toggle(selected)
         correction = index_corrections.plan(
             store, run_id, selected, source_path, indexes, reason=reason
         )
@@ -537,6 +548,7 @@ def initialize_flowcell(**args):
             source_path, output_path, refresh=refresh_inputs
         )
         if correction is not None:
+            _require_single_pair_index_toggle(selected)
             current = index_corrections.plan(
                 store, run_id, selected, source_path, indexes, reason=reason
             )

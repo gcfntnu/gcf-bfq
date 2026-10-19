@@ -330,3 +330,22 @@ def test_manager_queues_frozen_correction_without_changing_success(correction, m
     assert result["project_completion"][A]["workflow"] == "workflow-a"
     assert project_corrections.current(store.read(RUN_ID))["status"] == "prepared"
     assert {path: identity(path) for path in before} == before
+
+
+def test_multi_pair_index_toggle_rejected_before_mutation(correction, monkeypatch):
+    _cfg, store, source, output = correction
+    state_before = store.read(RUN_ID)
+    before = {path: identity(path) for path in output.rglob("*") if path.is_file()}
+    monkeypatch.setattr(
+        preflight,
+        "require_valid_inputs",
+        lambda *_args, **_kwargs: (_select(source), SimpleNamespace(ok=True)),
+    )
+    with pytest.raises(
+        StateConflictError, match="Index-toggle options require a single input pair"
+    ):
+        manager.rerun_flowcell(
+            flowcell=RUN_ID, from_stage="demultiplexing", force=True, reverse_complement_index1=True
+        )
+    assert store.read(RUN_ID) == state_before
+    assert {path: identity(path) for path in before} == before
