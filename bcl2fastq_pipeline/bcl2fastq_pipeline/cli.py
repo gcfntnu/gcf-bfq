@@ -427,6 +427,7 @@ def main():
             sleep(cfg)
             continue
 
+        project_corrections.recover_pending(store)
         analysis_snapshots.recover_pending(store)
         notification_delivery.recover_pending(cfg, store)
 

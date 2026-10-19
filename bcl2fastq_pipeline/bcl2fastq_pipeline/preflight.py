@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import shutil
+import uuid
 
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -224,6 +225,22 @@ def copy_run_inputs(selection: InputSelection, output_path) -> InputSelection:
         result = validate_selection(selection)
         if not result.ok:
             raise PreflightValidationError(result)
+        effective_names = {
+            path.name
+            for pair in selection.pairs
+            for path in (pair.sample_sheet, pair.submission_form)
+        }
+        replacing = any(
+            path.parent != output
+            for pair in selection.pairs
+            for path in (pair.sample_sheet, pair.submission_form)
+        )
+        obsolete = [
+            path
+            for paths in _input_files(output)
+            for path in paths
+            if replacing and path.name not in effective_names
+        ]
         for pair in selection.pairs:
             for source in (pair.sample_sheet, pair.submission_form):
                 destination = output / source.name
@@ -238,6 +255,13 @@ def copy_run_inputs(selection: InputSelection, output_path) -> InputSelection:
             destination = output / "RunInfo.xml"
             if selection.run_info != destination:
                 shutil.copy2(selection.run_info, destination)
+        if obsolete:
+            # Explicit replacement must not leave obsolete canonical inputs as
+            # competing candidates. Preserve their bytes outside discovery.
+            retained = output / "provenance" / "input-replacements" / uuid.uuid4().hex
+            retained.mkdir(parents=True)
+            for path in obsolete:
+                os.replace(path, retained / path.name)
         sheets = tuple(output / pair.sample_sheet.name for pair in selection.pairs)
         forms = tuple(output / pair.submission_form.name for pair in selection.pairs)
         copied = replace(

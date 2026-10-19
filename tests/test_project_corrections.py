@@ -137,6 +137,8 @@ def finish_state(store):
 
 def test_success_publishes_only_selected_and_retains_prior_success(correction):
     _cfg, store, source, output = correction
+    shared_report = output / f"sequencer_stats_{A}_{B}_260918.html"
+    shared_report.write_text("original shared conversion report")
     protected = [path for path in output.rglob("*") if path.is_file() and A in str(path)]
     before = {path: identity(path) for path in protected}
     (source / f"SampleSheet_{B}.csv").write_text(
@@ -152,6 +154,7 @@ def test_success_publishes_only_selected_and_retains_prior_success(correction):
     (working / A / "reads.fastq.gz").write_bytes(b"unused regenerated A")
     (working / "Stats").mkdir()
     (working / "Stats" / "conversion.json").write_text("correction conversion")
+    (working / shared_report.name).write_text("corrected conversion report")
     project_corrections.publish(store, RUN_ID)
     finish_state(store)
     project_corrections.commit_publication(store, RUN_ID)
@@ -160,10 +163,14 @@ def test_success_publishes_only_selected_and_retains_prior_success(correction):
     assert (output / B / "reads.fastq.gz").read_bytes() == b"corrected B"
     assert (working / B).is_symlink()
     assert (working / B / "reads.fastq.gz").read_bytes() == b"corrected B"
+    assert not (working / A).exists()
+    assert shared_report.read_text() == "original shared conversion report"
+    assert (working / shared_report.name).read_text() == "corrected conversion report"
     report = working / f"multiqc_{B}_260918.html"
     assert report.is_symlink()
     assert report.read_text() == "corrected report B"
     assert (output / "Stats" / "conversion.json").read_text() == "original conversion"
+
     assert (output / "provenance" / f"{B}_analysis.tar.gz").read_bytes() == b"prior snapshot B"
     state = store.read(RUN_ID)
     record = project_corrections.current(state)
@@ -176,6 +183,20 @@ def test_success_publishes_only_selected_and_retains_prior_success(correction):
     assert state["project_completion"][A]["workflow"] == "workflow-a"
     assert state["project_completion"][B]["attempt"] == 2
     assert state["project_completion"][B]["workflow"] == "corrected-workflow"
+
+
+def test_startup_recovers_uncommitted_publication_before_discovery(correction):
+    _cfg, store, _source, output = correction
+    original = identity(output / B / "reads.fastq.gz")
+    working = queue(correction)
+    (working / B).mkdir()
+    (working / B / "reads.fastq.gz").write_bytes(b"uncommitted replacement")
+    project_corrections.publish(store, RUN_ID)
+    assert (output / B / "reads.fastq.gz").read_bytes() == b"uncommitted replacement"
+    project_corrections.recover_pending(store)
+    assert identity(output / B / "reads.fastq.gz") == original
+    assert project_corrections.current(store.read(RUN_ID))["status"] == "rolled_back"
+    assert store.recover_interrupted(RUN_ID)["status"] == "interrupted"
 
 
 def test_failure_and_restart_restore_previous_selected_outputs(correction, monkeypatch):

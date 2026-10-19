@@ -28,6 +28,7 @@ from configmaker.validation import VALIDATOR_VERSION
 from bcl2fastq_pipeline import (
     analysis_snapshots,
     processing_times,
+    project_corrections,
     undetermined_fastqs,
     workflow_config,
 )
@@ -344,10 +345,11 @@ def archive_worker(cfg):
         pw = generate_password(cfg, p) if sensitive else None
         report_dir = cfg.output_path / "Reports"
         archive_inputs = [cfg.output_path / p, cfg.output_path / "Stats"]
-        stats_pattern = (
-            f"sequencer_stats_{p}_*.html" if project_config else "sequencer_stats_*.html"
+        archive_inputs.extend(
+            path
+            for path in sorted(cfg.output_path.glob("sequencer_stats_*.html"))
+            if not project_config or project_corrections.belongs_to_project(path.name, [p])
         )
-        archive_inputs.extend(sorted(cfg.output_path.glob(stats_pattern)))
         if report_dir.exists():
             archive_inputs.append(report_dir)
         archive_inputs.extend(

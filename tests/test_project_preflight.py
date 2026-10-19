@@ -81,3 +81,19 @@ def test_legacy_curated_canonical_pair_remains_authoritative(tmp_path):
     selected = preflight.select_run_inputs(source, output)
     assert not selected.multi_pair
     assert selected.sample_sheet == output / "SampleSheet.csv"
+
+
+def test_explicit_refresh_can_replace_legacy_canonical_pair_with_project_pairs(tmp_path):
+    source, output = tmp_path / "source", tmp_path / "output"
+    source.mkdir()
+    write_inputs(output)
+    original = (output / "SampleSheet.csv").read_bytes()
+    pair(source, "GCF-2099-001", "alpha", "AAAACCCC")
+    pair(source, "GCF-2099-002", "beta", "TTTTGGGG")
+    selection = preflight.select_run_inputs(source, output, refresh=True)
+    preflight.copy_run_inputs(selection, output)
+    selected = preflight.select_run_inputs(source, output)
+    assert selected.multi_pair and preflight.validate_selection(selected).ok
+    assert not (output / "SampleSheet.csv").exists()
+    historical = list((output / "provenance" / "input-replacements").glob("*/SampleSheet.csv"))
+    assert len(historical) == 1 and historical[0].read_bytes() == original

@@ -220,6 +220,8 @@ def test_project_deliveries_include_only_their_own_sequencing_report(tmp_path, m
         cfg.run.project_workflows[project] = "default"
         write_fastq(output / project / "sample_R1.fastq.gz")
         (output / f"sequencer_stats_{project}_260918.html").write_text(project)
+    shared_report = output / f"sequencer_stats_{PROJECTS[0]}_{PROJECTS[1]}_260918.html"
+    shared_report.write_text("shared conversion report")
     commands = []
     monkeypatch.setattr(
         afterFastq, "run_logged_command", lambda command, **kw: commands.append(command)
@@ -230,7 +232,10 @@ def test_project_deliveries_include_only_their_own_sequencing_report(tmp_path, m
             continue
         project = next(p for p in PROJECTS if Path(command[2]).name.startswith(p))
         reports = [arg for arg in command if Path(arg).name.startswith("sequencer_stats_")]
-        assert reports == [str(output / f"sequencer_stats_{project}_260918.html")]
+        assert set(reports) == {
+            str(output / f"sequencer_stats_{project}_260918.html"),
+            str(shared_report),
+        }
 
 
 def test_archive_checksum_selection_matches_complete_project_prefix(tmp_path, monkeypatch):

@@ -266,11 +266,9 @@ def test_scoped_execution_preserves_completed_project_and_notification_independe
         assert identity(output / B / "beta_R1.fastq.gz")[:2] == old_b_fastq[:2]
         assert not any(call[0] == "conversion" for call in calls)
     else:
-        assert (Path(correction["working"]) / A).is_dir()
-        assert (
-            identity(Path(correction["working"]) / A / "alpha_R1.fastq.gz")[0]
-            != identity(output / A / "alpha_R1.fastq.gz")[0]
-        )
+        assert any(call[0] == "conversion" for call in calls)
+        assert not (Path(correction["working"]) / A).exists()
+        assert correction["unused_output_cleanup"]["status"] == "completed"
         assert (
             Path(correction["working"]) / "provenance" / "demultiplexing" / "plan.json"
         ).is_file()

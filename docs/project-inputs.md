@@ -24,6 +24,10 @@ SHA-256 hashes are recorded. Identical bytes under filenames naming different
 projects are an error. Missing partners, duplicate forms, conflicting sheets
 and unequal project-key sets must be corrected explicitly.
 
+An explicit whole-run refresh can replace a legacy canonical pair with project
+pairs. Obsolete canonical input bytes are retained under
+`provenance/input-replacements/` so they do not become competing candidates.
+
 Every effective pair is validated independently by `gcf-tools`, followed by
 whole-flowcell lane, index, mismatch-policy, sample/output identity and physical
 read-geometry checks. A different project's workbook cannot supply missing

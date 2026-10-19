@@ -254,7 +254,15 @@ def _run_summary(payload):
     from bcl2fastq_pipeline import afterFastq  # noqa: PLC0415
 
     lines = [f"Projects: {', '.join(payload['projects']) or '(none)'}"]
-    if payload.get("user") not in (None, "", "N/A"):
+    contexts = payload.get("project_contexts", {})
+    if contexts:
+        for project, context in sorted(contexts.items()):
+            user = context.get("custom", {}).get("User") or "unavailable"
+            lines.append(
+                f"{project}: user {user}; library prep {context.get('libprep')}; "
+                f"workflow {context.get('workflow') or 'pending analysis'}"
+            )
+    elif payload.get("user") not in (None, "", "N/A"):
         lines.append(f"User: {payload['user']}")
     lines.extend(
         (

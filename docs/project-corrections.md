@@ -54,12 +54,17 @@ store. Recovery restores previous products if processing completion was not
 committed. After committed completion it retains the replacements. Snapshot
 candidates are prepared before this publication and become current only after
 the completion commit. Notification delivery remains independent of processing
-completion.
+completion. Startup recovers publication before discovering runs or retrying mail.
+After successful publication, unused regenerated unselected FASTQs are discarded;
+failed candidates and prior selected generations remain available for recovery.
+This staging and history require additional storage; no general retention policy
+is introduced.
 
 Canonical shared conversion statistics remain associated with their original
 attempt. Repeated-conversion statistics and generated inputs remain in the
 correction attempt directory; BFQ does not add repeated conversions to the
-original flowcell totals. State retains per-project successful completion and
+original flowcell totals. Original shared sequencing HTML remains tied to its
+conversion; a correction keeps its own report beside that attempt. State retains per-project successful completion and
 workflow metadata, so a retained project's history is distinguishable from the
 current correction's stage status. No automatic retention cleanup is introduced.
 

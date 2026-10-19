@@ -9,6 +9,7 @@ in the correction's history directory, including after successful replacement.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import shutil
@@ -20,11 +21,14 @@ from bcl2fastq_pipeline import preflight
 from bcl2fastq_pipeline.config import parse_custom_options
 from bcl2fastq_pipeline.state import (
     PROVENANCE_DIR,
+    ExecutionLeaseError,
     StateConflictError,
     apply_cleanup,
     cleanup_plan,
     utcnow,
 )
+
+log = logging.getLogger(__name__)
 
 DIRECTORY = "project-corrections"
 
@@ -284,6 +288,13 @@ def _publication_plan(state, record):
     names = {
         path.name for path in canonical.iterdir() if belongs_to_project(path.name, projects)
     } | {path.name for path in working.iterdir() if belongs_to_project(path.name, projects)}
+    # These reports describe an entire conversion attempt. Keep the original
+    # shared report for retained projects; correction reports stay with their pass.
+    names = {
+        name
+        for name in names
+        if not (name.startswith("sequencer_stats_") and name.endswith(".html"))
+    }
     input_names = set()
     for item in record["inputs"]:
         if item["project_id"] is None or item["project_id"] in projects:
@@ -371,10 +382,15 @@ def recover(store, run_id):
     """Repeatable publication recovery. Call under the run execution lease."""
     state = store.read(run_id)
     record = _record(state)
+    if record is not None and record["status"] == "committed":
+        return _discard_unused(store, state)
     if record is None or record["status"] not in {"publishing", "published"}:
         return state
     if state["status"] == "completed" and state["attempt"] == record["attempt"]:
-        return store.mutate(run_id, lambda current_state: _set_status(current_state, "committed"))
+        committed = store.mutate(
+            run_id, lambda current_state: _set_status(current_state, "committed")
+        )
+        return _discard_unused(store, committed)
     for operation in reversed(record["publication"]):
         target, source, previous = (Path(operation[key]) for key in ("target", "source", "backup"))
         if previous.exists() or previous.is_symlink():
@@ -398,3 +414,58 @@ def recover(store, run_id):
 
 def commit_publication(store, run_id):
     return recover(store, run_id)
+
+
+def recover_pending(store):
+    """Recover interrupted publication before discovery or notification retries."""
+    for state in store.list_states():
+        record = _record(state)
+        if record is None or record["status"] not in {"publishing", "published", "committed"}:
+            continue
+        if (
+            record["status"] == "committed"
+            and record.get("unused_output_cleanup", {}).get("status") == "completed"
+        ):
+            continue
+        try:
+            with store.execution_lease(state["run_id"]):
+                recover(store, state["run_id"])
+        except ExecutionLeaseError:
+            continue
+        except Exception:
+            log.exception("Correction recovery deferred for %s", state["run_id"])
+
+
+def _discard_unused(store, state):
+    """Discard regenerated unselected reads after successful publication only."""
+    record = _record(state)
+    if record.get("unused_output_cleanup", {}).get("status") == "completed":
+        return state
+    working = Path(record["working"])
+    removed = []
+    result = {"status": "completed"}
+    try:
+        for project in sorted(set(state["projects"]) - set(record["projects"])):
+            if not re.fullmatch(r"GCF-[A-Za-z0-9][A-Za-z0-9-]*", project):
+                raise StateConflictError(f"Invalid project in staged output cleanup: {project!r}")
+            for relative in (
+                Path(project),
+                Path(PROVENANCE_DIR) / "project-demultiplexing" / project,
+            ):
+                path = working / relative
+                if path.is_symlink():
+                    path.unlink()
+                    removed.append(str(relative))
+                elif path.is_dir():
+                    shutil.rmtree(path)
+                    removed.append(str(relative))
+    except (OSError, StateConflictError) as error:
+        result = {"status": "failed", "error": str(error)}
+        log.warning("Unused correction output cleanup deferred for %s: %s", state["run_id"], error)
+    result["removed"] = removed
+
+    def update(current_state):
+        _record(current_state)["unused_output_cleanup"] = result
+        return current_state
+
+    return store.mutate(state["run_id"], update)
