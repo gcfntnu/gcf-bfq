@@ -25,6 +25,7 @@ from pathlib import Path
 
 from bcl2fastq_pipeline import processing_times
 from bcl2fastq_pipeline.config import parse_custom_options
+from bcl2fastq_pipeline.undetermined_fastqs import is_undetermined
 from bcl2fastq_pipeline.version import package_version
 
 SCHEMA_VERSION = 1
@@ -1184,7 +1185,7 @@ def find_fastqs(output_path: Path | str) -> list[Path]:
     fastqs = list(output_path.glob("GCF-*/*.fastq.gz"))
     fastqs += list(output_path.glob("GCF-*/*/*.fastq.gz"))
     fastqs += list(output_path.glob("Undetermined*.fastq.gz"))
-    return sorted(set(fastqs))
+    return sorted(path for path in set(fastqs) if not is_undetermined(path))
 
 
 def validate_restored_fastqs(output_path: Path | str) -> tuple[bool, str]:  # noqa: PLR0911

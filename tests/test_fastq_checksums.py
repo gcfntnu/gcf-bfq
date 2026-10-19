@@ -7,7 +7,7 @@ import pytest
 
 from bcl2fastq_pipeline.state import apply_cleanup, cleanup_plan
 
-from bcl2fastq_pipeline import afterFastq
+from bcl2fastq_pipeline import afterFastq, undetermined_fastqs
 
 
 @pytest.fixture
@@ -87,3 +87,25 @@ def test_escaped_filenames_and_binary_legacy_entries(checksum_run, monkeypatch):
     manifest.write_text(manifest.read_text().replace("  GCF-", " *GCF-"))
     monkeypatch.setattr(afterFastq, "file_md5", Mock(side_effect=AssertionError("FASTQ read")))
     afterFastq.md5sum_worker(cfg)
+
+
+def test_sample_manifests_survive_undetermined_cleanup_for_multiple_projects(
+    checksum_run, monkeypatch
+):
+    cfg, _manifest = checksum_run
+    for project in ("GCF-2026-001", "GCF-2026-002"):
+        directory = cfg.output_path / project
+        directory.mkdir(exist_ok=True)
+        (directory / "Undetermined_S0_L001_I1_001.fastq.gz").write_bytes(b"unassigned")
+        (directory / "Undetermined_control_R1.fastq.gz").write_bytes(b"sample reads")
+    afterFastq.md5sum_worker(cfg)
+    manifests = {
+        path: (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in cfg.output_path.glob("md5sum_*_fastq.txt")
+    }
+    assert len(manifests) == 2
+    assert all(b"Undetermined_S0" not in data for data, _mtime in manifests.values())
+    undetermined_fastqs.cleanup(cfg.output_path)
+    monkeypatch.setattr(afterFastq, "file_md5", Mock(side_effect=AssertionError("FASTQ read")))
+    afterFastq.md5sum_worker(cfg)
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in manifests} == manifests

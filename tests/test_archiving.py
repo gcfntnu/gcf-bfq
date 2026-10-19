@@ -13,11 +13,12 @@ import pytest
 
 from bcl2fastq_pipeline.state import apply_cleanup, cleanup_plan
 
-from bcl2fastq_pipeline import afterFastq, misc
+from bcl2fastq_pipeline import afterFastq, misc, undetermined_fastqs
 
 PROJECT = "GCF-2026-001"
 RUN_ID = "260923_A01990_0001_AFLOWCELL"
 RUN_DATE = "260923"
+REAL_ARCHIVER = shutil.which("7za")
 
 
 @pytest.fixture
@@ -82,6 +83,8 @@ def archive_run(tmp_path, monkeypatch):
             while args and args[0].startswith("-p"):
                 args.pop(0)
             archive = Path(args.pop(0))
+            # Exclusion switches are archive options, not filesystem inputs.
+            args = [arg for arg in args if not arg.startswith("-xr!")]
             kind = "qc" if archive.name.startswith("QC_") else "fastq"
             with open(os.environ["FAKE_ARCHIVER_CALLS"], "a") as calls:
                 calls.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd()}) + "\\n")
@@ -157,11 +160,56 @@ def test_tenx_archive_accepts_restored_fastqs_and_preserves_optional_output(
     assert {path: path.read_bytes() for path in run.retained} == retained_contents
     calls = [json.loads(line) for line in run.calls.read_text().splitlines()]
     assert len(calls) == 2
+    assert set(undetermined_fastqs.archive_exclusions()).issubset(calls[0]["argv"])
     assert all(call["cwd"] == str(run.cfg.output_path) for call in calls)
     for kind in ["fastq", "qc"]:
         command_log = run.cfg.static.paths.log_dir / f"{RUN_ID}_{PROJECT}_archive_{kind}.log"
         assert f"{kind}: standard output diagnostic" in command_log.read_text()
         assert f"{kind}: standard error diagnostic" in command_log.read_text()
+
+
+@pytest.mark.parametrize("layout", ["directory", "symlink"])
+@pytest.mark.skipif(REAL_ARCHIVER is None, reason="optional real 7-Zip contract check")
+def test_archive_worker_filters_nested_mkfastq_inputs_and_preserves_sample_reads(
+    archive_run, tmp_path, monkeypatch, layout
+):
+    run = archive_run
+    if layout == "symlink":
+        extra = tmp_path / "external-mkfastq"
+        run.extra.symlink_to(extra, target_is_directory=True)
+    else:
+        extra = run.extra
+    nested = extra / "outs/fastq_path/staging"
+    nested.mkdir(parents=True)
+    discarded = [
+        run.cfg.output_path / "Undetermined_S0_R1_001.fastq.gz",
+        nested / "Undetermined_S0_L001_I2_001.fastq.gz",
+        run.inputs["project"] / "Undetermined_S0_L002_R3_001.fastq.gz",
+    ]
+    for path in discarded:
+        path.write_bytes(b"unassigned")
+    sample = nested / "Undetermined_control_S1_L001_R1_001.fastq.gz"
+    sample.write_bytes(b"sample reads")
+    stats = nested / "unknown-index.csv"
+    stats.write_bytes(b"unknown index counts")
+    original = afterFastq._run_archive_command
+
+    def real_command(cmd, cfg, project, kind):
+        if kind == "fastq":
+            assert not any(str(path) in cmd for path in discarded)
+            assert set(undetermined_fastqs.archive_exclusions()).issubset(cmd)
+        return original([REAL_ARCHIVER, *cmd[1:]], cfg, project, kind)
+
+    monkeypatch.setattr(afterFastq, "_run_archive_command", real_command)
+    afterFastq.archive_worker(run.cfg)
+    listing = subprocess.check_output(
+        [REAL_ARCHIVER, "l", "-slt", str(run.fastq_archive)], text=True
+    )
+    assert "Undetermined_S0" not in listing
+    assert sample.name in listing and stats.name in listing
+    assert "sample_R1.fastq.gz" in listing
+    assert f"md5sum_{PROJECT}_fastq.txt" in listing
+    assert all(path.read_bytes() == b"unassigned" for path in discarded)
 
 
 @pytest.mark.parametrize(

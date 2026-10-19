@@ -486,6 +486,46 @@ See [processing-time semantics and server checks](docs/processing-time-integrati
 See [early sequencing QC verification](docs/early-sequencing-qc-integration-tests.md)
 for the server checks required before merge.
 
+### Undetermined FASTQ retention
+
+After successful conversion, early sequencing QC and project FASTQ checksums,
+BFQ commits demultiplexing completion and removes recognized demultiplexer-generated
+Undetermined FASTQs before scientific analysis. This applies to BCL Convert,
+bcl2fastq and supported mkfastq backends, including nested output/staging trees,
+lane-split reads, index reads and ATAC R3 reads. The reserved converter filename
+is `Undetermined_S0[_Lnnn]_<R1|R2|R3|I1|I2>_nnn.fastq.gz` (each `nnn` is three
+digits). BFQ preserves that name during renaming; it does not infer unassigned
+reads from an `Undetermined` prefix or remove similarly named samples.
+
+InterOp, conversion statistics/reports, unknown-index summaries, logs and
+sequencing-QC products remain available. Counts and percentages describe the
+conversion and do not depend on the remaining FASTQs. If report generation fails,
+its source statistics remain available for `retry-sequencing-qc`. Cleanup does
+not depend on successful report generation or email delivery and introduces no
+QC threshold, retention option or per-run confirmation. Failed conversion
+attempts keep their diagnostic FASTQs under the existing failure/retry policy.
+
+Cleanup only unlinks files/links below the managed run output, including mkfastq
+staging there. Directory symlinks are not traversed, and external link targets
+are preserved. Operational logs list removed paths, count and regular-file byte
+total (logical sizes, excluding symlink targets). Missing files and repeated
+cleanup are normal. A genuine unlink failure stops at the **analysis** boundary;
+fix permissions/storage, then preview `fm rerun RUN_ID --from analysis --dry-run`
+and queue `fm rerun RUN_ID --from analysis`. The same restart handles interrupted
+cleanup: remaining files are retried without repeating completed conversion,
+early QC or sent sequencing mail. Existing state and the execution lease govern
+this recovery; no additional completion marker is created.
+
+New delivery archives exclude these FASTQs, including recursively through the
+optional mkfastq directory and directory aliases. Existing completed archives
+are not rewritten just to apply this policy. Undetermined reads are excluded
+from sample checksums, restored-FASTQ validation and delivered-FASTQ restoration
+requirements, including recognized paths in older cleanup records. Project
+FASTQs and valid project manifests remain authoritative. This automatic policy
+is separate from operator-initiated `clean-fastqs` for delivered project reads.
+See [Undetermined retention integration checks](docs/undetermined-fastqs-integration-tests.md)
+for the actual-layout checks required before merge.
+
 ### Completion notifications and recovery
 
 Reporting/finalization completion and notification intent are saved atomically.
@@ -979,7 +1019,8 @@ For 10X libraries, finalization includes the extra flowcell-named mkfastq
 directory when present. Restored FASTQ layouts may omit that directory; BFQ
 logs its absence and archives the remaining inputs. Required project FASTQs,
 Stats, sample metadata and FASTQ manifests remain required, and every nonzero
-archiver exit still fails finalization.
+archiver exit still fails finalization. Recursive exclusions prevent recognized
+Undetermined FASTQs in that directory from entering new delivery archives.
 
 Archive command output is saved under `logDir` as
 `<run-id>_<project>_archive_fastq.log` and `<run-id>_<project>_archive_qc.log`.
@@ -1056,10 +1097,12 @@ harmless.
 
 Analysis, reporting and finalization reruns are refused while any previously
 selected FASTQ is missing or a restored regular file differs from its recorded
-size. Restore all selected FASTQs (including Undetermined reads) from the retained
+size. Restore selected project/sample FASTQs from the retained
 delivery archives to their original paths before queueing those reruns. This is
 an existence/size check, not integrity verification. **Keep the archives until
 restoration succeeds**: those reruns invalidate delivery archives when queued.
+Recognized demultiplexer-generated Undetermined FASTQs are exempt from restoration,
+including paths recorded by older versions; new delivery archives exclude them.
 Alternatively, rerun from demultiplexing to regenerate reads from instrument data;
 a successful demultiplexing stage clears the old restoration requirement.
 
@@ -1103,7 +1146,8 @@ The demultiplexer name and image tag (or digest) are recorded in the flowcell st
 
 Each run is written below `<outputDir>/<run-id>`. Important products include:
 
-- Demultiplexed project FASTQs and `Undetermined` FASTQs.
+- Demultiplexed project FASTQs; successful runs discard recognized `Undetermined`
+  FASTQs before analysis, retaining their conversion statistics and QC reports.
 - `Stats`, `InterOp`, `RunInfo.xml`, and `RunParameters.xml`.
 - Per-project sample information, MultiQC reports, archives, and archive MD5s.
 - `configmaker-analysis-<project>.json` records the samples actually discovered

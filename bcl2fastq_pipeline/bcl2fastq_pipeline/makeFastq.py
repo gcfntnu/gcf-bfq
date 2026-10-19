@@ -11,6 +11,7 @@ import subprocess
 
 from bcl2fastq_pipeline.config import PipelineConfig
 from bcl2fastq_pipeline.containers import image_version
+from bcl2fastq_pipeline.undetermined_fastqs import is_undetermined
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +58,9 @@ def rename_fastqs():
     fastqs += list(cfg.output_path.glob("*/*/*.fastq.gz"))
 
     for fpath in fastqs:
+        if is_undetermined(fpath):
+            # Preserve the reserved S0 identity until successful-run cleanup.
+            continue
         if fpath.name.endswith("_001.fastq.gz"):
             # Build new filename
             new_name = fpath.name.replace("_001.fastq.gz", ".fastq.gz")

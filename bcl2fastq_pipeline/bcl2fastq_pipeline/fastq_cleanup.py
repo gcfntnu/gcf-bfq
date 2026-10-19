@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from bcl2fastq_pipeline.state import StateConflictError, utcnow
+from bcl2fastq_pipeline.undetermined_fastqs import is_undetermined
 
 FASTQ_SUFFIXES = (".fastq.gz", ".fq.gz", ".fastq", ".fq")
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -16,7 +17,7 @@ def _raise_walk_error(error):
     raise error
 
 
-def plan(output):
+def plan(output, *, select=None):
     """Return relative paths and lstat identity; don't traverse directory symlinks."""
     files = {}
     try:
@@ -26,12 +27,21 @@ def plan(output):
         with os.scandir(output):
             pass
         for root, dirs, names in os.walk(output, followlinks=False, onerror=_raise_walk_error):
+            if select is not None:
+                names.extend(name for name in dirs if (Path(root) / name).is_symlink())
             dirs[:] = [name for name in dirs if not (Path(root) / name).is_symlink()]
             for name in sorted(names):
                 if not name.endswith(FASTQ_SUFFIXES):
                     continue
+                if select is not None and not select(name):
+                    continue
                 path = Path(root) / name
-                info = path.lstat()
+                try:
+                    info = path.lstat()
+                except FileNotFoundError:
+                    if select is None:
+                        raise
+                    continue
                 if not (stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)):
                     raise StateConflictError(f"FASTQ is not a regular file or symlink: {path}")
                 files[str(path.relative_to(output))] = {
@@ -107,7 +117,11 @@ def execute(store, run_id, output, files):
     previous = store.read(run_id).get("fastq_cleanup", {})
     required = dict(previous.get("required_files", {}))
     required.update(
-        {name: None if info["symlink"] else info["size"] for name, info in files.items()}
+        {
+            name: None if info["symlink"] else info["size"]
+            for name, info in files.items()
+            if not is_undetermined(name)
+        }
     )
     record = {
         "status": "in_progress",
@@ -171,6 +185,10 @@ def require_restored(state, output, from_stage):
         return
     missing = []
     for relative, size in required.items():
+        if is_undetermined(relative):
+            # Older clean-fastqs records may include reads no longer retained
+            # or supplied in new delivery archives.
+            continue
         path = output / relative
         # Treat a dangling restored link as absent. Links to restored data are OK.
         if not path.is_file() or (size is not None and path.stat().st_size != size):

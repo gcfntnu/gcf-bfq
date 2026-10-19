@@ -149,6 +149,15 @@ def test_all_projects_require_archives_even_with_no_remaining_reads(delivered):
         manager.clean_fastqs(flowcell=RUN_ID, force=True)
 
 
+def test_delivered_cleanup_does_not_require_restoring_discarded_converter_reads(delivered):
+    _cfg, _store, output = delivered
+    relative = "nested/Undetermined_S0_L001_I1_001.fastq.gz"
+    write_fastq(output / relative)
+    result = manager.clean_fastqs(flowcell=RUN_ID, force=True)
+    assert relative in result["fastq_cleanup"]["removed_files"]
+    assert relative not in result["fastq_cleanup"]["required_files"]
+
+
 @pytest.mark.parametrize("status", ["queued", "running", "failed", "archived"])
 def test_ineligible_processing_status(delivered, status):
     _cfg, store, output = delivered

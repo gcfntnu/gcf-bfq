@@ -298,7 +298,7 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
 
     # Every input passed to the archiver must survive restart cleanup.
     for call in run_logged_command.call_args_list:
-        assert all(Path(path).exists() for path in call.args[0][3:])
+        assert all(Path(path).exists() for path in call.args[0][3:] if not path.startswith("-xr!"))
 
     fastq_command = run_logged_command.call_args_list[0].args[0]
     qc_command = run_logged_command.call_args_list[1].args[0]
