@@ -339,7 +339,7 @@ def publish(store, run_id):
     backup = Path(record["root"]) / "previous"
     backup.mkdir()
     for operation in operations:
-        for key in ("target", "backup"):
+        for key in ("target", "source", "backup"):
             Path(operation[key]).parent.mkdir(parents=True, exist_ok=True)
 
     def update(current_state):
