@@ -420,32 +420,44 @@ def recover_pending(store):
     """Recover interrupted publication before discovery or notification retries."""
     for state in store.list_states():
         record = _record(state)
-        if record is None or record["status"] not in {"publishing", "published", "committed"}:
-            continue
-        if (
-            record["status"] == "committed"
-            and record.get("unused_output_cleanup", {}).get("status") == "completed"
-        ):
+        pending = record is not None and record["status"] in {"publishing", "published"}
+        cleanup = any(
+            item["status"] == "committed"
+            and item.get("unused_output_cleanup", {}).get("status") != "completed"
+            for item in state.get("project_corrections", [])
+        )
+        if not pending and not cleanup:
             continue
         try:
             with store.execution_lease(state["run_id"]):
-                recover(store, state["run_id"])
+                latest = recover(store, state["run_id"])
+                for item in latest.get("project_corrections", []):
+                    if item["status"] == "committed":
+                        latest = _discard_unused(store, latest, record=item)
         except ExecutionLeaseError:
             continue
         except Exception:
             log.exception("Correction recovery deferred for %s", state["run_id"])
 
 
-def _discard_unused(store, state):
+def _discard_unused(store, state, *, record=None):
     """Discard regenerated unselected reads after successful publication only."""
-    record = _record(state)
+    record = record or _record(state)
     if record.get("unused_output_cleanup", {}).get("status") == "completed":
         return state
     working = Path(record["working"])
     removed = []
     result = {"status": "completed"}
     try:
-        for project in sorted(set(state["projects"]) - set(record["projects"])):
+        effective = set(state["projects"]) | {
+            item["project_id"] for item in record["inputs"] if item["project_id"] is not None
+        }
+        effective.update(
+            path.name
+            for path in working.iterdir()
+            if re.fullmatch(r"GCF-[A-Za-z0-9][A-Za-z0-9-]*", path.name)
+        )
+        for project in sorted(effective - set(record["projects"])):
             if not re.fullmatch(r"GCF-[A-Za-z0-9][A-Za-z0-9-]*", project):
                 raise StateConflictError(f"Invalid project in staged output cleanup: {project!r}")
             for relative in (
@@ -465,7 +477,10 @@ def _discard_unused(store, state):
     result["removed"] = removed
 
     def update(current_state):
-        _record(current_state)["unused_output_cleanup"] = result
+        historical = next(
+            item for item in current_state["project_corrections"] if item["id"] == record["id"]
+        )
+        historical["unused_output_cleanup"] = result
         return current_state
 
     return store.mutate(state["run_id"], update)
