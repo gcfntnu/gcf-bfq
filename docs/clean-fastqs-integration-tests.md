@@ -60,8 +60,10 @@ naming convention, not arbitrary `*.7za` matches or QC archives.
 4. Before restoring reads, try `rerun RUN_ID --from analysis`, `--from reporting`
    and `--from finalization` (a dry run is sufficient for the refusal). Each must
    explain restoration/regeneration and preserve retained archives/state.
-5. Restore every selected FASTQ to its original path using normal archive/password
-   handling, including Undetermined reads. A partial or truncated restore should
+5. Restore selected project/sample FASTQs to their original paths using normal archive/password
+   handling. Recognized demultiplexer-generated Undetermined reads are exempt,
+   including paths in older cleanup records; new delivery archives omit them.
+   A partial or truncated sample restore should
    still fail. After complete restoration, preview and then test the desired
    downstream rerun. File sizes are checked, not contents/checksums.
 6. Separately test `rerun RUN_ID --from demultiplexing` with instrument data present:

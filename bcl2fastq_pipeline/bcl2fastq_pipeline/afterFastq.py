@@ -25,7 +25,12 @@ from pathlib import Path
 from configmaker.configmaker import SEQUENCERS
 from configmaker.validation import VALIDATOR_VERSION
 
-from bcl2fastq_pipeline import analysis_snapshots, processing_times, workflow_config
+from bcl2fastq_pipeline import (
+    analysis_snapshots,
+    processing_times,
+    undetermined_fastqs,
+    workflow_config,
+)
 from bcl2fastq_pipeline.config import PipelineConfig
 from bcl2fastq_pipeline.workflow_config import select_workflow
 
@@ -218,7 +223,11 @@ def md5sum_worker(cfg, *, force=False, store=None):
     jobs = []
     for project in sorted(get_project_names(get_project_dirs(cfg))):
         manifest = cfg.output_path / f"md5sum_{project}_fastq.txt"
-        fastqs = sorted((cfg.output_path / project).rglob("*.fastq.gz"))
+        fastqs = sorted(
+            path
+            for path in (cfg.output_path / project).rglob("*.fastq.gz")
+            if not undetermined_fastqs.is_undetermined(path)
+        )
         relative_paths = [path.relative_to(cfg.output_path) for path in fastqs]
         if not force and _complete_fastq_manifest(manifest, relative_paths):
             continue
@@ -319,7 +328,11 @@ def archive_worker(cfg):
         archive_inputs.extend(sorted(cfg.output_path.glob("sequencer_stats_*.html")))
         if report_dir.exists():
             archive_inputs.append(report_dir)
-        archive_inputs.extend(sorted(cfg.output_path.glob("Undetermined*.fastq.gz")))
+        archive_inputs.extend(
+            path
+            for path in sorted(cfg.output_path.glob("Undetermined*.fastq.gz"))
+            if not undetermined_fastqs.is_undetermined(path)
+        )
         archive_inputs.extend(
             [
                 cfg.output_path / f"{p}_samplesheet.tsv",
@@ -343,7 +356,13 @@ def archive_worker(cfg):
         cmd = ["7za", "a"]
         if pw:
             cmd.append(f"-p{pw}")
-        cmd.extend([str(archive_fastq), *(str(path) for path in archive_inputs)])
+        cmd.extend(
+            [
+                str(archive_fastq),
+                *undetermined_fastqs.archive_exclusions(),
+                *(str(path) for path in archive_inputs),
+            ]
+        )
 
         log.info(f"[archive_worker] Zipping {archive_fastq}")
         _run_archive_command(cmd, cfg, p, "fastq")
@@ -364,7 +383,7 @@ def archive_worker(cfg):
         cmd = ["7za", "a"]
         if pw:
             cmd.append(f"-p{pw}")
-        cmd.extend([str(qc_archive), str(qc_dir)])
+        cmd.extend([str(qc_archive), *undetermined_fastqs.archive_exclusions(), str(qc_dir)])
 
         log.info(f"[archive_worker] Archiving QC output → {qc_archive}\n")
         _run_archive_command(cmd, cfg, p, "qc")

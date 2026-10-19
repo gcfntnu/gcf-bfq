@@ -236,7 +236,9 @@ class Scenario:
         elif command[:2] == ["7za", "a"]:
             target = Path(command[2])
             assert target.parent == self.output
-            assert all(Path(value).exists() for value in command[3:])
+            assert all(
+                Path(value).exists() for value in command[3:] if not value.startswith("-xr!")
+            )
             record(self.root, "7za", argv=command)
             target.write_text(LABEL + "\n" + json.dumps(command[3:]) + "\n")
         else:

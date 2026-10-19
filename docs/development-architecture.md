@@ -35,6 +35,12 @@ conversion and rename, before FASTQ checksums and analysis. Analysis invokes the
 scientific workflow and produces project reports; the subsequent reporting stage
 does not rerun scientific analysis. Finalization creates delivery archives and
 their checksums, records completion, and publishes retained analysis snapshots.
+After committing demultiplexing completion, analysis preparation removes reserved
+`Undetermined_S0` FASTQs via `undetermined_fastqs.py`, using the existing safe
+unlink helpers. Failures/recovery use the analysis boundary and execution lease;
+sample checksums, conversion QC and failed-conversion diagnostics are preserved.
+Archive exclusions also cover nested mkfastq directory inputs. See the
+[retention policy and manual checks](undetermined-fastqs-integration-tests.md).
 
 ## Companion repositories and runtime paths
 

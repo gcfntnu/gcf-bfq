@@ -28,6 +28,7 @@ from bcl2fastq_pipeline import (
     preflight,
     processing_times,
     sequencing_delivery,
+    undetermined_fastqs,
     workflow_config,
 )
 from bcl2fastq_pipeline.config import PipelineConfig
@@ -211,6 +212,10 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                         {"tool": tool, "version": version},
                     )
                 elif stage == "analysis":
+                    # Conversion, raw QC statistics and project checksums are
+                    # durable before unlinking. Fail/retry at this boundary,
+                    # preserving completed demultiplexing and early QC/mail.
+                    undetermined_fastqs.cleanup(cfg.output_path)
                     log.info("Starting analysis: %s", run_id)
                     with processing_times.measure(store, run_id, "analysis"):
                         if resume:
