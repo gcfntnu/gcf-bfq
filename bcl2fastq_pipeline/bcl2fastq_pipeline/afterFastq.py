@@ -383,7 +383,7 @@ def archive_worker(cfg):
         cmd = ["7za", "a"]
         if pw:
             cmd.append(f"-p{pw}")
-        cmd.extend([str(qc_archive), str(qc_dir)])
+        cmd.extend([str(qc_archive), *undetermined_fastqs.archive_exclusions(), str(qc_dir)])
 
         log.info(f"[archive_worker] Archiving QC output → {qc_archive}\n")
         _run_archive_command(cmd, cfg, p, "qc")

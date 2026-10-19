@@ -310,6 +310,7 @@ def test_archive_commands_expand_inputs_without_shell_globbing(tmp_path, monkeyp
         "7za",
         "a",
         str(output_path / f"QC_{project}_260923.7za"),
+        *afterFastq.undetermined_fastqs.archive_exclusions(),
         str(qc_dir),
     ]
     assert all("shell" not in call.kwargs for call in run_logged_command.call_args_list)

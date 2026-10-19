@@ -161,6 +161,7 @@ def test_tenx_archive_accepts_restored_fastqs_and_preserves_optional_output(
     calls = [json.loads(line) for line in run.calls.read_text().splitlines()]
     assert len(calls) == 2
     assert set(undetermined_fastqs.archive_exclusions()).issubset(calls[0]["argv"])
+    assert set(undetermined_fastqs.archive_exclusions()).issubset(calls[1]["argv"])
     assert all(call["cwd"] == str(run.cfg.output_path) for call in calls)
     for kind in ["fastq", "qc"]:
         command_log = run.cfg.static.paths.log_dir / f"{RUN_ID}_{PROJECT}_archive_{kind}.log"
@@ -185,6 +186,7 @@ def test_archive_worker_filters_nested_mkfastq_inputs_and_preserves_sample_reads
         run.cfg.output_path / "Undetermined_S0_R1_001.fastq.gz",
         nested / "Undetermined_S0_L001_I2_001.fastq.gz",
         run.inputs["project"] / "Undetermined_S0_L002_R3_001.fastq.gz",
+        run.inputs["qc"] / "Undetermined_S0_L001_R1_001.fastq.gz",
     ]
     for path in discarded:
         path.write_bytes(b"unassigned")
@@ -209,6 +211,11 @@ def test_archive_worker_filters_nested_mkfastq_inputs_and_preserves_sample_reads
     assert sample.name in listing and stats.name in listing
     assert "sample_R1.fastq.gz" in listing
     assert f"md5sum_{PROJECT}_fastq.txt" in listing
+    qc_listing = subprocess.check_output(
+        [REAL_ARCHIVER, "l", "-slt", str(run.qc_archive)], text=True
+    )
+    assert "Undetermined_S0" not in qc_listing
+    assert "analysis.txt" in qc_listing
     assert all(path.read_bytes() == b"unassigned" for path in discarded)
 
 
