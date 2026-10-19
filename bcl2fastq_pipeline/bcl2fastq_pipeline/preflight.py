@@ -69,6 +69,10 @@ def _multi_mode(sheets, forms):
             hashes.add(hashlib.sha256(path.read_bytes()).hexdigest())
         except OSError:
             hashes.add(str(path))
+    if not keys and len(forms) <= 1:
+        # Historical instruments may include an unrelated generic sheet next to
+        # the BFQ opted-in sheet. Keep that selection contract for one form.
+        return False
     return (
         len(keys) > 1
         or len(hashes) > 1
@@ -186,8 +190,6 @@ def select_run_inputs(source_path, output_path, *, refresh=False, projects=None)
             effective.extend(path for path in curated or original if _project_key(path) is None)
             chosen.append(tuple(effective))
         return _project_selection(*chosen)
-    if projects:
-        raise StateError("--project requires filename-qualified project input pairs")
     chosen = []
     for canonical, pattern, sheet in (
         ("SampleSheet.csv", "SampleSheet*.csv", True),
@@ -341,6 +343,8 @@ def run_preflight(cfg, store, stage):
     )
     log.info("Input preflight before %s for %s\n%s", stage, cfg.run.run_id, selection.describe())
     run_info = cfg.run.flowcell_path / "RunInfo.xml" if cfg.run.flowcell_path else None
+    if run_info is not None and not run_info.exists():
+        run_info = None
     # Preserve legacy callers and validator test doubles, while multi-pair mode
     # additionally validates physical run geometry across all projects.
     result = (

@@ -12,6 +12,7 @@ import yaml
 
 from configmaker.libprep import LibprepConfig, LibprepConfigError, find_read_geometry
 
+from bcl2fastq_pipeline import analysis_snapshots
 from bcl2fastq_pipeline.config import ProjectConfig, parse_custom_options
 
 log = logging.getLogger(__name__)
@@ -75,7 +76,7 @@ def project_workdir(cfg, project):
     name = f"{project}_{cfg.run.run_id.split('_')[0]}"
     if getattr(cfg.run, "output_override", None):
         return Path(cfg.run.output_override).parent / "analysis" / name
-    return Path(os.environ.get("TMPDIR", "/bfq-tmp")) / name
+    return analysis_snapshots.workdir_path(cfg.run.run_id, project)
 
 
 def delivery_project_config(cfg, project):

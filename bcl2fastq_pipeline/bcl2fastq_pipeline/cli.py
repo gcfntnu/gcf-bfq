@@ -228,7 +228,8 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                         run_id,
                         run_time=str(datetime.timedelta(seconds=before_early - processing_started)),
                     )
-                    notification_delivery.deliver_pending(cfg, store, run_id, kind="sequencing")
+                    if not getattr(cfg.run, "selected_projects", None):
+                        notification_delivery.deliver_pending(cfg, store, run_id, kind="sequencing")
                     bcl2fastq_pipeline.afterFastq.md5sum_worker(cfg, force=True, store=store)
                     store.complete_stage(
                         run_id,
@@ -355,7 +356,9 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
 
             # Delivery errors (including state I/O after SMTP) must never enter
             # the processing failure path above. The intent is already durable.
-            if stage in {"reporting", "finalization"}:
+            if stage == "finalization" or (
+                stage == "reporting" and not getattr(cfg.run, "selected_projects", None)
+            ):
                 notification_delivery.deliver_pending(cfg, store, run_id)
 
             # complete_run finalizes the final stage itself.
