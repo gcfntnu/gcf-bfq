@@ -253,6 +253,12 @@ def prepare_execution(store, run_id, cfg):
         if demultiplexing_provenance.exists():
             (working / PROVENANCE_DIR).mkdir(exist_ok=True)
             _copy(demultiplexing_provenance, working / PROVENANCE_DIR / "demultiplexing")
+        for project in record["projects"]:
+            retained = canonical / PROVENANCE_DIR / "project-demultiplexing" / project
+            if retained.is_dir():
+                destination = working / PROVENANCE_DIR / "project-demultiplexing" / project
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                _copy(retained, destination)
         apply_cleanup(cleanup_plan(working, record["from_stage"], projects=record["projects"]))
     cfg.run.output_override = working
     cfg.run.selected_projects = set(record["projects"])
@@ -283,6 +289,10 @@ def _publication_plan(state, record):
         if item["project_id"] is None or item["project_id"] in projects:
             input_names.update(item[role] for role in ("sample_sheet", "submission_form"))
     names.update(input_names)
+    for project in projects:
+        relative = Path(PROVENANCE_DIR) / "project-demultiplexing" / project
+        if (working / relative).exists() or (canonical / relative).exists():
+            names.add(str(relative))
     backup = Path(record["root"]) / "previous"
     operations = []
     for name in sorted(names):
@@ -328,6 +338,9 @@ def publish(store, run_id):
     operations = _publication_plan(state, record)
     backup = Path(record["root"]) / "previous"
     backup.mkdir()
+    for operation in operations:
+        for key in ("target", "backup"):
+            Path(operation[key]).parent.mkdir(parents=True, exist_ok=True)
 
     def update(current_state):
         _record(current_state).update(status="publishing", publication=operations)
