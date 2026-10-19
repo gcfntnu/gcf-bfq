@@ -211,13 +211,16 @@ def plan(selection, *, run_info=None, force_bcl2fastq=False):
         raise DemultiplexingPlanError(
             "FORCE_BCL2FASTQ cannot represent per-sample conversion settings; use BCL Convert >=4.1."
         )
+    version_two = bool(per_sample) and not force_bcl2fastq
     columns = [
         key
         for key in ("Lane", "Sample_ID", "Sample_Name", "Sample_Project", "index", "index2")
         if any(key in row for *_source, row in all_rows)
+        # v2 rejects Sample_Name unless name-based output is explicitly enabled.
+        # BFQ names reads by Sample_ID; keep the optional name in source provenance.
+        and not (version_two and key == "Sample_Name")
     ]
     columns += sorted(per_sample)
-    version_two = bool(per_sample) and not force_bcl2fastq
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, lineterminator="\n")
     writer.writerows(

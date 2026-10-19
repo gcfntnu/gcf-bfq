@@ -36,7 +36,11 @@ The existing extra-sample, ASCII identifier and pooled-library rules still apply
 
 Compatible non-10x projects share a structured BCL Convert pass. Uniform settings
 use a v1 sheet with legacy statistics; per-sample settings use a v2 sheet with
-native conversion reports. Physical read geometry remains available from the
+native conversion reports. Derived v2 sheets omit the optional `Sample_Name`
+column so FASTQ filenames continue to use `Sample_ID`; original names remain in
+the source sheets and row provenance. Enabling name-based output would change
+the output layout ([Illumina sample-sheet reference](https://support-docs.illumina.com/SW/dragen_v42/Content/SW/DRAGEN/SampleSheet.htm)).
+Physical read geometry remains available from the
 frozen `RunInfo.xml` when native reports omit `Stats.json`. The supported
 per-sample settings are `OverrideCycles`, `BarcodeMismatchesIndex1`,
 `BarcodeMismatchesIndex2`, `AdapterRead1`, `AdapterRead2`, `AdapterBehavior` and

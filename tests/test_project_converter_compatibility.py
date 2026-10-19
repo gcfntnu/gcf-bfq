@@ -1,5 +1,8 @@
 """Version-specific converter invocation and lossless FASTQ output naming."""
 
+import csv
+import io
+
 from types import SimpleNamespace
 
 import pytest
@@ -26,6 +29,42 @@ def test_legacy_stats_requested_only_for_v1_sheet(tmp_path, monkeypatch, per_sam
     assert ("--output-legacy-stats" in commands[0]) is not per_sample
     assert cfg.run.demultiplexing_plan["sample_sheet_version"] == (2 if per_sample else 1)
     assert cfg.run.sample_sheet.is_file()
+
+
+def test_v2_converter_keeps_sample_id_names_and_retains_original_sample_names(
+    tmp_path, monkeypatch
+):
+    cfg, source, output = configured_bfq(tmp_path)
+    (source / "InterOp").mkdir()
+    first = pair(
+        output,
+        PROJECTS[0],
+        data_settings=",Sample_Name,BarcodeMismatchesIndex1",
+        value=",different-display-name,1",
+    )
+    second = pair(output, PROJECTS[1], index="CCCCCCCC")
+    original = first.sample_sheet.read_bytes()
+    cfg.run.input_selection = SimpleNamespace(pairs=(first, second))
+    commands = []
+    monkeypatch.setattr(makeFastq, "image_version", lambda *_args: "4.2.4")
+    monkeypatch.setattr(
+        makeFastq.subprocess, "check_call", lambda command, **_kwargs: commands.append(command)
+    )
+
+    makeFastq.bcl2fq()
+
+    plan = cfg.run.demultiplexing_plan
+    rows = list(csv.reader(io.StringIO(plan["sample_sheet_content"])))
+    header = rows[rows.index(["[BCLConvert_Data]"]) + 1]
+    assert "Sample_Name" not in header
+    assert rows[-2][header.index("Sample_ID")] == f"sample-{PROJECTS[0]}"
+    assert plan["rows"][0]["effective_parameters"]["Sample_Name"] == "different-display-name"
+    assert "--sample-name-column-enabled" not in commands[0]
+    assert first.sample_sheet.read_bytes() == original
+    retained = (
+        output / "provenance" / "demultiplexing" / "sources" / PROJECTS[0] / first.sample_sheet.name
+    )
+    assert retained.read_bytes() == original
 
 
 def test_converter_sample_numbers_do_not_erase_embedded_sample_id(tmp_path):
