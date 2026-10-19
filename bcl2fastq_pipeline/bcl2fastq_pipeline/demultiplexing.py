@@ -36,6 +36,17 @@ GLOBAL_SETTINGS = PER_SAMPLE_SETTINGS | {
     "SoftwareVersion",
 }
 DATA_COLUMNS = {"Lane", "Sample_ID", "Sample_Name", "Sample_Project", "index", "index2"}
+ANNOTATION_COLUMNS = {
+    "Sample_Plate",
+    "Sample_Well",
+    "I7_Index_ID",
+    "I5_Index_ID",
+    "Index_Plate_Well",
+    "Description",
+    "Sample_Group",
+    "Sample_Ref",
+    "Sample_Control",
+}
 CANONICAL = {key.casefold(): key for key in GLOBAL_SETTINGS | DATA_COLUMNS}
 DEFAULTS = {
     "BarcodeMismatchesIndex1": "1",
@@ -60,12 +71,16 @@ def _sheet(path):
     section = None
     with Path(path).open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.reader(handle)
-        for raw_cells in reader:
-            cells = [cell.strip() for cell in raw_cells]
-            if not any(cells):
+        for cells in reader:
+            if not any(cell.strip() for cell in cells):
                 continue
-            if cells[0].startswith("[") and cells[0].endswith("]"):
-                section = cells[0][1:-1].casefold()
+            tag = cells[0].strip()
+            if (
+                tag.startswith("[")
+                and tag.endswith("]")
+                and all(not cell.strip() for cell in cells[1:])
+            ):
+                section = tag[1:-1].casefold()
                 if section in sections:
                     raise DemultiplexingPlanError(f"{path}: repeated [{section}] section")
                 sections[section] = []
@@ -74,7 +89,7 @@ def _sheet(path):
     data = sections.get("bclconvert_data", sections.get("data", []))
     if not data:
         raise DemultiplexingPlanError(f"{path}: no demultiplexing data rows")
-    header = [CANONICAL.get(value.casefold(), value) for value in data[0][1]]
+    header = [CANONICAL.get(value.strip().casefold(), value.strip()) for value in data[0][1]]
     # Excel trailing commas are not named columns.
     named = [(i, name) for i, name in enumerate(header) if name]
     if len({name for _i, name in named}) != len(named):
@@ -83,11 +98,23 @@ def _sheet(path):
         (number, {name: cells[i] if i < len(cells) else "" for i, name in named})
         for number, cells in data[1:]
     ]
+    for number, row in rows:
+        unsupported = {
+            key
+            for key, value in row.items()
+            if key not in DATA_COLUMNS | PER_SAMPLE_SETTINGS | ANNOTATION_COLUMNS and value.strip()
+        }
+        if unsupported:
+            raise DemultiplexingPlanError(
+                f"{path}:{number}: unsupported populated demultiplexer data columns {sorted(unsupported)}. "
+                "Use supported per-sample settings; global conversion settings belong in [Settings] "
+                "or [BCLConvert_Settings]. Keep other metadata in the submission form."
+            )
     settings = {}
     for name in ("settings", "bclconvert_settings"):
         for number, cells in sections.get(name, []):
-            key = CANONICAL.get(cells[0].casefold(), cells[0])
-            value = cells[1] if len(cells) > 1 else ""
+            key = CANONICAL.get(cells[0].strip().casefold(), cells[0].strip())
+            value = cells[1].strip() if len(cells) > 1 else ""
             if key in settings and settings[key] != value:
                 raise DemultiplexingPlanError(f"{path}:{number}: conflicting setting {key}")
             settings[key] = value
@@ -117,6 +144,12 @@ def plan(selection, *, run_info=None, force_bcl2fastq=False):
     pairs = sorted(selection.pairs, key=lambda pair: pair.project_id)
     if not pairs:
         return None
+    if force_bcl2fastq:
+        raise DemultiplexingPlanError(
+            "FORCE_BCL2FASTQ is unsupported for multiple project input pairs: its command-line "
+            "mismatch and cycle policies are not represented by this planner. Unset FORCE_BCL2FASTQ "
+            "and use the supported BCL Convert backend. Legacy single-pair conversion is unchanged."
+        )
     projects = {}
     sources = []
     all_rows = []
