@@ -16,7 +16,7 @@ reserved names intact during renaming. Previously renamed files lacking the
 reserved S0 identity are not guessed at or automatically deleted.
 
 The naming contract comes from the
-[BCL Convert output guide](https://support-docs.illumina.com/SW/BCL_Convert/Content/SW/BCLConvert/OutputFiles_swBCL.htm),
+[BCL Convert output guide](https://support-docs.illumina.com/SW/BCL_Convert/Content/SW/BCLConvert/OutputFiles__swBCL_swBS_appBCL.htm),
 [bcl2fastq 2.20 guide](https://emea.support.illumina.com/content/dam/illumina-support/documents/documentation/software_documentation/bcl2fastq/bcl2fastq2-v2-20-software-guide-15051736-03.pdf),
 [Cell Ranger mkfastq output examples](https://www.10xgenomics.com/support/software/cell-ranger/7.2/analysis/inputs/cr-mkfastq)
 and [Cell Ranger ATAC mkfastq output examples](https://www.10xgenomics.com/support/software/cell-ranger-atac/2.1/tutorials/inputs/generating-fastqs-mkfastq).
@@ -38,7 +38,7 @@ external trees during cleanup.
   remain available. Regenerate early QC from retained statistics and inspect
   actual MultiQC output. Sample FASTQs and valid MD5 manifests must remain
   unchanged, including similarly named samples and multiple project directories.
-- List new delivery archives with the deployed 7-Zip version. Check both normal
+- List new FASTQ and QC delivery archives with the deployed 7-Zip version. Check both normal
   project inputs and the optional nested mkfastq directory/alias: no recognized
   Undetermined read/index FASTQ should appear; metadata, statistics, reports,
   project reads and checksums remain included. Existing completed archives and
