@@ -27,6 +27,7 @@ class InputSelection:
     sample_sheets: tuple = ()
     submission_forms: tuple = ()
     multi_pair: bool = False
+    ignored_duplicates: tuple = ()
 
     def describe(self) -> str:
         if self.multi_pair:
@@ -100,6 +101,7 @@ def _project_selection(sheets, forms):
         tuple(sheets),
         tuple(forms),
         True,
+        tuple(pairing.duplicates),
     )
 
 
@@ -224,11 +226,19 @@ def copy_run_inputs(selection: InputSelection, output_path) -> InputSelection:
                         temporary.unlink(missing_ok=True)
         sheets = tuple(output / pair.sample_sheet.name for pair in selection.pairs)
         forms = tuple(output / pair.submission_form.name for pair in selection.pairs)
-        copied = _project_selection(sheets, forms)
-        provenance = result.to_dict()
-        (output / "project-inputs.json").write_text(
-            json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        copied = replace(
+            _project_selection(sheets, forms), ignored_duplicates=selection.ignored_duplicates
         )
+        provenance = result.to_dict()
+        manifest = output / "project-inputs.json"
+        if not manifest.exists() or any(
+            path.parent != output
+            for pair in selection.pairs
+            for path in (pair.sample_sheet, pair.submission_form)
+        ):
+            manifest.write_text(
+                json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
         return copied
     destinations = []
     for source, name in (
@@ -270,6 +280,9 @@ def validate_selection(selection: InputSelection, *, run_info=None, mismatch_pol
             run_info=run_info,
             mismatch_policy=mismatch_policy,
         )
+        for duplicate in selection.ignored_duplicates:
+            if duplicate not in result.duplicates:
+                result.duplicates.append(duplicate)
         if result.ok:
             try:
                 plan(
@@ -309,6 +322,20 @@ def freeze_execution_inputs(cfg, store):
         cfg.static.paths.manager_dir / "execution-inputs" / cfg.run.run_id / str(state["attempt"])
     )
     copied = copy_run_inputs(selection, directory)
+    geometry = []
+    if cfg.run.flowcell_path is not None:
+        source_info = cfg.run.flowcell_path / "RunInfo.xml"
+        if source_info.is_file():
+            content = source_info.read_bytes()
+            (directory / "RunInfo.xml").write_bytes(content)
+            if source_info.read_bytes() != content:
+                raise StateError("Physical run geometry changed while freezing execution inputs")
+            geometry.append(
+                {
+                    "path": str(directory / "RunInfo.xml"),
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                }
+            )
     before = validate_selection(selection).to_dict()["inputs"]
     after = validate_selection(copied).to_dict()["inputs"]
     identities = lambda items: sorted((Path(item["path"]).name, item["sha256"]) for item in items)
@@ -329,6 +356,7 @@ def freeze_execution_inputs(cfg, store):
         current["attempts"][-1]["execution_inputs"] = {
             "directory": str(directory),
             "inputs": after,
+            "geometry": geometry,
         }
         return current
 
@@ -343,6 +371,9 @@ def run_preflight(cfg, store, stage):
     )
     log.info("Input preflight before %s for %s\n%s", stage, cfg.run.run_id, selection.describe())
     run_info = cfg.run.flowcell_path / "RunInfo.xml" if cfg.run.flowcell_path else None
+    frozen_info = selection.sample_sheet.parent / "RunInfo.xml"
+    if frozen_info.is_file():
+        run_info = frozen_info
     if run_info is not None and not run_info.exists():
         run_info = None
     # Preserve legacy callers and validator test doubles, while multi-pair mode

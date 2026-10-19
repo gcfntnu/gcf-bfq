@@ -245,10 +245,12 @@ def prepare(cfg):
     """Freeze the derived sheet and its provenance inside this attempt's output."""
     import os  # noqa: PLC0415
 
+    from bcl2fastq_pipeline.workflow_config import physical_run_info  # noqa: PLC0415
+
     selection = cfg.run.input_selection
     result = plan(
         selection,
-        run_info=cfg.run.flowcell_path / "RunInfo.xml",
+        run_info=physical_run_info(cfg),
         force_bcl2fastq=bool(os.environ.get("FORCE_BCL2FASTQ")),
     )
     destination = cfg.output_path / "provenance" / "demultiplexing"

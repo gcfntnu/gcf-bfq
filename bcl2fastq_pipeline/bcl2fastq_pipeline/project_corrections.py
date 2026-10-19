@@ -237,7 +237,18 @@ def prepare_execution(store, run_id, cfg):
                 "runParameters.xml",
             }:
                 if not (working / source.name).exists():
-                    _copy(source, working / source.name)
+                    if source.name == "Stats" and source.is_symlink():
+                        resolved = source.resolve(strict=True)
+                        if (
+                            not resolved.is_relative_to(canonical.resolve())
+                            or not resolved.is_dir()
+                        ):
+                            raise StateConflictError(
+                                "Correction Stats must resolve inside the run output"
+                            )
+                        shutil.copytree(resolved, working / source.name, symlinks=True)
+                    else:
+                        _copy(source, working / source.name)
         demultiplexing_provenance = canonical / PROVENANCE_DIR / "demultiplexing"
         if demultiplexing_provenance.exists():
             (working / PROVENANCE_DIR).mkdir(exist_ok=True)

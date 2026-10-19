@@ -19,6 +19,18 @@ log = logging.getLogger(__name__)
 AUTHORITATIVE_CONFIG = Path("/opt/gcf-workflows/libprep.config")
 
 
+def physical_run_info(cfg):
+    """Prefer the attempt's frozen physical geometry over mutable source files."""
+    selection = getattr(cfg.run, "input_selection", None)
+    candidates = []
+    if selection is not None:
+        candidates.append(Path(selection.sample_sheet).parent / "RunInfo.xml")
+    candidates.append(cfg.output_path / "RunInfo.xml")
+    if cfg.run.flowcell_path:
+        candidates.append(cfg.run.flowcell_path / "RunInfo.xml")
+    return next((path for path in candidates if path.is_file()), None)
+
+
 def capture_config(cfg):
     """Read the authoritative file once; never consult an environment override."""
     if cfg.run.libprep_config is None:
@@ -48,10 +60,7 @@ def prepare_projects(cfg):
         if project in cfg.run.project_configs:
             continue
         custom, _ = parse_custom_options(pair.sample_sheet)
-        run_info = cfg.run.flowcell_path / "RunInfo.xml" if cfg.run.flowcell_path else None
-        geometry = derive_project_geometry(
-            pair.sample_sheet, run_info=run_info if run_info and run_info.is_file() else None
-        )
+        geometry = derive_project_geometry(pair.sample_sheet, run_info=physical_run_info(cfg))
         cfg.run.project_configs[project] = ProjectConfig(
             project,
             Path(pair.sample_sheet),
