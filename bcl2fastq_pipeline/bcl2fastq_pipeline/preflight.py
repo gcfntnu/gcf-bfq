@@ -275,7 +275,9 @@ def copy_run_inputs(selection: InputSelection, output_path) -> InputSelection:
     return InputSelection(*destinations)
 
 
-def validate_selection(selection: InputSelection, *, run_info=None, mismatch_policy=None):
+def validate_selection(
+    selection: InputSelection, *, run_info=None, mismatch_policy=None, libprep_config=None
+):
     """Always validate current bytes; successful reports are never used as a cache."""
     # flowcell-manager's entry point removes its executable directory from sys.path
     # before domain imports, avoiding a neighbouring configmaker.py script shadowing
@@ -296,6 +298,7 @@ def validate_selection(selection: InputSelection, *, run_info=None, mismatch_pol
             selection.submission_forms,
             run_info=run_info,
             mismatch_policy=mismatch_policy,
+            libprep_config=libprep_config,
         )
         for duplicate in selection.ignored_duplicates:
             if duplicate not in result.duplicates:
@@ -317,8 +320,18 @@ def require_valid_inputs(source_path, output_path, *, refresh=False, projects=No
     """Read-only preparation guard before an operator command removes results."""
     selection = select_run_inputs(source_path, output_path, refresh=refresh, projects=projects)
     run_info = Path(source_path) / "RunInfo.xml"
+    libprep_config = None
+    if selection.multi_pair:
+        from bcl2fastq_pipeline.workflow_config import AUTHORITATIVE_CONFIG  # noqa: PLC0415
+
+        if AUTHORITATIVE_CONFIG.is_file():
+            libprep_config = AUTHORITATIVE_CONFIG
     result = (
-        validate_selection(selection, run_info=run_info if run_info.exists() else None)
+        validate_selection(
+            selection,
+            run_info=run_info if run_info.exists() else None,
+            libprep_config=libprep_config,
+        )
         if selection.multi_pair
         else validate_selection(selection)
     )

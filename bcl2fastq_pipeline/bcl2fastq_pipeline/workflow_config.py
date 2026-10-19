@@ -26,7 +26,11 @@ def physical_run_info(cfg):
     if selection is not None:
         if getattr(selection, "run_info", None):
             candidates.append(Path(selection.run_info))
-        candidates.append(Path(selection.sample_sheet).parent / "RunInfo.xml")
+        if getattr(selection, "sample_sheet", None):
+            candidates.append(Path(selection.sample_sheet).parent / "RunInfo.xml")
+        candidates.extend(
+            Path(pair.sample_sheet).parent / "RunInfo.xml" for pair in selection.pairs
+        )
     candidates.append(cfg.output_path / "RunInfo.xml")
     if cfg.run.flowcell_path:
         candidates.append(cfg.run.flowcell_path / "RunInfo.xml")

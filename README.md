@@ -31,6 +31,11 @@ Static configuration is loaded once when BFQ starts. Restart the process after
 changing `/config/bcl2fastq.ini`. Sending `SIGHUP` only wakes a sleeping process
 so that it scans again immediately.
 
+Flowcells can also use independent project-specific input pairs and workflows.
+See [project-paired inputs](docs/project-inputs.md) for filename matching,
+validation and combined conversion, and [selected-project corrections](docs/project-corrections.md)
+for `fm rerun --project` staging, publication and recovery.
+
 ## Installation
 
 BFQ requires Python 3.11 or newer. The complete pipeline additionally depends
