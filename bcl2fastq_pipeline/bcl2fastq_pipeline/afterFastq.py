@@ -120,9 +120,17 @@ def file_md5(path: Path) -> str:
 
 
 def get_read_geometry(run_dir):
-    with (run_dir / "Stats" / "Stats.json").open() as stats_file:
-        stats_json = json.load(stats_file)
-    lane_info = stats_json["ReadInfosForLanes"][0].get("ReadInfos", None)
+    stats = run_dir / "Stats" / "Stats.json"
+    if not stats.exists() and not stats.is_symlink() and (run_dir / "RunInfo.xml").is_file():
+        geometry = workflow_config.find_read_geometry([run_dir])
+        lane_info = [
+            {"Number": number, "NumCycles": cycles, "IsIndexedRead": False}
+            for number, cycles in enumerate(geometry, start=1)
+        ]
+    else:
+        with stats.open() as stats_file:
+            stats_json = json.load(stats_file)
+        lane_info = stats_json["ReadInfosForLanes"][0].get("ReadInfos", None)
     if not lane_info:
         return "Read geometry could not be automatically determined."
     R1 = None

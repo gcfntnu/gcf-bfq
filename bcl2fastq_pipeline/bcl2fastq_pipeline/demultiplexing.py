@@ -184,21 +184,22 @@ def plan(selection, *, run_info=None, force_bcl2fastq=False):
         if any(key in row for *_source, row in all_rows)
     ]
     columns += sorted(per_sample)
+    version_two = bool(per_sample) and not force_bcl2fastq
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, lineterminator="\n")
     writer.writerows(
         [
             ["[Header]"],
             [
-                "IEMFileVersion" if force_bcl2fastq else "FileFormatVersion",
-                "4" if force_bcl2fastq else "2",
+                "FileFormatVersion" if version_two else "IEMFileVersion",
+                "2" if version_two else "4",
             ],
             [],
-            ["[Settings]" if force_bcl2fastq else "[BCLConvert_Settings]"],
+            ["[BCLConvert_Settings]" if version_two else "[Settings]"],
         ]
     )
     writer.writerows(sorted(globals_.items()))
-    writer.writerows([[], ["[Data]" if force_bcl2fastq else "[BCLConvert_Data]"], columns])
+    writer.writerows([[], ["[BCLConvert_Data]" if version_two else "[Data]"], columns])
     mappings = []
     for project, source, source_row, row in all_rows:
         effective = dict(row)
@@ -231,6 +232,7 @@ def plan(selection, *, run_info=None, force_bcl2fastq=False):
         "schema_version": 1,
         "tool": "bcl2fastq" if force_bcl2fastq else "bcl-convert",
         "passes": 1,
+        "sample_sheet_version": 2 if version_two else 1,
         "projects": sorted(projects),
         "sources": sources,
         "global_settings": globals_,
@@ -323,7 +325,7 @@ def delivery_provenance(cfg, project, *, refresh=False):
         )
     destination.mkdir(parents=True, exist_ok=True)
     raw_rows = list(csv.reader(io.StringIO(result["sample_sheet_content"])))
-    marker = "[Data]" if result["tool"] == "bcl2fastq" else "[BCLConvert_Data]"
+    marker = "[BCLConvert_Data]" if result.get("sample_sheet_version", 2) == 2 else "[Data]"
     index = raw_rows.index([marker]) + 1
     header = raw_rows[index]
     project_column = header.index("Sample_Project")

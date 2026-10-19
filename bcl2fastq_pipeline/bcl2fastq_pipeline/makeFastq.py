@@ -58,6 +58,8 @@ def rename_fastqs():
     fastqs = list(cfg.output_path.glob("*/*.fastq.gz"))
     fastqs += list(cfg.output_path.glob("*/*/*.fastq.gz"))
 
+    renames = []
+    destinations = set()
     for fpath in fastqs:
         project = next(
             (name for name in fpath.parts if name in getattr(cfg.run, "project_configs", {})), None
@@ -70,15 +72,16 @@ def rename_fastqs():
         if fpath.name.endswith("_001.fastq.gz"):
             # Build new filename
             new_name = fpath.name.replace("_001.fastq.gz", ".fastq.gz")
-            new_name = re.sub(r"_S[0-9]+", "", new_name)
+            new_name = re.sub(r"_S[0-9]+(?=_(?:L[0-9]{3}_)?[RI][0-9]+\.fastq\.gz$)", "", new_name)
 
             fnew = fpath.with_name(new_name)
-            log.debug(f"[rename_fastqs] Moving {fpath} → {fnew}")
-
-            # Ensure parent directory exists (should already)
-            fnew.parent.mkdir(parents=True, exist_ok=True)
-
-            shutil.move(str(fpath), str(fnew))
+            if fnew in destinations or (fnew != fpath and fnew.exists()):
+                raise RuntimeError(f"FASTQ output-name conflict: {fpath} would overwrite {fnew}")
+            destinations.add(fnew)
+            renames.append((fpath, fnew))
+    for source, destination in renames:
+        log.debug("[rename_fastqs] Moving %s → %s", source, destination)
+        shutil.move(str(source), str(destination))
 
 
 def bcl2fq():
@@ -141,9 +144,10 @@ def bcl2fq():
             "true",
             "--no-lane-splitting",
             "true",
-            "--output-legacy-stats",
-            "true",
         ]
+        if not multi_pair or cfg.run.demultiplexing_plan["sample_sheet_version"] == 1:
+            # 4.2.4 aborts when legacy stats are requested for a v2 sheet.
+            cmd.extend(["--output-legacy-stats", "true"])
         bcl_done = ["bcl-convert", image_version("bcl-convert")]
 
     log_pth = cfg.static.paths.log_dir / f"{cfg.run.run_id}.log"
@@ -189,6 +193,10 @@ def bcl2fq():
         elif dst.exists():
             shutil.rmtree(dst)
         dst.symlink_to(src, target_is_directory=True)
+    elif multi_pair:
+        # Native v2 conversion reports stay in Reports. BFQ's additional QC
+        # products use Stats without inventing legacy conversion measurements.
+        (cfg.output_path / "Stats").mkdir(exist_ok=True)
 
     if multi_pair:
         demultiplexing.record(cfg, version=bcl_done[1], command=cmd, status="completed")
