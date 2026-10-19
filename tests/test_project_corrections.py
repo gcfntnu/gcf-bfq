@@ -349,3 +349,34 @@ def test_multi_pair_index_toggle_rejected_before_mutation(correction, monkeypatc
         )
     assert store.read(RUN_ID) == state_before
     assert {path: identity(path) for path in before} == before
+
+
+def test_legacy_selection_with_empty_pairs_still_freezes_inputs(correction, monkeypatch):
+    cfg, store, source, _output = correction
+    legacy = SimpleNamespace(
+        pairs=(),
+        sample_sheet=source / f"SampleSheet_{A}.csv",
+        submission_form=source / f"{A}_Sample-Submission-Form.xlsx",
+    )
+
+    def copy_legacy(selection, output):
+        shutil.copy2(selection.sample_sheet, output / "SampleSheet.csv")
+        shutil.copy2(selection.submission_form, output / "Sample-Submission-Form.xlsx")
+        return select_legacy(output, output)
+
+    def select_legacy(directory, _output):
+        return SimpleNamespace(
+            pairs=(),
+            sample_sheet=directory / "SampleSheet.csv",
+            submission_form=directory / "Sample-Submission-Form.xlsx",
+        )
+
+    monkeypatch.setattr(preflight, "copy_run_inputs", copy_legacy)
+    monkeypatch.setattr(preflight, "select_run_inputs", select_legacy)
+    store.set_preparing(RUN_ID, "analysis", reason="legacy B", refresh_inputs=False, projects=[B])
+    project_corrections.prepare(store, RUN_ID, legacy, [B], "analysis")
+    store.queue(RUN_ID, "analysis")
+    store.begin_attempt(RUN_ID, cfg=cfg)
+    working = project_corrections.prepare_execution(store, RUN_ID, cfg)
+    assert (working / "SampleSheet.csv").read_bytes() == legacy.sample_sheet.read_bytes()
+    assert len(project_corrections.current(store.read(RUN_ID))["inputs"]) == 1

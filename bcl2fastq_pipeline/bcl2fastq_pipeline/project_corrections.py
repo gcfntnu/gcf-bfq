@@ -52,7 +52,7 @@ def belongs_to_project(name, projects):
 
 def _pairs(selection):
     pairs = getattr(selection, "pairs", None)
-    return pairs if pairs is not None else (selection,)
+    return pairs if pairs else (selection,)
 
 
 def validate_scope(state, selection, projects, *, refresh=False):
