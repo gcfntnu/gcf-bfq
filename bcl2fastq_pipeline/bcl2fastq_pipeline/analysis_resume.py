@@ -62,7 +62,12 @@ def _files(root, paths):
 
 def _project(state, project, expected_samples, result):
     output = Path(state["output_path"]).resolve()
-    work = analysis_snapshots.workdir_path(state["run_id"], project).absolute()
+    recorded = state["stages"]["analysis"]["metadata"].get("workdirs", {}).get(project)
+    work = (
+        Path(recorded["path"])
+        if recorded
+        else analysis_snapshots.workdir_path(state["run_id"], project)
+    ).absolute()
     if not work.is_dir() or work.is_symlink():
         _fail(f"missing or symlinked workdir {work}")
     marker = work / analysis_snapshots.MARKER
@@ -78,7 +83,6 @@ def _project(state, project, expected_samples, result):
         or not identity["token"]
     ):
         _fail(f"workdir belongs to a different run/project: {work}")
-    recorded = state["stages"]["analysis"]["metadata"].get("workdirs", {}).get(project)
     if recorded and any(recorded.get(key) != identity.get(key) for key in identity):
         _fail(f"workdir ownership changed: {work}")
     config = _yaml(work / "config.yaml")
@@ -185,7 +189,14 @@ def inspect(state, *, selection=None, result=None):
     output = Path(state["output_path"])
     if selection is None:
         selection, result = preflight.require_valid_inputs(state["source_path"], output)
-    if (
+    if selection.multi_pair:
+        if any(
+            path.parent != output
+            for pair in selection.pairs
+            for path in (pair.sample_sheet, pair.submission_form)
+        ):
+            _fail("resume requires all project pairs to be curated output-side inputs")
+    elif (
         selection.sample_sheet != output / "SampleSheet.csv"
         or selection.submission_form != output / "Sample-Submission-Form.xlsx"
     ):
@@ -197,17 +208,30 @@ def inspect(state, *, selection=None, result=None):
     for project, sample_ids in sorted(planned.items()):
         if Path(project).name != project or not project.startswith("GCF-"):
             _fail(f"invalid project path {project!r}")
-        projects[project] = _project(state, project, sample_ids, result)
+        project_result = getattr(result, "project_results", {}).get(project, result)
+        projects[project] = _project(state, project, sample_ids, project_result)
     workflows = {entry["workflow"] for entry in projects.values()}
-    if len(workflows) != 1:
+    if len(workflows) != 1 and not selection.multi_pair:
         _fail("projects disagree on retained workflow")
+    paths = (
+        [path for pair in selection.pairs for path in (pair.sample_sheet, pair.submission_form)]
+        if selection.multi_pair
+        else [selection.sample_sheet, selection.submission_form]
+    )
     return {
         "mode": "resume",
-        "workflow": workflows.pop(),
+        "workflow": next(iter(workflows)) if len(workflows) == 1 else None,
+        **(
+            {
+                "project_workflows": {
+                    project: entry["workflow"] for project, entry in projects.items()
+                }
+            }
+            if selection.multi_pair
+            else {}
+        ),
         "projects": projects,
-        "inputs": {
-            str(path): _digest(path) for path in (selection.sample_sheet, selection.submission_form)
-        },
+        "inputs": {str(path): _digest(path) for path in paths},
     }
 
 

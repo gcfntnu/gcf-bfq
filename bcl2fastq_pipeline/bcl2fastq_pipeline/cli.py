@@ -27,6 +27,7 @@ from bcl2fastq_pipeline import (
     notifications,
     preflight,
     processing_times,
+    project_corrections,
     sequencing_delivery,
     undetermined_fastqs,
     workflow_config,
@@ -103,7 +104,22 @@ def _run_reporting(cfg, start_time):
 def _prepare_workflow(cfg, store, state):
     """Use completed analysis metadata for downstream-only retries."""
     stage = state["current_stage"]
-    workflow = state["stages"]["analysis"]["metadata"].get("workflow")
+    metadata = state["stages"]["analysis"]["metadata"]
+    workflow = metadata.get("workflow")
+    project_workflows = metadata.get("project_workflows")
+    cfg.run.project_workdirs = (
+        {
+            project: Path(identity["path"])
+            for project, identity in metadata.get("workdirs", {}).items()
+        }
+        if stage in ("reporting", "finalization")
+        else {}
+    )
+    if stage in ("reporting", "finalization") and project_workflows:
+        workflow_config.prepare_execution(
+            cfg, stage, workflow=workflow, project_workflows=project_workflows
+        )
+        return
     if stage in ("reporting", "finalization") and workflow is None:
         projects = state["projects"] or bcl2fastq_pipeline.afterFastq.get_project_names(
             bcl2fastq_pipeline.afterFastq.get_project_dirs(cfg)
@@ -121,6 +137,7 @@ def _prepare_workflow(cfg, store, state):
 def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
     run_id = cfg.run.run_id
     with store.execution_lease(run_id):
+        project_corrections.recover(store, run_id)
         analysis_snapshots.recover(store, run_id)
         if prepare:
             current = store.read(run_id)
@@ -130,10 +147,13 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
             output_entries(output, allow_missing=current["current_stage"] == "demultiplexing")
             if current["output_path"] != str(output):
                 store.write({**current, "output_path": str(output)})
-            bcl2fastq_pipeline.findFlowCells.newFlowCell()
-            if not cfg.run.run_id:
-                return
+            if not project_corrections.current(current):
+                bcl2fastq_pipeline.findFlowCells.newFlowCell()
+                if not cfg.run.run_id:
+                    return
         state = store.begin_attempt(run_id, cfg=cfg)
+        if project_corrections.current(state):
+            project_corrections.prepare_execution(store, run_id, cfg)
         first_stage = state["current_stage"]
         start_time = datetime.datetime.now()
         processing_started = time.monotonic()
@@ -153,10 +173,13 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                 resume = (current.get("restart_request") or {}).get("analysis_resume")
                 if stage in {"demultiplexing", "analysis"}:
                     result = preflight.run_preflight(cfg, store, stage)
+                    if index == start_index and not resume:
+                        preflight.freeze_execution_inputs(cfg, store)
                     if resume and stage == "analysis":
                         context = analysis_resume.inspect(
                             current,
-                            selection=preflight.InputSelection(
+                            selection=cfg.run.input_selection
+                            or preflight.InputSelection(
                                 cfg.output_path / "SampleSheet.csv",
                                 cfg.output_path / "Sample-Submission-Form.xlsx",
                             ),
@@ -175,9 +198,10 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                             return current_state
 
                         store.mutate(run_id, record_execution)
-                        workflow_config.prepare_execution(
-                            cfg, "reporting", workflow=resume["workflow"]
-                        )
+                        resume_options = {"workflow": resume["workflow"]}
+                        if resume.get("project_workflows"):
+                            resume_options["project_workflows"] = resume["project_workflows"]
+                        workflow_config.prepare_execution(cfg, "reporting", **resume_options)
                     if prepare and not cfg.run.custom:
                         raise RuntimeError("BFQ SampleSheet is missing usable [CustomOptions]")
                 if prepare and index == start_index and not (resume and stage == "analysis"):
@@ -223,7 +247,13 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                         else:
                             workdirs = bcl2fastq_pipeline.afterFastq.analysis_steps()
                     store.complete_stage(
-                        run_id, stage, {"workflow": cfg.run.pipeline, "workdirs": workdirs or {}}
+                        run_id,
+                        stage,
+                        {
+                            "workflow": cfg.run.pipeline,
+                            "project_workflows": dict(getattr(cfg.run, "project_workflows", {})),
+                            "workdirs": workdirs or {},
+                        },
                     )
                 elif stage == "reporting":
                     log.info("Starting reporting: %s", run_id)
@@ -265,22 +295,33 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                 elif stage == "finalization":
                     log.info("Starting finalization: %s", run_id)
                     bcl2fastq_pipeline.afterFastq.finalize(store=store)
-                    projects = bcl2fastq_pipeline.findFlowCells.markFinished()
+                    selected = getattr(cfg.run, "selected_projects", None)
+                    projects = (
+                        sorted(selected)
+                        if selected
+                        else bcl2fastq_pipeline.findFlowCells.markFinished()
+                    )
+                    snapshots = analysis_snapshots.prepare(store.read(run_id), projects)
+                    if project_corrections.current(store.read(run_id)):
+                        project_corrections.publish(store, run_id)
+                        cfg.run.output_override = None
+                        bcl2fastq_pipeline.findFlowCells.markFinished()
                     payload = notifications.make_payload(
                         cfg,
                         "finalized",
                         projects=projects,
                         processing_timing=processing_times.snapshot(store.read(run_id)),
                     )
-                    snapshots = analysis_snapshots.prepare(store.read(run_id), projects)
                     store.complete_run(
                         run_id,
                         projects,
                         notification={"kind": "finalized", "payload": payload},
                         snapshots=snapshots,
                     )
+                    project_corrections.commit_publication(store, run_id)
             except Exception as error:
                 try:
+                    project_corrections.recover(store, run_id)
                     analysis_snapshots.recover(store, run_id)
                 except Exception:
                     log.exception("Snapshot recovery deferred for %s", run_id)

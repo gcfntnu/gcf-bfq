@@ -76,6 +76,19 @@ def make_payload(  # noqa: PLR0913
         "run_time": str(run_time),
         "finalize_time": str(finalize_time),
     }
+    project_configs = getattr(run, "project_configs", {})
+    if project_configs:
+        payload["project_contexts"] = {
+            project: {
+                "libprep": context.libprep,
+                "workflow": context.pipeline,
+                "custom": dict(context.custom),
+                "sample_sheet": str(context.sample_sheet),
+                "submission_form": str(context.submission_form),
+            }
+            for project, context in project_configs.items()
+            if not projects or project in projects
+        }
     if processing_timing is not None:
         payload["processing_timing"] = processing_timing
         payload["run_time"] = processing_times.format_duration(processing_timing["total_seconds"])
@@ -356,9 +369,12 @@ def _analysis_reports(payload):
         reports.append(
             email_attachments.Report(output / f"multiqc_{project}_{date}.html", "MultiQC report", 2)
         )
-        if (payload.get("libprep") or "").startswith(
-            ("10X Genomics Chromium Single Cell", "Parse Biosciences")
-        ):
+        libprep = (
+            payload.get("project_contexts", {})
+            .get(project, {})
+            .get("libprep", payload.get("libprep"))
+        )
+        if (libprep or "").startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences")):
             report = output / f"all_samples_web_summary_{project}_{date}.html"
             if report.exists():
                 reports.append(

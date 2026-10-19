@@ -12,10 +12,10 @@ import bcl2fastq_pipeline.afterFastq as af
 
 from bcl2fastq_pipeline.config import PipelineConfig, parse_custom_options
 from bcl2fastq_pipeline.preflight import (
-    InputSelection,
     copy_run_inputs,
     has_custom_options_marker,
     select_run_inputs,
+    validate_selection,
 )
 from bcl2fastq_pipeline.state import (
     FlowcellStateStore,
@@ -115,7 +115,7 @@ def newFlowCell():
 
     resume = (state.get("restart_request") or {}).get("analysis_resume")
     selection = (
-        InputSelection(output / "SampleSheet.csv", output / "Sample-Submission-Form.xlsx")
+        select_run_inputs(output, output)
         if resume
         else select_run_inputs(cfg.run.flowcell_path, output)
     )
@@ -139,8 +139,15 @@ def newFlowCell():
         cfg.run.reset()
         return
 
-    copied = selection if resume else copy_run_inputs(selection, output)
+    # Invalid multi-pair inputs reach the structured execution preflight without
+    # installing a partial set of curated files during discovery.
+    copied = (
+        selection
+        if resume or (selection.multi_pair and not validate_selection(selection).ok)
+        else copy_run_inputs(selection, output)
+    )
     cfg.run.apply_custom(opts, copied.sample_sheet, copied.submission_form)
+    cfg.run.input_selection = copied
     log.info(
         "Prepared %s from state origin=%s stage=%s",
         cfg.run.run_id,
