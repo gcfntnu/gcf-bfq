@@ -192,5 +192,7 @@ def bcl2fq():
 
     if multi_pair:
         demultiplexing.record(cfg, version=bcl_done[1], command=cmd, status="completed")
+        for project in cfg.run.demultiplexing_plan["projects"]:
+            demultiplexing.delivery_provenance(cfg, project, refresh=True)
 
     return bcl_done

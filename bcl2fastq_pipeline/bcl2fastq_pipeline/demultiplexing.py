@@ -280,8 +280,31 @@ def record(cfg, *, version=None, command=None, status="prepared"):
     destination.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def delivery_provenance(cfg, project):
-    """Expose this project's rows while retaining the shared pass identity."""
+def delivery_provenance(cfg, project, *, refresh=False):
+    """Keep retained FASTQs tied to their own conversion on downstream retries."""
+    destination = cfg.output_path / "provenance" / "project-demultiplexing" / project
+    canonical = cfg.static.paths.output_dir / cfg.run.run_id
+    if not refresh:
+        for retained in (
+            destination,
+            canonical / "provenance" / "project-demultiplexing" / project,
+        ):
+            manifest = retained / "plan.json"
+            if not manifest.exists():
+                continue
+            try:
+                data = json.loads(manifest.read_text())
+                if (
+                    data["project"] != project
+                    or _sha256(retained / "SampleSheet.project.csv")
+                    != data["project_sample_sheet_sha256"]
+                ):
+                    raise ValueError("project identity or derived sheet hash differs")
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                raise DemultiplexingPlanError(
+                    f"Cannot recover retained demultiplexing provenance from {manifest}: {error}"
+                ) from error
+            return retained
     source = cfg.output_path / "provenance" / "demultiplexing" / "plan.json"
     if not source.is_file():
         source = (
@@ -294,7 +317,10 @@ def delivery_provenance(cfg, project):
     if not source.is_file():
         return None
     result = json.loads(source.read_text())
-    destination = cfg.output_path / "provenance" / "project-demultiplexing" / project
+    if project not in result["projects"]:
+        raise DemultiplexingPlanError(
+            f"Project {project} is absent from conversion provenance {source}"
+        )
     destination.mkdir(parents=True, exist_ok=True)
     raw_rows = list(csv.reader(io.StringIO(result["sample_sheet_content"])))
     marker = "[Data]" if result["tool"] == "bcl2fastq" else "[BCLConvert_Data]"

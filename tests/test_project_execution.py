@@ -247,3 +247,25 @@ def test_archive_checksum_selection_matches_complete_project_prefix(tmp_path, mo
     monkeypatch.setattr(afterFastq.mp, "Pool", lambda: pool)
     afterFastq.md5sum_archive_worker(cfg)
     assert {path.name for path in pool.map.call_args.args[1]} == set(names[:2])
+
+
+def test_downstream_provenance_keeps_project_conversion_until_explicit_refresh(tmp_path):
+    cfg, _source, output = configured_bfq(tmp_path)
+    cfg.run.input_selection = SimpleNamespace(pairs=tuple(pair(output, p) for p in PROJECTS))
+    demultiplexing.prepare(cfg)
+    first_hash = cfg.run.demultiplexing_plan["sample_sheet_sha256"]
+    own = demultiplexing.delivery_provenance(cfg, PROJECTS[1], refresh=True)
+    before = (own / "plan.json").read_bytes()
+    # A later shared pass may describe different settings while retained FASTQs
+    # still belong to the prior per-project conversion.
+    sheet = cfg.run.input_selection.pairs[1].sample_sheet
+    sheet.write_text(sheet.read_text().replace("[Settings]\n", "[Settings]\nAdapterRead1,ACGT\n"))
+    demultiplexing.prepare(cfg)
+    assert cfg.run.demultiplexing_plan["sample_sheet_sha256"] != first_hash
+    assert demultiplexing.delivery_provenance(cfg, PROJECTS[1]) == own
+    assert (own / "plan.json").read_bytes() == before
+    demultiplexing.delivery_provenance(cfg, PROJECTS[1], refresh=True)
+    assert json.loads((own / "plan.json").read_text())["sample_sheet_sha256"] != first_hash
+    (own / "SampleSheet.project.csv").write_text("corrupted")
+    with pytest.raises(demultiplexing.DemultiplexingPlanError, match="derived sheet hash"):
+        demultiplexing.delivery_provenance(cfg, PROJECTS[1])
