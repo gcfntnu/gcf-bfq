@@ -207,3 +207,43 @@ def test_delivery_inputs_use_completed_snapshot_and_reject_corruption(tmp_path, 
     context.sample_sheet.write_text("broken snapshot")
     with pytest.raises(ValueError, match="captured hash"):
         workflow_config.delivery_project_config(cfg, PROJECTS[0])
+
+
+def test_project_deliveries_include_only_their_own_sequencing_report(tmp_path, monkeypatch):
+    cfg, _source, output = configured_bfq(tmp_path)
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "analysis"))
+    for project in PROJECTS:
+        selected = pair(output, project)
+        cfg.run.project_configs[project] = ProjectConfig(
+            project, selected.sample_sheet, selected.submission_form, {"Libprep": "Kit A"}
+        )
+        cfg.run.project_workflows[project] = "default"
+        write_fastq(output / project / "sample_R1.fastq.gz")
+        (output / f"sequencer_stats_{project}_260918.html").write_text(project)
+    commands = []
+    monkeypatch.setattr(
+        afterFastq, "run_logged_command", lambda command, **kw: commands.append(command)
+    )
+    afterFastq.archive_worker(cfg)
+    for command in commands:
+        if "/QC_" in command[2]:
+            continue
+        project = next(p for p in PROJECTS if Path(command[2]).name.startswith(p))
+        reports = [arg for arg in command if Path(arg).name.startswith("sequencer_stats_")]
+        assert reports == [str(output / f"sequencer_stats_{project}_260918.html")]
+
+
+def test_archive_checksum_selection_matches_complete_project_prefix(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock  # noqa: PLC0415
+
+    cfg, _source, output = configured_bfq(tmp_path)
+    output.mkdir(parents=True)
+    cfg.run.selected_projects = {"GCF-2026-01"}
+    names = ("GCF-2026-01_260918.7za", "QC_GCF-2026-01_260918.7za", "GCF-2026-011_260918.7za")
+    for name in names:
+        (output / name).write_bytes(b"synthetic archive")
+    pool = MagicMock()
+    pool.__enter__.return_value = pool
+    monkeypatch.setattr(afterFastq.mp, "Pool", lambda: pool)
+    afterFastq.md5sum_archive_worker(cfg)
+    assert {path.name for path in pool.map.call_args.args[1]} == set(names[:2])

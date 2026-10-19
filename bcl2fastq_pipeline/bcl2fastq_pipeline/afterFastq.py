@@ -264,7 +264,12 @@ def md5sum_archive_worker(cfg):
     archives = list(output_path.glob("*.7za"))
     if getattr(getattr(cfg, "run", None), "selected_projects", None) is not None:
         archives = [
-            p for p in archives if any(project in p.name for project in cfg.run.selected_projects)
+            p
+            for p in archives
+            if any(
+                p.name.startswith((f"{project}_", f"QC_{project}_"))
+                for project in cfg.run.selected_projects
+            )
         ]
 
     with mp.Pool() as pool:
@@ -331,7 +336,10 @@ def archive_worker(cfg):
         pw = generate_password(cfg, p) if sensitive else None
         report_dir = cfg.output_path / "Reports"
         archive_inputs = [cfg.output_path / p, cfg.output_path / "Stats"]
-        archive_inputs.extend(sorted(cfg.output_path.glob("sequencer_stats_*.html")))
+        stats_pattern = (
+            f"sequencer_stats_{p}_*.html" if project_config else "sequencer_stats_*.html"
+        )
+        archive_inputs.extend(sorted(cfg.output_path.glob(stats_pattern)))
         if report_dir.exists():
             archive_inputs.append(report_dir)
         archive_inputs.extend(
