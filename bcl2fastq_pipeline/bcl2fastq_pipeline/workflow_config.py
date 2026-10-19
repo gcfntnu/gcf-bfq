@@ -24,6 +24,8 @@ def physical_run_info(cfg):
     selection = getattr(cfg.run, "input_selection", None)
     candidates = []
     if selection is not None:
+        if getattr(selection, "run_info", None):
+            candidates.append(Path(selection.run_info))
         candidates.append(Path(selection.sample_sheet).parent / "RunInfo.xml")
     candidates.append(cfg.output_path / "RunInfo.xml")
     if cfg.run.flowcell_path:
@@ -182,9 +184,12 @@ def prepare_execution(cfg, stage, *, workflow=None, project_workflows=None):
     cfg.run.pipeline = None
     cfg.run.project_configs.clear()
     cfg.run.project_workflows = dict(project_workflows or {})
-    prepare_projects(cfg)
     if stage in ("demultiplexing", "analysis"):
-        capture_config(cfg)
+        snapshot = capture_config(cfg)
+        for context in prepare_projects(cfg).values():
+            context.workflow_selection = snapshot.select(
+                context.libprep, context.effective_read_geometry
+            )
     else:
         if cfg.run.project_workflows:
             for project, value in cfg.run.project_workflows.items():
@@ -193,4 +198,9 @@ def prepare_execution(cfg, stage, *, workflow=None, project_workflows=None):
             cfg.run.pipeline = unique.pop() if len(unique) == 1 else None
         else:
             cfg.run.pipeline = _checked_workflow(workflow, "flowcell state")
+        for project in cfg.run.project_workflows:
+            context = delivery_project_config(cfg, project)
+            if context is not None:
+                context.pipeline = cfg.run.project_workflows[project]
+                cfg.run.project_configs[project] = context
         log.info("Restored completed analysis workflow=%s from state", cfg.run.pipeline)

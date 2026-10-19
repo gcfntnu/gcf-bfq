@@ -306,7 +306,6 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                     if project_corrections.current(store.read(run_id)):
                         project_corrections.publish(store, run_id)
                         cfg.run.output_override = None
-                        bcl2fastq_pipeline.findFlowCells.markFinished()
                     payload = notifications.make_payload(
                         cfg,
                         "finalized",
@@ -320,6 +319,8 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                         snapshots=snapshots,
                     )
                     project_corrections.commit_publication(store, run_id)
+                    if selected:
+                        bcl2fastq_pipeline.findFlowCells.markFinished()
             except Exception as error:
                 try:
                     project_corrections.recover(store, run_id)

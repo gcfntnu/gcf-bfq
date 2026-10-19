@@ -28,6 +28,7 @@ class InputSelection:
     submission_forms: tuple = ()
     multi_pair: bool = False
     ignored_duplicates: tuple = ()
+    run_info: Path | None = None
 
     def describe(self) -> str:
         if self.multi_pair:
@@ -191,7 +192,16 @@ def select_run_inputs(source_path, output_path, *, refresh=False, projects=None)
             # generic sheet never silently replaces a project-qualified input.
             effective.extend(path for path in curated or original if _project_key(path) is None)
             chosen.append(tuple(effective))
-        return _project_selection(*chosen)
+        selection = _project_selection(*chosen)
+        geometry = next(
+            (
+                directory / "RunInfo.xml"
+                for directory in (output, source)
+                if (directory / "RunInfo.xml").is_file()
+            ),
+            None,
+        )
+        return replace(selection, run_info=geometry)
     chosen = []
     for canonical, pattern, sheet in (
         ("SampleSheet.csv", "SampleSheet*.csv", True),
@@ -224,10 +234,16 @@ def copy_run_inputs(selection: InputSelection, output_path) -> InputSelection:
                         os.replace(temporary, destination)
                     finally:
                         temporary.unlink(missing_ok=True)
+        if selection.run_info is not None:
+            destination = output / "RunInfo.xml"
+            if selection.run_info != destination:
+                shutil.copy2(selection.run_info, destination)
         sheets = tuple(output / pair.sample_sheet.name for pair in selection.pairs)
         forms = tuple(output / pair.submission_form.name for pair in selection.pairs)
         copied = replace(
-            _project_selection(sheets, forms), ignored_duplicates=selection.ignored_duplicates
+            _project_selection(sheets, forms),
+            ignored_duplicates=selection.ignored_duplicates,
+            run_info=(output / "RunInfo.xml") if selection.run_info else None,
         )
         provenance = result.to_dict()
         manifest = output / "project-inputs.json"
@@ -274,6 +290,7 @@ def validate_selection(selection: InputSelection, *, run_info=None, mismatch_pol
             plan,
         )
 
+        run_info = run_info or selection.run_info
         result = validate_project_pairs(
             selection.sample_sheets,
             selection.submission_forms,
@@ -346,7 +363,7 @@ def freeze_execution_inputs(cfg, store):
     }
     if identities(
         [item for item in before if Path(item["path"]).name in effective_names]
-    ) != identities(after):
+    ) != identities([item for item in after if Path(item["path"]).name in effective_names]):
         raise StateError("Project inputs changed while freezing execution inputs; retry validation")
     cfg.run.input_selection = copied
     cfg.run.sample_sheet = copied.sample_sheet

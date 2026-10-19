@@ -1072,7 +1072,19 @@ class FlowcellStateStore:
             )
             if entry is None:
                 raise StateConflictError(f"No notification {notification_id!r} for {run_id}")
-            if entry["status"] in {"sent", "superseded"}:
+            correction = next(
+                (
+                    item
+                    for item in state.get("project_corrections", [])
+                    if item.get("attempt") == entry["attempt"]
+                ),
+                None,
+            )
+            if entry["status"] in {"sent", "superseded"} or (
+                correction is not None and correction["status"] != "committed"
+            ):
+                # A generated correction is not the delivered replacement until
+                # publication and processing completion have both committed.
                 return False
             qc = state.get("sequencing_qc", {})
             producing_complete = (
