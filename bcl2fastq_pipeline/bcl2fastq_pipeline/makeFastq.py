@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 
+from bcl2fastq_pipeline import demultiplexing
 from bcl2fastq_pipeline.config import PipelineConfig
 from bcl2fastq_pipeline.containers import image_version
 from bcl2fastq_pipeline.undetermined_fastqs import is_undetermined
@@ -50,7 +51,7 @@ def rename_fastqs():
     """
     cfg = PipelineConfig.get()
 
-    if "10X Genomics" in cfg.run.libprep:
+    if "10X Genomics" in (cfg.run.libprep or "") and not getattr(cfg.run, "project_configs", {}):
         return
 
     # Collect FASTQ files 1–2 levels deep
@@ -58,6 +59,11 @@ def rename_fastqs():
     fastqs += list(cfg.output_path.glob("*/*/*.fastq.gz"))
 
     for fpath in fastqs:
+        project = next(
+            (name for name in fpath.parts if name in getattr(cfg.run, "project_configs", {})), None
+        )
+        if project and "10X Genomics" in (cfg.run.project_configs[project].libprep or ""):
+            continue
         if is_undetermined(fpath):
             # Preserve the reserved S0 identity until successful-run cleanup.
             continue
@@ -82,6 +88,9 @@ def bcl2fq():
     """
 
     cfg = PipelineConfig.get()
+    multi_pair = bool(getattr(getattr(cfg.run, "input_selection", None), "pairs", ()))
+    if multi_pair:
+        demultiplexing.prepare(cfg)
     # Make the output directories
     (cfg.output_path / "InterOp").mkdir(parents=True, exist_ok=True)
     shutil.copytree(
@@ -89,7 +98,7 @@ def bcl2fq():
     )
     force_bcl2fastq = os.environ.get("FORCE_BCL2FASTQ", None)
 
-    if "10X Genomics" in cfg.run.libprep:
+    if "10X Genomics" in (cfg.run.libprep or "") and not multi_pair:
         cellranger_cmd = MKFASTQ_10X[cfg.run.libprep]
         cellranger_options = cfg.static.commands["cellranger_mkfastq_options"]
         cmd = [cellranger_cmd, "mkfastq"]
@@ -138,12 +147,16 @@ def bcl2fq():
         bcl_done = ["bcl-convert", image_version("bcl-convert")]
 
     log_pth = cfg.static.paths.log_dir / f"{cfg.run.run_id}.log"
+    if multi_pair:
+        demultiplexing.record(cfg, version=bcl_done[1], command=cmd, status="running")
     try:
         log.info(f"[convert bcl] Running: {shlex.join(cmd)}\n")
         with log_pth.open("w") as logOut:
             subprocess.check_call(cmd, stdout=logOut, stderr=subprocess.STDOUT, cwd=cfg.output_path)
     except subprocess.CalledProcessError as error:
-        if "10X Genomics" not in cfg.run.libprep and force_bcl2fastq:
+        if multi_pair:
+            demultiplexing.record(cfg, version=bcl_done[1], command=cmd, status="failed")
+        if "10X Genomics" not in (cfg.run.libprep or "") and force_bcl2fastq and not multi_pair:
             log_content = log_pth.read_text(errors="replace")
             if "<bcl2fastq::layout::BarcodeCollisionError>" in log_content:
                 cmd.extend(["--barcode-mismatches", "0"])
@@ -171,8 +184,13 @@ def bcl2fq():
     src = cfg.output_path / "Reports" / "legacy" / "Stats"
     if src.exists():
         dst = cfg.output_path / "Stats"
-        if dst.exists() or dst.is_symlink():
-            dst.unlink()  # remove old link or directory first
+        if dst.is_symlink():
+            dst.unlink()
+        elif dst.exists():
+            shutil.rmtree(dst)
         dst.symlink_to(src, target_is_directory=True)
+
+    if multi_pair:
+        demultiplexing.record(cfg, version=bcl_done[1], command=cmd, status="completed")
 
     return bcl_done
