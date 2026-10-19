@@ -30,14 +30,19 @@ read-geometry checks. A different project's workbook cannot supply missing
 metadata. All projects must pass even during a correction selecting one project.
 The existing extra-sample, ASCII identifier and pooled-library rules still apply.
 
-Compatible non-10x projects share a structured BCL Convert pass. The supported
+Compatible non-10x projects share a structured BCL Convert pass. Uniform settings
+use a v1 sheet with legacy statistics; per-sample settings use a v2 sheet with
+native conversion reports. Physical read geometry remains available from the
+frozen `RunInfo.xml` when native reports omit `Stats.json`. The supported
 per-sample settings are `OverrideCycles`, `BarcodeMismatchesIndex1`,
 `BarcodeMismatchesIndex2`, `AdapterRead1`, `AdapterRead2`, `AdapterBehavior` and
 `AdapterStringency`; this requires BCL Convert 4.1 or newer (the workflow image
 currently specifies 4.2.4). Other setting conflicts fail with an actionable
 diagnosis before cleanup. An incompatible backend combination also fails;
 multi-pair 10x backend/index normalization belongs to the linked #156 work.
-There is no silent backend fallback or scientific-setting substitution.
+`FORCE_BCL2FASTQ` remains available for legacy single-pair runs and is explicitly
+rejected for multi-pair inputs. There is no silent backend fallback or
+scientific-setting substitution.
 
 The authoritative library-prep configuration is captured once per attempt.
 Each project's kit resolves against its own effective biological reads; physical
