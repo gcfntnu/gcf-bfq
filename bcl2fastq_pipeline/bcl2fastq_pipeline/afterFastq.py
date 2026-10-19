@@ -376,7 +376,9 @@ def archive_worker(cfg):
 
             demux_provenance = demultiplexing.delivery_provenance(cfg, p)
             if demux_provenance:
-                archive_inputs.append(demux_provenance)
+                # 7-Zip flattens absolute input paths to their basename. Keep
+                # this relative path so it cannot collide with the FASTQ folder.
+                archive_inputs.append(demux_provenance.relative_to(cfg.output_path))
 
         libprep = project_config.libprep if project_config else cfg.run.libprep
         if libprep and "10X Genomics" in libprep:
