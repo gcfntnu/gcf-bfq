@@ -431,6 +431,54 @@ def validate_restart_boundary(state: dict, start_stage: str) -> None:
             f"Cannot restart from {start_stage}; upstream stages are not complete: "
             + ", ".join(invalid)
         )
+    request = state.get("restart_request") or {}
+    pending = request.get("from")
+    if state["status"] == "preparing" and pending in STAGES and start_index > STAGES.index(pending):
+        raise StateConflictError(
+            f"Unfinished restart preparation from {pending}; retry that boundary "
+            "before requesting a downstream-only restart"
+        )
+    correction = next(
+        (
+            item
+            for item in state.get("project_corrections", [])
+            if item["id"] == request.get("project_correction_id")
+        ),
+        None,
+    )
+    if (
+        start_stage in {"reporting", "finalization"}
+        and correction is not None
+        and correction["from_stage"] in {"demultiplexing", "analysis"}
+    ):
+        committed = correction["status"] == "committed" or (
+            state["status"] == "completed" and state["attempt"] == correction["attempt"]
+        )
+        if not committed:
+            raise StateConflictError(
+                "An unsuccessful project correction has unpublished results. "
+                f"Restart from {correction['from_stage']} with the project selector, "
+                "or preview a whole-run restart from that boundary; downstream-only "
+                "retries cannot mix these results with the retained delivery."
+            )
+
+
+def project_analysis_completed_at(state, project):
+    """Keep a retained project's analysis time across other projects' corrections."""
+    analysis = state["stages"]["analysis"]
+    prior = (
+        state.get("project_completion", {}).get(project, {}).get("stages", {}).get("analysis", {})
+    )
+    request = state.get("restart_request") or {}
+    selected = request.get("projects")
+    retained = request.get("from") in {"reporting", "finalization"} or (
+        selected is not None and project not in selected
+    )
+    original = prior.get("metadata", {}).get("workdirs", {}).get(project)
+    current = analysis["metadata"].get("workdirs", {}).get(project)
+    if retained and prior.get("completed_at") and current == original:
+        return prior["completed_at"]
+    return analysis["completed_at"]
 
 
 def _project_completion(state, project, completed_at):
@@ -440,6 +488,7 @@ def _project_completion(state, project, completed_at):
     if isinstance(workflow, dict):
         workflow = workflow.get("workflow")
     stages = copy.deepcopy(state["stages"])
+    stages["analysis"]["completed_at"] = project_analysis_completed_at(state, project)
     for detail in stages.values():
         metadata = detail.get("metadata", {})
         for key in ("workdirs", "project_workflows", "analysis_snapshots"):

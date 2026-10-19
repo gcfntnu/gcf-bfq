@@ -17,7 +17,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from bcl2fastq_pipeline.state import FlowcellStateStore, new_state
+from bcl2fastq_pipeline.state import FlowcellStateStore, StateConflictError, new_state
 from flowcell_manager import flowcell_manager as manager
 from test_project_preflight import pair
 
@@ -311,3 +311,17 @@ def test_failed_scoped_execution_retains_both_prior_successes(execution, monkeyp
     assert sent.call_count == 0
     notification_delivery.recover_pending(cfg, store)
     assert sent.call_count == 0
+    if failure == "commit":
+        with pytest.raises(StateConflictError, match="unpublished results"):
+            manager.rerun_flowcell(
+                flowcell=RUN, from_stage="finalization", projects=[B], force=True
+            )
+        monkeypatch.setattr(project_corrections, "prepare", error)
+        with pytest.raises(OSError, match="synthetic correction failure"):
+            manager.rerun_flowcell(
+                flowcell=RUN, from_stage="demultiplexing", projects=[B], force=True
+            )
+        with pytest.raises(StateConflictError, match="Unfinished restart preparation"):
+            manager.rerun_flowcell(
+                flowcell=RUN, from_stage="finalization", projects=[B], force=True
+            )

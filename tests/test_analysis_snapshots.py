@@ -71,6 +71,72 @@ def reanalyze(store):
     store.start_stage(RUN_ID, "finalization")
 
 
+@pytest.mark.parametrize("legacy_metadata", [False, True])
+def test_whole_finalization_retry_keeps_each_projects_completed_analysis_identity(
+    tmp_path, monkeypatch, legacy_metadata
+):
+    other = "GCF-2099-002"
+    _cfg, store, output = ready(tmp_path, monkeypatch, projects=(PROJECT, other))
+    commit(store, projects=(PROJECT, other))
+    if legacy_metadata:
+
+        def omit_optional_workdir(state):
+            state["stages"]["analysis"]["metadata"]["workdirs"].pop(other)
+            state["project_completion"][other]["stages"]["analysis"]["metadata"].pop("workdirs")
+            return state
+
+        store.mutate(RUN_ID, omit_optional_workdir)
+    original = store.read(RUN_ID)["analysis_snapshots"][other].copy()
+    before = archive_path(output, other).stat().st_mtime_ns
+    store.set_preparing(
+        RUN_ID, "analysis", reason="correct one", refresh_inputs=False, projects=[PROJECT]
+    )
+    store.queue(RUN_ID, "analysis")
+    store.begin_attempt(RUN_ID)
+    work = snapshots.workdir_path(RUN_ID, PROJECT)
+    put(work, "config.yaml", "corrected")
+    identity = snapshots.identify_workdir(work, RUN_ID, PROJECT)
+    store.complete_stage(RUN_ID, "analysis", {"workdirs": {PROJECT: identity}})
+    store.start_stage(RUN_ID, "reporting")
+    store.complete_stage(RUN_ID, "reporting")
+    store.start_stage(RUN_ID, "finalization")
+    commit(store)
+    for _retry in range(2):
+        store.set_preparing(
+            RUN_ID, "finalization", reason="retry all delivery", refresh_inputs=False
+        )
+        store.queue(RUN_ID, "finalization")
+        store.begin_attempt(RUN_ID)
+        result = commit(store, projects=(PROJECT, other))
+        assert result[other]["analysis_id"] == original["analysis_id"]
+        assert "pending" not in result[other]
+        assert archive_path(output, other).stat().st_mtime_ns == before
+
+
+def test_resumed_analysis_updates_snapshot_with_unchanged_workdir_identity(tmp_path, monkeypatch):
+    _cfg, store, output = ready(tmp_path, monkeypatch)
+    commit(store)
+    original = store.read(RUN_ID)["analysis_snapshots"][PROJECT]["analysis_id"]
+    identity = store.read(RUN_ID)["stages"]["analysis"]["metadata"]["workdirs"][PROJECT]
+    store.set_preparing(
+        RUN_ID,
+        "analysis",
+        reason="resume repaired analysis",
+        refresh_inputs=False,
+        analysis_resume={"enabled": True},
+    )
+    store.queue(RUN_ID, "analysis")
+    store.begin_attempt(RUN_ID)
+    put(snapshots.workdir_path(RUN_ID, PROJECT), "config.yaml", "repaired")
+    store.complete_stage(RUN_ID, "analysis", {"workdirs": {PROJECT: identity}})
+    store.start_stage(RUN_ID, "reporting")
+    store.complete_stage(RUN_ID, "reporting")
+    store.start_stage(RUN_ID, "finalization")
+    result = commit(store)
+    assert result[PROJECT]["analysis_id"] != original
+    assert read_member(output) == "repaired"
+
+
 def test_actual_tree_includes_hidden_dirty_and_unrelated_files_without_data(tmp_path, monkeypatch):
     _cfg, store, output = ready(tmp_path, monkeypatch)
     work = snapshots.workdir_path(RUN_ID, PROJECT)

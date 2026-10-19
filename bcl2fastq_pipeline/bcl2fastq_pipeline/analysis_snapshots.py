@@ -15,7 +15,11 @@ import uuid
 
 from pathlib import Path
 
-from bcl2fastq_pipeline.state import PROVENANCE_DIR, ExecutionLeaseError
+from bcl2fastq_pipeline.state import (
+    PROVENANCE_DIR,
+    ExecutionLeaseError,
+    project_analysis_completed_at,
+)
 
 log = logging.getLogger(__name__)
 DIRECTORY = PROVENANCE_DIR
@@ -33,9 +37,9 @@ def identify_workdir(workdir, run_id, project):
     return {**identity, "path": str(workdir.absolute())}
 
 
-def _analysis_id(state):
+def _analysis_id(state, project=None):
     # Completion time survives downstream-only retries and changes on reanalysis.
-    completed = state["stages"]["analysis"]["completed_at"]
+    completed = project_analysis_completed_at(state, project)
     if not completed:
         raise RuntimeError("Cannot retain a snapshot without completed analysis")
     return hashlib.sha256(f"{state['run_id']}:{completed}".encode()).hexdigest()
@@ -118,13 +122,13 @@ def prepare(state, projects):
         directory.mkdir(exist_ok=True)
     _sync_directory(output)
     _sync_directory(root)
-    analysis_id = _analysis_id(state)
     results = {}
     created = []
     try:
         for project in sorted(projects):
             if Path(project).name != project or project in {".", ".."}:
                 raise ValueError(f"Invalid snapshot project: {project!r}")
+            analysis_id = _analysis_id(state, project)
             target = root / f"{project}_analysis.tar.gz"
             retained = state.get("analysis_snapshots", {}).get(project)
             if (

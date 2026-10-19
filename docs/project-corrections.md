@@ -68,14 +68,24 @@ conversion; a correction keeps its own report beside that attempt. State retains
 workflow metadata, so a retained project's history is distinguishable from the
 current correction's stage status. No automatic retention cleanup is introduced.
 
+After a failed analysis or demultiplexing correction, retry from that scientific
+boundary. A reporting or finalization retry cannot combine unpublished analysis
+with retained canonical FASTQs. Finish an interrupted restart preparation before
+requesting a later boundary. Delivery-only failures can retry delivery without
+repeating scientific processing. Downstream retries retain each project's
+successful analysis snapshot; resumed scientific analysis creates a fresh one.
+
 ## Verification before merge
 
 The automated `tests/test_project_corrections.py` scenarios use synthetic files
 and mock validation boundaries. They check scoped preview, frozen inputs,
 publication and interruption recovery, selected analysis FASTQ/manifest retention,
 and preservation of unselected bytes, modification times and file identities.
-Existing state, installed-command, notification and snapshot suites cover the
-surrounding lifecycle. They do not establish scientific workflow correctness.
+`tests/test_project_correction_execution.py` additionally exercises manager,
+real pair validation, state, orchestration, checksums and publication together,
+with scientific processing and SMTP replaced by explicit doubles. Existing
+installed-command, notification and snapshot suites cover the surrounding
+lifecycle. These checks do not establish scientific workflow correctness.
 
 On disposable facility data, run two projects with distinct library preparations
 and workflows to completion. Record hashes and modification times for the project
