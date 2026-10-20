@@ -123,20 +123,36 @@ def finish(state, step, duration, outcome):
     return state
 
 
+class ProcessingTimer:
+    """Exclude synchronous delivery while retaining one processing interval."""
+
+    def __init__(self):
+        self.excluded_seconds = 0
+
+    @contextmanager
+    def exclude(self):
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            self.excluded_seconds += time.monotonic() - started
+
+
 @contextmanager
 def measure(store, run_id, step):
     """Persist success before the next operation; measure each enclosing interval once."""
     store.mutate(run_id, lambda state: start(state, step))
     started = time.monotonic()
+    timer = ProcessingTimer()
     try:
-        yield
+        yield timer
     except BaseException as error:
-        duration = time.monotonic() - started
+        duration = max(0, time.monotonic() - started - timer.excluded_seconds)
         outcome = "failed" if isinstance(error, Exception) else "interrupted"
         store.mutate(run_id, lambda state: finish(state, step, duration, outcome))
         raise
     else:
-        duration = time.monotonic() - started
+        duration = max(0, time.monotonic() - started - timer.excluded_seconds)
         store.mutate(run_id, lambda state: finish(state, step, duration, "completed"))
 
 

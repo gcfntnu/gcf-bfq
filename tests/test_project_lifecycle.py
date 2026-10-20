@@ -18,6 +18,7 @@ from bcl2fastq_pipeline import (
     cli,
     notification_delivery,
     notifications,
+    processing_times,
     project_corrections,
 )
 
@@ -104,6 +105,31 @@ def test_analysis_and_delivery_notifications_precede_next_project_work(execution
         assert state["processing_timings"][step][-1]["duration_seconds"] == sum(
             state["project_progress"][project]["timings"][step] for project in (A, B)
         )
+
+
+@pytest.mark.parametrize("execution", [["0", "1"]], indirect=True)
+@pytest.mark.parametrize("smtp_failure", [False, True])
+def test_project_smtp_wait_does_not_inflate_processing_time(execution, monkeypatch, smtp_failure):
+    cfg, store, _events = execution
+    clock = [0]
+    monkeypatch.setattr(processing_times.time, "monotonic", lambda: clock[0])
+    external = afterFastq.run_logged_command
+
+    def scientific_work(command, cwd, log_path):
+        clock[0] += 3
+        return external(command, cwd=cwd, log_path=log_path)
+
+    def slow_mail(_cfg, _entry):
+        clock[0] += 1000
+        if smtp_failure:
+            raise OSError("synthetic slow SMTP failure")
+
+    monkeypatch.setattr(afterFastq, "run_logged_command", scientific_work)
+    monkeypatch.setattr(notifications, "send_notification", slow_mail)
+    state = run(cfg, store)
+    assert state["status"] == "completed", state.get("last_error")
+    assert state["processing_timings"]["analysis"][-1]["duration_seconds"] == 6
+    assert state["processing_timings"]["archiving"][-1]["duration_seconds"] == 12
 
 
 @pytest.mark.parametrize("execution", [["0", "1"]], indirect=True)

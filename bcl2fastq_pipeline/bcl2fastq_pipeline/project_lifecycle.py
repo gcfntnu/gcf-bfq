@@ -5,7 +5,7 @@ import os
 import shutil
 import uuid
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from bcl2fastq_pipeline import (
@@ -55,6 +55,7 @@ class ProjectLifecycle:
         self.store = store
         self.run_id = cfg.run.run_id
         self.delivery_mode = False
+        self.analysis_timer = None
 
     def plan_analysis(self, projects):
         def update(state):
@@ -186,7 +187,8 @@ class ProjectLifecycle:
             sample_sheet=payload["sample_sheet"], submission_form=payload["sample_submission_form"]
         )
         self.store.complete_project_analysis(self.run_id, project, generation, payload)
-        notification_delivery.deliver_pending(cfg, self.store, self.run_id, kind="processed")
+        with self.analysis_timer.exclude() if self.analysis_timer is not None else nullcontext():
+            notification_delivery.deliver_pending(cfg, self.store, self.run_id, kind="processed")
 
     def _hydrate_analysis(self, project):
         from bcl2fastq_pipeline import workflow_config  # noqa: PLC0415

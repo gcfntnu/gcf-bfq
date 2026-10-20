@@ -77,6 +77,8 @@ remains incomplete. Mail failures preserve processing outcomes and allow other
 projects to continue. Use `fm retry-notifications` for failed delivery;
 uncertain acceptance also requires the existing `--retry-uncertain` acknowledgement.
 Known delivered intents are not resent automatically.
+Flowcell analysis timings exclude these synchronous mail attempts; archiving and
+archive-checksum timings accumulate the successful project operations.
 
 If B's analysis fails after A succeeds, a scoped analysis rerun of B preserves
 A's workdir, reports, generation and notification. Once B's selected delivery
