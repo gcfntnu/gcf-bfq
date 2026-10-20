@@ -65,9 +65,9 @@ requested/applied eligibility and actual starts. A completed project's hold can
 remain recorded for a later explicit rerun; releasing it never reopens delivery.
 
 Release queues remaining work for the daemon's next discovery scan. Use the
-existing daemon wake-up procedure when an immediate scan is needed. Holds and
-release requests survive manager, daemon and container restarts. Continuation
-uses the same attempt, verified frozen SampleSheet/workbook/run geometry and
+[daemon wake-up procedure](../README.md#waking-and-restarting) when an immediate
+scan is needed. Holds and release requests survive manager, daemon and container
+restarts. Continuation uses the same attempt, verified frozen SampleSheet/workbook/run geometry and
 captured library-prep configuration. Editing curated originals cannot refresh or
 reprioritize that continuation. Completed sibling files, manifests, generation
 records, snapshots and delivered notification intents remain intact.

@@ -401,7 +401,8 @@ index correction or sample-exclusion policy. Review and intervention are manual.
 
 BFQ attempts each project's Analysis complete notification after its workflow and
 required project reports have committed, before the next project's analysis
-starts. All selected eligible analyses finish before archiving starts. During delivery,
+starts. Within each admitted batch, all eligible analyses finish before that
+batch's archiving starts. Later releases join the next batch. During delivery,
 each project commits its archives, checksums, retained snapshot and publication,
 then attempts its finalized notification before the next project is archived.
 The flowcell stays incomplete until its outstanding projects finish. See

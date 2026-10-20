@@ -17,10 +17,13 @@ preflight before cleanup or processing. Missing or blank priority resolves to
 `1.0` and `1.00` tie, with project ID deciding their order. Values are compared as
 exact decimals, independently of floating-point or decimal arithmetic rounding.
 
-Priority applies separately to analysis and archiving. BFQ finishes **all
-selected eligible analyses before archiving starts**, then archives in the same priority
-order. It continues to run projects sequentially within one flowcell. Priority
-does not change workflow selection, scientific parameters or read assignment.
+Priority applies separately to analysis and archiving. Within each admitted
+batch, BFQ finishes **all eligible analyses before archiving that batch**, then
+archives in the same priority order. Without hold/release intervention, all
+selected projects belong to one batch; a later release joins a subsequent batch
+as described in [project holds](project-holds.md#stage-boundaries-and-batches). BFQ continues to
+run projects sequentially within one flowcell. Priority does not change workflow
+selection, scientific parameters or read assignment.
 With no priorities, both stages use project-ID order. For a legacy shared input
 pair, its one priority applies equally to every project in that pair.
 
