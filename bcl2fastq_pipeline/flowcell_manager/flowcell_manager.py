@@ -35,6 +35,7 @@ from bcl2fastq_pipeline import (
     notification_delivery,
     preflight,
     project_corrections,
+    project_scheduling,
     sequencing_delivery,
 )
 
@@ -338,12 +339,17 @@ def rerun_flowcell(**args):
     paths = [] if resume else _cleanup_for_state(state, from_stage)
     if context:
         analysis_resume.print_plan(context)
+    if resume or from_stage in {"reporting", "finalization"}:
+        project_scheduling.print_plan(project_scheduling.saved_plan(state))
     _print_plan("Rerun", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
     correction = None
     selected = None
     if not resume and (from_stage in {"demultiplexing", "analysis"} or refresh_inputs):
         selected, _result = preflight.require_valid_inputs(
-            state["source_path"], output_path, refresh=refresh_inputs
+            state["source_path"],
+            output_path,
+            refresh=refresh_inputs,
+            **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
         )
         if indexes:
             _require_single_pair_index_toggle(selected)
@@ -370,7 +376,10 @@ def rerun_flowcell(**args):
             analysis_resume.verify(context, analysis_resume.inspect(state))
         if not resume and (from_stage in {"demultiplexing", "analysis"} or refresh_inputs):
             selected, _result = preflight.require_valid_inputs(
-                state["source_path"], output_path, refresh=refresh_inputs
+                state["source_path"],
+                output_path,
+                refresh=refresh_inputs,
+                **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
             )
         if correction is not None:
             _require_single_pair_index_toggle(selected)
@@ -430,8 +439,14 @@ def _rerun_projects(args, cfg, store, run_id, state, legacy, from_stage, project
     state = {**state, "output_path": str(output)}
     _require_separate_source(state["source_path"], output)
     fastq_cleanup.require_restored(state, output, from_stage)
+    if from_stage in {"reporting", "finalization"}:
+        project_scheduling.print_plan(project_scheduling.saved_plan(state), projects=projects)
     selection, _result = preflight.require_valid_inputs(
-        state["source_path"], output, refresh=refresh, projects=projects
+        state["source_path"],
+        output,
+        refresh=refresh,
+        projects=projects,
+        **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
     )
     print(f"Rerun: {run_id}\nRestart boundary: {from_stage}\nOutput directory: {output}")
     paths = project_corrections.print_plan(state, selection, projects, from_stage, refresh=refresh)
@@ -448,7 +463,11 @@ def _rerun_projects(args, cfg, store, run_id, state, legacy, from_stage, project
         if cleanup_plan(output, from_stage, projects=projects) != paths:
             raise StateConflictError("Output paths changed after the preview; inspect and retry")
         selection, _result = preflight.require_valid_inputs(
-            state["source_path"], output, refresh=refresh, projects=projects
+            state["source_path"],
+            output,
+            refresh=refresh,
+            projects=projects,
+            **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
         )
         project_corrections.recover(store, run_id)
         index_corrections.recover(store, run_id)
@@ -821,6 +840,16 @@ def status_flowcell(**args):
     if store.exists(run_id):
         state = store.recover_interrupted(run_id)
         print(f"{run_id}: {state['status']} ({state['current_stage']})")
+        attempts = state.get("attempts", [])
+        schedule = attempts[-1].get("project_schedule") if attempts else None
+        project_scheduling.print_plan(schedule)
+        if schedule:
+            for stage, starts in schedule["actual_order"].items():
+                if starts:
+                    print(
+                        f"  Actual {stage} starts: "
+                        + " -> ".join(item["project"] for item in starts)
+                    )
         qc = state.get("sequencing_qc")
         if qc:
             print(f"  Sequencing QC (demultiplexing execution {qc['execution']}): {qc['status']}")

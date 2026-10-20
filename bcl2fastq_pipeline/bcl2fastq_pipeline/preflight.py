@@ -14,6 +14,7 @@ import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from bcl2fastq_pipeline import project_scheduling
 from bcl2fastq_pipeline.config import parse_custom_options
 from bcl2fastq_pipeline.state import StateError, utcnow
 
@@ -336,11 +337,14 @@ def validate_selection(
                 )
             except DemultiplexingPlanError as error:
                 result.add("error", "demux.unsupported_plan", str(error))
-        return result
-    return validate_inputs([selection.sample_sheet], [selection.submission_form])
+        return project_scheduling.add_preflight_plan(selection, result)
+    result = validate_inputs([selection.sample_sheet], [selection.submission_form])
+    return project_scheduling.add_preflight_plan(selection, result)
 
 
-def require_valid_inputs(source_path, output_path, *, refresh=False, projects=None):
+def require_valid_inputs(
+    source_path, output_path, *, refresh=False, projects=None, show_schedule=True
+):
     """Read-only preparation guard before an operator command removes results."""
     selection = select_run_inputs(source_path, output_path, refresh=refresh, projects=projects)
     run_info = Path(source_path) / "RunInfo.xml"
@@ -363,6 +367,8 @@ def require_valid_inputs(source_path, output_path, *, refresh=False, projects=No
     print(result.render_text())
     if not result.ok:
         raise PreflightValidationError(result)
+    if show_schedule:
+        project_scheduling.print_plan(result.summary.get("project_schedule"), projects=projects)
     return selection, result
 
 

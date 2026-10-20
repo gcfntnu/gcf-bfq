@@ -138,6 +138,7 @@ Use the relevant existing guide to specify the remaining manual integration:
 | --- | --- |
 | Input selection and validation | [Input preflight](input-preflight.md), [coordinated preflight checks](preflight-integration-tests.md) |
 | Mixed project inputs and scoped corrections | [Project-paired flowcells](project-inputs.md) |
+| Project priority and stage ordering | [Project scheduling](project-scheduling.md) |
 | Libprep selection and configmaker propagation | [Library-prep authority](libprep-configuration.md) |
 | Restart/state and notification recovery | [README](../README.md), [notification recovery](notification-recovery.md) |
 | Analysis email size and attachment omission | [Report email size policy and server checks](report-email-size.md) |

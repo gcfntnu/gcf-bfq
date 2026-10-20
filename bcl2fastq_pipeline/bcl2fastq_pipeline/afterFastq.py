@@ -29,6 +29,7 @@ from bcl2fastq_pipeline import (
     analysis_snapshots,
     processing_times,
     project_corrections,
+    project_scheduling,
     undetermined_fastqs,
     workflow_config,
 )
@@ -331,7 +332,8 @@ def archive_worker(cfg):
     pnames = get_project_names(project_dirs)
     run_date = str(cfg.run.run_id).split("_")[0]
 
-    for p in pnames:
+    for p in project_scheduling.project_order(cfg, pnames):
+        project_scheduling.record_start(cfg, "archiving", p)
         project_config = workflow_config.delivery_project_config(cfg, p)
         sensitive = project_config.sensitive if project_config else cfg.run.sensitive
         # ------------------------------------------------------------------ #
@@ -521,7 +523,8 @@ def full_align(cfg, *, resume=None):
     workdirs = {}
     if resume and set(project_names) != set(resume["projects"]):
         raise RuntimeError("Resume projects differ from available FASTQs; inspect and requeue")
-    for p in sorted(project_names):
+    for p in project_scheduling.project_order(cfg, project_names):
+        project_scheduling.record_start(cfg, "analysis", p)
         if not resume and cfg.run.project_configs:
             selection = select_workflow(cfg, p)
         pipeline = resume["projects"][p]["workflow"] if resume else selection.workflow
@@ -586,6 +589,11 @@ def full_align(cfg, *, resume=None):
                             "sample_sheet": project_config.sample_sheet.name,
                             "submission_form": project_config.submission_form.name,
                             "custom": project_config.custom,
+                            "scheduling": (
+                                cfg.run.project_schedule["projects"][p]
+                                if cfg.run.project_schedule
+                                else None
+                            ),
                             "libprep_selection": selection.diagnostics(),
                             "inputs": {
                                 original.name: hashlib.sha256(original.read_bytes()).hexdigest()

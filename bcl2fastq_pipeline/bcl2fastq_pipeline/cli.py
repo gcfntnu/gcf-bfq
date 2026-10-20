@@ -28,6 +28,7 @@ from bcl2fastq_pipeline import (
     preflight,
     processing_times,
     project_corrections,
+    project_scheduling,
     sequencing_delivery,
     undetermined_fastqs,
     workflow_config,
@@ -154,6 +155,7 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
         state = store.begin_attempt(run_id, cfg=cfg)
         if project_corrections.current(state):
             project_corrections.prepare_execution(store, run_id, cfg)
+        project_scheduling.restore(cfg, store, state)
         first_stage = state["current_stage"]
         start_time = datetime.datetime.now()
         processing_started = time.monotonic()
@@ -175,6 +177,7 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                     result = preflight.run_preflight(cfg, store, stage)
                     if index == start_index and not resume:
                         preflight.freeze_execution_inputs(cfg, store)
+                    project_scheduling.freeze(cfg, store, result)
                     if resume and stage == "analysis":
                         context = analysis_resume.inspect(
                             current,
@@ -254,6 +257,9 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                             "workflow": cfg.run.pipeline,
                             "project_workflows": dict(getattr(cfg.run, "project_workflows", {})),
                             "workdirs": workdirs or {},
+                            "project_schedule": project_scheduling.completed_analysis_plan(
+                                cfg, store.read(run_id)
+                            ),
                         },
                     )
                 elif stage == "reporting":

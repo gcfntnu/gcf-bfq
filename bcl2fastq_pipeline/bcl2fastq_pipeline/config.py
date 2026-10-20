@@ -168,6 +168,7 @@ class RunContext:
     selected_projects: set[str] | None = None
     output_override: Path | None = None
     demultiplexing_plan: object | None = None
+    project_schedule: dict | None = None
 
     def __repr__(self):
         return f"<RunContext run_id={self.run_id!r} pipeline={self.pipeline!r} user={self.user!r}>"
@@ -260,6 +261,7 @@ class RunContext:
         self.selected_projects = None
         self.output_override = None
         self.demultiplexing_plan = None
+        self.project_schedule = None
         self.custom.clear()
 
 
@@ -400,6 +402,7 @@ class PipelineConfig:
             "user": self.run.user,
             "rerun": self.run.rerun,
             "custom": self.run.custom or {},
+            "project_schedule": self.run.project_schedule,
             "projects": {
                 project: {
                     "sample_sheet": str(context.sample_sheet),
