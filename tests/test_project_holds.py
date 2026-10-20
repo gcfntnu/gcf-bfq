@@ -20,9 +20,16 @@ from bcl2fastq_pipeline.state import (
 from flowcell_manager import flowcell_manager as manager
 from flowcell_manager.project_listing import project_rows
 from test_project_lifecycle import restart_context, run
-from test_project_scheduling import PROJECTS, RUN, configure_execution
+from test_project_scheduling import PROJECTS, RUN, configure_execution, set_priority
 
-from bcl2fastq_pipeline import afterFastq, cli, findFlowCells, project_holds, workflow_config
+from bcl2fastq_pipeline import (
+    afterFastq,
+    cli,
+    findFlowCells,
+    notifications,
+    project_holds,
+    workflow_config,
+)
 
 A, B = PROJECTS[:2]
 
@@ -153,6 +160,34 @@ def test_release_during_archiving_joins_subsequent_analysis_batch(execution, mon
     assert events == [("analysis", A), ("archiving", A), ("analysis", B), ("archiving", B)]
 
 
+@pytest.mark.parametrize("kind", ["processed", "finalized"])
+def test_notification_retry_remains_independent_while_sibling_is_held(execution, monkeypatch, kind):
+    cfg, store, events = execution
+    control("hold", [B])
+
+    def fail_mail(_cfg, entry):
+        if entry["kind"] == kind:
+            raise OSError("Synthetic relay outage")
+
+    monkeypatch.setattr(notifications, "send_notification", fail_mail)
+    waiting = run(cfg, store)
+    assert waiting["status"] == "waiting"
+    assert (
+        next(n for n in waiting["delivery_notifications"] if n["kind"] == kind)["status"]
+        == "failed"
+    )
+    observed = list(events)
+    monkeypatch.setattr(notifications, "send_notification", lambda _cfg, _entry: None)
+    manager.retry_notifications(flowcell=RUN, kind=kind)
+    retried = store.read(RUN)
+    assert retried["status"] == "waiting"
+    assert retried["project_controls"][B]["held"]
+    assert (
+        next(n for n in retried["delivery_notifications"] if n["kind"] == kind)["status"] == "sent"
+    )
+    assert events == observed
+
+
 @pytest.mark.parametrize("stage", ["analysis", "archiving"])
 def test_hold_during_claimed_work_finishes_transaction_and_blocks_next_stage(
     execution, monkeypatch, stage
@@ -271,6 +306,10 @@ def test_scoped_correction_of_delivered_sibling_retains_held_pending_work(execut
     first = run(cfg, store)
     assert first["status"] == "waiting"
     original_inputs = copy.deepcopy(first["attempts"][-1]["execution_inputs"])
+    # An unrelated scoped attempt may validate newer curated priorities, but
+    # cannot change a suspended project's original producing plan.
+    set_priority(Path(first["output_path"]) / f"SampleSheet_{B}.csv", "3")
+    set_priority(Path(first["output_path"]) / f"SampleSheet_{A}.csv", "2")
     restart_context(cfg, first)
     manager.rerun_flowcell(flowcell=RUN, from_stage="analysis", projects=[A], force=True)
     events.clear()
@@ -278,6 +317,8 @@ def test_scoped_correction_of_delivered_sibling_retains_held_pending_work(execut
     assert waiting["status"] == "waiting", waiting.get("last_error")
     assert events == [("analysis", A), ("archiving", A)]
     assert waiting["continuation_context"]["execution_inputs"] == original_inputs
+    assert waiting["attempts"][-1]["project_schedule"]["order"] == [B, A]
+    assert waiting["attempts"][-1]["project_schedule"]["projects"][B]["priority"] == "0"
     completed_a = copy.deepcopy(waiting["project_completion"][A])
     restart_context(cfg, waiting)
     control("release", [B])

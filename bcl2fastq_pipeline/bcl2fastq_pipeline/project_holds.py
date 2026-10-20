@@ -141,8 +141,18 @@ def retain_pending_contexts(state, projects):
 
 def continue_pending(state, remaining):
     """Finish a scoped attempt, then restore a suspended sibling batch safely."""
+    from bcl2fastq_pipeline import project_scheduling  # noqa: PLC0415
+
     contexts = state.get("project_pending_contexts", {})
-    available = sorted(p for p in remaining if not held(state, p))
+    current = state["attempts"][-1].get("project_schedule")
+    if current:
+        for project in remaining:
+            frozen = contexts.get(project, {}).get("project_schedule") or {}
+            if entry := frozen.get("projects", {}).get(project):
+                current["projects"][project] = copy.deepcopy(entry)
+        current["order"] = project_scheduling.ordered(current)
+    order = project_scheduling.ordered(current, remaining) if current else sorted(remaining)
+    available = [p for p in order if not held(state, p)]
     first = (available or sorted(remaining))[0]
     context = contexts.get(first)
     group = sorted(
@@ -168,11 +178,6 @@ def continue_pending(state, remaining):
         return
     if context:
         state["continuation_context"] = copy.deepcopy(context)
-        frozen = context.get("project_schedule")
-        current = state["attempts"][-1].get("project_schedule")
-        if frozen and current:
-            for project in group:
-                current["projects"][project] = copy.deepcopy(frozen["projects"][project])
     boundary = "analysis" if any(not analysis_complete(state, p) for p in group) else "finalization"
     state.update(
         status="queued" if available else "waiting",
