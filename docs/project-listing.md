@@ -38,7 +38,7 @@ leases. Use the existing recovery commands to persist an interruption.
 | Current project analysis running or failed | Its own outcome / `analysis` | Own analysis outcome; delivery pending. An affected project in a recorded interrupted stage displays interrupted. |
 | Current project finalization running or failed | Its own outcome / `finalization` | Completed analysis; own delivery outcome. A recorded interrupted stage displays interrupted. |
 | Completed analysis awaiting downstream work | `pending` / `reporting`, or `finalization` after reporting completes | Analysis completed; delivery pending. It never inherits a sibling's archive failure/running state. |
-| Shared reporting executing/failed/interrupted | Shared outcome / `reporting` for undelivered analyzed projects | Analysis completed; delivery pending. Already delivered projects keep their own completion. |
+| Shared reporting executing/failed/interrupted | Shared outcome / `reporting` for participating selected, undelivered analyzed projects | Analysis completed; delivery pending. Already delivered projects keep their own completion. |
 | New preparing/queued project work | `preparing` or `queued` / next boundary | Pending work, with completed earlier boundaries retained. |
 | Shared preflight/demultiplexing | Shared parent outcome / `demultiplexing`; analysis preflight failures use `analysis` | Analysis/delivery pending for participating work. Retained unselected project success remains separate. |
 | Not-yet-started project in a recorded project-aware attempt | `pending` / `analysis` | Analysis/delivery pending; another project's failure does not assign it a failure. |
