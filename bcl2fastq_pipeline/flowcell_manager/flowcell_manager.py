@@ -38,6 +38,7 @@ from bcl2fastq_pipeline import (
     project_scheduling,
     sequencing_delivery,
 )
+from flowcell_manager import project_listing
 
 pd.set_option("display.max_rows", 5000)
 pd.set_option("display.max_columns", 12)
@@ -797,74 +798,49 @@ def archive_flowcell(**args):
 
 
 def combined_list(status=None, stage=None, query=None):
-    """List or search runs, with canonical state authoritative before filtering."""
+    """Project/run rows; canonical ownership is resolved before any row filters."""
     cfg = get_cfg()
     store = FlowcellStateStore(cfg.static.paths.manager_dir)
     rows = []
     state_run_ids = set()
-    needle = query.casefold() if query is not None else None
-
-    def matches(run_id, projects):
-        return needle is None or any(needle in value.casefold() for value in (run_id, *projects))
-
     for state in store.list_states():
-        # Excluded states must not reappear through stale compatibility inventory.
-        state_run_ids.add(state["run_id"])
-        if status and state["status"] != status:
-            continue
-        if stage and state["current_stage"] != stage:
-            continue
-        if not matches(state["run_id"], state["projects"]):
-            continue
-        output = state["output_path"]
-        rows.append(
-            {
-                "run_id": state["run_id"],
-                "status": state["status"],
-                "stage": state["current_stage"],
-                "origin": state["origin"],
-                "projects": ",".join(state["projects"]),
-                "output_path": output,
-                "archived": state["archive"]["archived_at"] or "0",
-            }
-        )
+        state_run_ids.add(_run_id(state["run_id"]))
+        rows.extend(project_listing.project_rows(state))
 
     inventory = _read_inventory(cfg)
     inventory = inventory.assign(run_id=inventory["flowcell_path"].map(_run_id))
-    for run_id, group in inventory.groupby("run_id", sort=True):
+    for (run_id, project), group in inventory.groupby(["run_id", "project"], sort=True):
         if run_id in state_run_ids:
             continue
-        if stage and stage != "legacy":
-            continue
-        if status and status not in {"completed", "archived", "legacy"}:
-            continue
-        archived_values = [value for value in group["archived"] if value != "0"]
-        legacy_status = "archived" if archived_values else "completed"
-        if status and status not in ("legacy", legacy_status):
-            continue
-        projects = sorted(set(group["project"]))
-        if not matches(run_id, projects):
-            continue
-        # Historical inventories can contain both a bare ID and an absolute path.
-        # Choose a stable representative without requiring archived outputs to exist.
-        flowcell_path = sorted(set(group["flowcell_path"]))[0]
+        # Stable representatives do not require historical outputs to exist.
+        archived = sorted(value for value in group["archived"] if value != "0")
+        timestamps = sorted(value for value in group["timestamp"] if value != "0")
         rows.append(
-            {
-                "run_id": run_id,
-                "status": legacy_status,
-                "stage": "legacy",
-                "origin": "legacy_inventory",
-                "projects": ",".join(projects),
-                "output_path": flowcell_path,
-                "archived": archived_values[-1] if archived_values else "0",
-            }
+            project_listing.legacy_project_row(
+                project,
+                run_id,
+                sorted(set(group["flowcell_path"]))[0],
+                archived=archived[-1] if archived else "0",
+                timestamp=timestamps[-1] if timestamps else "0",
+            )
         )
 
-    frame = pd.DataFrame(
-        rows,
-        columns=["run_id", "status", "stage", "origin", "projects", "output_path", "archived"],
-    )
-    return frame.sort_values(["run_id", "origin"]) if not frame.empty else frame
+    needle = query.casefold() if query is not None else None
+    selected = []
+    for row in rows:
+        if status and not (
+            row["status"] == status or (status == "legacy" and row["origin"] == "legacy_inventory")
+        ):
+            continue
+        if stage and row["stage"] != stage:
+            continue
+        if needle is not None and not any(
+            needle in str(row[key]).casefold() for key in ("run_id", "project")
+        ):
+            continue
+        selected.append(row)
+    frame = pd.DataFrame(selected, columns=project_listing.COLUMNS)
+    return frame.sort_values(["run_id", "project"], ignore_index=True) if not frame.empty else frame
 
 
 def show_flowcell(**args):
@@ -1120,19 +1096,28 @@ def main():
     parser_initialize.add_argument("--refresh-inputs", action="store_true")
     _add_index_options(parser_initialize)
 
-    parser_list = subparsers.add_parser("list", help="List state-backed and legacy flowcells.")
+    parser_list = subparsers.add_parser(
+        "list",
+        help="List one project per flowcell row, including legacy entries.",
+        description=(
+            "Show project analysis/delivery progress and recorded priorities. Parent flowcell "
+            "status/stage and last successful delivery are separate columns. Missing historical "
+            "detail is unavailable; projects not yet identified appear as <unidentified>."
+        ),
+    )
     parser_search = subparsers.add_parser(
         "search",
-        help="Find flowcells by project name or run/flowcell ID.",
+        help="Find project rows by project name or run/flowcell ID.",
         description=(
             "Search project names and run/flowcell IDs using case-insensitive literal "
-            "substrings (not regular expressions). Includes completed and archived runs. "
+            "substrings (not regular expressions). A project match returns only matching project "
+            "rows; a run match returns its project rows. Includes completed and archived runs. "
             "Exit 0 for a successful search, including no matches; 2 for invalid arguments; "
             "1 for state errors."
         ),
         epilog=(
-            "Examples: fm search GCF-2026-043; fm search HL2T7AFXC; "
-            "fm search GCF-2026 --status failed"
+            "Examples: fm search GCF-2099-001; fm search SYNTHETIC; "
+            "fm search GCF-2099 --status failed"
         ),
     )
     parser_search.add_argument("query", metavar="QUERY", type=_search_query)
@@ -1144,10 +1129,12 @@ def main():
             print_res=True,
         )
         list_parser.add_argument(
-            "--status", help="Filter by exact status; legacy selects inventory-only runs."
+            "--status",
+            help="Filter project status (not parent status); legacy selects inventory-only rows.",
         )
         list_parser.add_argument(
-            "--stage", help="Filter by exact stage; legacy selects inventory-only runs."
+            "--stage",
+            help="Filter project stage, including shared demultiplexing; legacy selects inventory rows.",
         )
 
     parser_list_processed = subparsers.add_parser(

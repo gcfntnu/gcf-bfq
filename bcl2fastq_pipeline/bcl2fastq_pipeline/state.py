@@ -752,7 +752,7 @@ class FlowcellStateStore:
             return updated
 
     def list_states(self) -> list[dict]:
-        self.ensure_writable()
+        """Read existing states without creating a manager or acquiring write access."""
         states = []
         for path in sorted(self.states_dir.glob("*.json")):
             state = json.loads(path.read_text(encoding="utf-8"))

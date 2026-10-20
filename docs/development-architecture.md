@@ -24,7 +24,7 @@ delivery failures remain separate from processing failures.
 | Project scheduling and completion | `project_scheduling.py`, `project_lifecycle.py`, `project_corrections.py` | Freeze decimal priorities, commit each project's analysis/report intent and delivery independently, and recover partial publication without replaying earlier successes. `tests/test_project_scheduling.py`, `tests/test_project_lifecycle.py`. |
 | Demultiplexing and corrections | `makeFastq.py`, `index_corrections.py`, `index_sequences.py` | Conversion selection, FASTQ naming and explicit index-orientation corrections. `tests/test_index_cli.py`, `tests/test_index_corrections.py`. |
 | Analysis and finalization | `afterFastq.py`, `workflow_config.py`, `analysis_resume.py` | Capture library-prep configuration, invoke configmaker/Snakemake, copy reports, create archives/checksums. `tests/test_after_fastq.py`, `tests/test_workflow_config.py`, `tests/test_fastq_checksums.py`. |
-| Operator CLI and cleanup | `../flowcell_manager/flowcell_manager.py`, `state.py: cleanup_plan`, `fastq_cleanup.py` | Shared `fm`/`flowcell-manager`, validation and rerun previews, explicit initialization, search/status, cleanup and archive operations. `tests/test_state_integration.py`, `tests/test_flowcell_search.py`, `tests/test_fastq_cleanup.py`. |
+| Operator CLI and cleanup | `../flowcell_manager/flowcell_manager.py`, `../flowcell_manager/project_listing.py`, `state.py: cleanup_plan`, `fastq_cleanup.py` | Shared `fm`/`flowcell-manager`, validation and rerun previews, explicit initialization, search/status, cleanup and archive operations. `tests/test_state_integration.py`, `tests/test_flowcell_search.py`, `tests/test_fastq_cleanup.py`. |
 | Analysis retention | `analysis_snapshots.py` | Retain the actual successful analysis workdir, stage/commit/recover publication, preserve the previous successful archive. `tests/test_analysis_snapshots.py`, `tests/test_snapshot_integration.py`. |
 | QC and notifications | `sequencing_qc.py`, `sequencing_delivery.py`, `analysis_qc.py`, `notifications.py`, `notification_delivery.py`, `misc.py` | Early sequencing report, analysis summary, durable delivery/retry, production error reporting. `tests/test_sequencing_qc.py`, `tests/test_analysis_qc.py`, `tests/test_notification_mail.py`, `tests/test_error_reporting.py`. |
 | Timing | `processing_times.py` | Successful processing measurements and accumulated reporting. `tests/test_processing_times.py`, `tests/test_processing_time_integration.py`. |
@@ -147,7 +147,7 @@ Use the relevant existing guide to specify the remaining manual integration:
 | Early QC and notifications | [Early sequencing QC checks](early-sequencing-qc-integration-tests.md) |
 | Snapshot lifecycle | [Analysis snapshot checks](analysis-snapshot-integration-tests.md) |
 | FASTQ removal/archive prerequisites | [Cleanup checks](clean-fastqs-integration-tests.md) |
-| Search and CLI inventory | [Search checks](flowcell-search-integration-tests.md) |
+| Project listing, search and CLI inventory | [Row/filter contract](project-listing.md), [search checks](flowcell-search-integration-tests.md) |
 | Processing-time reporting | [Timing checks](processing-time-integration-tests.md) |
 | NVIDIA GPU execution, base image and Docker launchers | [GPU execution and integration checks](gpu-execution.md) |
 
