@@ -97,6 +97,34 @@ def test_interruption_maps_only_the_affected_attempt(state):
     assert rows[C]["status"] == rows[C]["analysis"] == "failed"
 
 
+@pytest.mark.parametrize("parent", ["running", "failed", "interrupted"])
+def test_scoped_reporting_outcome_does_not_apply_to_unselected_analyzed_projects(state, parent):
+    state.update(
+        status=parent,
+        current_stage="reporting",
+        restart_request={"from": "analysis", "projects": [B]},
+    )
+    state["stages"]["analysis"]["status"] = "completed"
+    state["stages"]["reporting"]["status"] = "running" if parent == "running" else "failed"
+    state["project_progress"] = {
+        A: {"analysis": analysis("completed", generation="retained", attempt=1)},
+        B: {"analysis": analysis("completed")},
+    }
+    rows = by_project(state)
+    assert (rows[A]["status"], rows[A]["stage"], rows[A]["analysis"], rows[A]["delivery"]) == (
+        "pending",
+        "reporting",
+        "completed",
+        "pending",
+    )
+    assert (rows[B]["status"], rows[B]["stage"], rows[B]["analysis"], rows[B]["delivery"]) == (
+        parent,
+        "reporting",
+        "completed",
+        "pending",
+    )
+
+
 @pytest.mark.parametrize("parent", ["preparing", "queued", "running", "failed"])
 def test_scoped_reanalysis_keeps_old_delivery_separate_and_retained_project_complete(state, parent):
     state.update(status=parent, restart_request={"from": "analysis", "projects": [B]})

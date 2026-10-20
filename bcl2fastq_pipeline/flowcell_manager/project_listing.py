@@ -200,7 +200,11 @@ def _progress_values(state, project, progress, completion):  # noqa: PLR0911
     parent = state["status"]
     if parent in _WAITING and _selected(state, project):
         return parent, boundary, "completed", "pending"
-    if boundary == "reporting" and state["current_stage"] == "reporting":
+    if (
+        boundary == "reporting"
+        and state["current_stage"] == "reporting"
+        and _selected(state, project)
+    ):
         return parent, boundary, "completed", "pending"
     historical_archive = (
         boundary == "finalization"
