@@ -27,6 +27,7 @@ from bcl2fastq_pipeline import (
     cli,
     findFlowCells,
     notifications,
+    processing_times,
     project_holds,
     workflow_config,
 )
@@ -137,6 +138,34 @@ def test_all_held_waits_without_external_work_and_release_is_idempotent(executio
     completed = run(cfg, store)
     assert completed["status"] == "completed", completed.get("last_error")
     assert events == [("analysis", B), ("analysis", A), ("archiving", B), ("archiving", A)]
+
+
+def test_batch_timings_accumulate_without_held_or_smtp_waits(execution, monkeypatch):
+    cfg, store, _events = execution
+    clock = [0]
+    monkeypatch.setattr(processing_times.time, "monotonic", lambda: clock[0])
+    external = afterFastq.run_logged_command
+
+    def work(command, cwd, log_path):
+        clock[0] += 3
+        return external(command, cwd=cwd, log_path=log_path)
+
+    def smtp(_cfg, _entry):
+        clock[0] += 1000
+
+    monkeypatch.setattr(afterFastq, "run_logged_command", work)
+    monkeypatch.setattr(notifications, "send_notification", smtp)
+    control("hold", [B])
+    waiting = run(cfg, store)
+    assert waiting["status"] == "waiting"
+    assert waiting["processing_timings"]["analysis"][-1]["duration_seconds"] == 3
+    clock[0] += 100000  # Time held is never active processing time.
+    restart_context(cfg, waiting)
+    control("release", [B])
+    completed = run(cfg, store)
+    assert completed["status"] == "completed"
+    assert completed["processing_timings"]["analysis"][-1]["duration_seconds"] == 6
+    assert completed["processing_timings"]["archiving"][-1]["duration_seconds"] == 12
 
 
 def test_release_during_archiving_joins_subsequent_analysis_batch(execution, monkeypatch):

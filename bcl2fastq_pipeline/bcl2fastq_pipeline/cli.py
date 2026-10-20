@@ -262,7 +262,7 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                     # preserving completed demultiplexing and early QC/mail.
                     undetermined_fastqs.cleanup(cfg.output_path)
                     log.info("Starting analysis: %s", run_id)
-                    with processing_times.measure(store, run_id, "analysis") as timer:
+                    with cfg.run.project_lifecycle.measure_batch("analysis") as timer:
                         cfg.run.project_lifecycle.analysis_timer = timer
                         if resume:
                             workdirs = bcl2fastq_pipeline.afterFastq.analysis_steps(resume=resume)
@@ -282,7 +282,7 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                     )
                 elif stage == "reporting":
                     log.info("Starting reporting: %s", run_id)
-                    with processing_times.measure(store, run_id, "reporting"):
+                    with cfg.run.project_lifecycle.measure_batch("reporting"):
                         projects = _run_reporting(cfg, start_time)
                         if projects is None:
                             projects = current["projects"]

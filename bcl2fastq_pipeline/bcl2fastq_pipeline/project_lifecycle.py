@@ -71,6 +71,30 @@ class ProjectLifecycle:
             return False
         return project_holds.claim(self.store, self.run_id, project, stage)
 
+    @contextmanager
+    def measure_batch(self, step):
+        """Accumulate successful batches without charging held or SMTP time."""
+        state = self.store.read(self.run_id)
+        records = state.get("processing_timings", {}).get(step, [])
+        previous = records[-1] if records else {}
+        retained = (
+            previous["duration_seconds"]
+            if previous.get("attempt") == state["attempt"]
+            and previous.get("outcome") == "completed"
+            and not previous.get("invalidated_at")
+            else 0
+        )
+        with processing_times.measure(self.store, self.run_id, step) as timer:
+            yield timer
+
+        if retained:
+
+            def accumulated(current):
+                current["processing_timings"][step][-1]["duration_seconds"] += retained
+                return current
+
+            self.store.mutate(self.run_id, accumulated)
+
     @property
     def analysis_committed(self):
         selected = self.cfg.run.selected_projects

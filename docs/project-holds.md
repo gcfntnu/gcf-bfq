@@ -72,6 +72,10 @@ captured library-prep configuration. Editing curated originals cannot refresh or
 reprioritize that continuation. Completed sibling files, manifests, generation
 records, snapshots and delivered notification intents remain intact.
 
+Analysis and reporting durations accumulate successful released batches. Time
+spent held is excluded, and synchronous notification delivery remains excluded
+from analysis time.
+
 An explicit whole-run or scoped rerun still performs its normal validated
 invalidation and creates a new attempt. **Holds carry forward** until explicitly
 released. Scoped correction staging is retained while waiting; continuation does
