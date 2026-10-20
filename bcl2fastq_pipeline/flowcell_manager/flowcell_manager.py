@@ -196,8 +196,17 @@ def _print_plan(  # noqa: PLR0913
 
 
 def _cleanup_for_state(state, from_stage):
+    from bcl2fastq_pipeline import project_lifecycle  # noqa: PLC0415
+
     output = Path(state["output_path"])
     paths = cleanup_plan(output, from_stage)
+    retained = project_lifecycle.recovery_projects(state, from_stage)
+    if retained:
+        paths = [
+            path
+            for path in paths
+            if not project_corrections.belongs_to_project(path.name, retained)
+        ]
     if from_stage == "analysis":
         projects = set(state.get("projects") or [])
         if not projects and output.exists():
@@ -290,6 +299,10 @@ def rerun_flowcell(**args):
     refresh_inputs = args.get("refresh_inputs", False)
     reason = args.get("reason")
     projects = args.get("projects")
+    if state is not None and from_stage in {"reporting", "finalization"}:
+        correction = project_corrections.delivery_retry_record(state, projects)
+        if correction is not None:
+            return _retry_project_delivery(args, cfg, store, run_id, state, correction, from_stage)
     if projects:
         if resume or indexes:
             raise StateConflictError(
@@ -421,6 +434,51 @@ def rerun_flowcell(**args):
         if correction is not None:
             index_corrections.apply(store, run_id, correction)
         apply_cleanup(paths)
+        return store.queue(run_id, from_stage)
+
+
+def _retry_project_delivery(args, cfg, store, run_id, state, correction, from_stage):  # noqa: PLR0913
+    from bcl2fastq_pipeline import project_lifecycle  # noqa: PLC0415
+
+    state = _ensure_not_active(store, run_id, state, args.get("force", False), recover=False)
+    validate_restart_boundary(state, from_stage)
+    requested = set(args.get("projects") or correction["projects"])
+    selected = sorted(requested - project_lifecycle.completed_deliveries(state))
+    if not selected:
+        print("Requested project deliveries are already committed.")
+        return state
+    inputs = Path(correction["root"]) / "inputs"
+    working = Path(correction["working"])
+    selection, _result = preflight.require_valid_inputs(inputs, inputs, show_schedule=False)
+    print(f"Retry staged project delivery: {run_id}\nRestart boundary: {from_stage}")
+    print("Selected projects: " + ", ".join(selected))
+    print(
+        "Completed projects retained: "
+        + ", ".join(sorted(project_lifecycle.completed_deliveries(state)))
+    )
+    project_scheduling.print_plan(project_scheduling.saved_plan(state), projects=selected)
+    if args.get("dry_run", False):
+        return state
+    if not _confirm(f"Retry staged delivery for {run_id}", args.get("force", False)):
+        return state
+    with store.execution_lease(run_id):
+        if store.read(run_id)["updated_at"] != state["updated_at"]:
+            raise StateConflictError("Run changed while preparing delivery retry")
+        project_corrections.recover(store, run_id)
+        analysis_snapshots.recover(store, run_id)
+        preflight.require_valid_inputs(inputs, inputs, show_schedule=False)
+        store.set_preparing(
+            run_id, from_stage, reason=args.get("reason"), refresh_inputs=False, projects=selected
+        )
+
+        def reuse(current):
+            current["restart_request"].update(
+                project_correction_id=correction["id"], reuse_project_correction=True
+            )
+            return current
+
+        store.mutate(run_id, reuse)
+        apply_cleanup(cleanup_plan(working, from_stage, projects=selected))
         return store.queue(run_id, from_stage)
 
 
@@ -840,6 +898,10 @@ def status_flowcell(**args):
     if store.exists(run_id):
         state = store.recover_interrupted(run_id)
         print(f"{run_id}: {state['status']} ({state['current_stage']})")
+        for project, progress in sorted(state.get("project_progress", {}).items()):
+            analysis = progress.get("analysis", {}).get("status", "pending")
+            delivery = progress.get("finalization", {}).get("status", "pending")
+            print(f"  Project {project}: analysis {analysis}; delivery {delivery}")
         attempts = state.get("attempts", [])
         schedule = attempts[-1].get("project_schedule") if attempts else None
         project_scheduling.print_plan(schedule)

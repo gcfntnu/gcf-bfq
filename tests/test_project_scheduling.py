@@ -150,13 +150,12 @@ def test_invalid_curated_priority_blocks_scoped_refresh_before_state_or_cleanup(
     } == retained
 
 
-@pytest.fixture
-def execution(tmp_path, monkeypatch):
+def configure_execution(tmp_path, monkeypatch, priorities):
     cfg, source, output = configured_bfq(tmp_path, run_id=RUN)
-    paired_inputs(source, ["2", None, "0.5", "0"])
+    paired_inputs(source, priorities)
     geometry = '<RunInfo><Run><Reads><Read Number="1" NumCycles="75" IsIndexedRead="N"/><Read Number="2" NumCycles="8" IsIndexedRead="Y"/><Read Number="3" NumCycles="75" IsIndexedRead="N"/></Reads><FlowcellLayout LaneCount="1"/></Run></RunInfo>'
     (source / "RunInfo.xml").write_text(geometry)
-    for project in PROJECTS[:4]:
+    for project in PROJECTS[: len(priorities)]:
         write_fastq(output / project / "synthetic_R1.fastq.gz")
     authoritative = tmp_path / "workflows/libprep.config"
     authoritative.parent.mkdir()
@@ -212,6 +211,13 @@ def execution(tmp_path, monkeypatch):
     store.create(new_state(RUN, source, output, origin="new", start_stage="analysis", cfg=cfg))
     manager.rerun_flowcell(flowcell=RUN, from_stage="analysis", force=True)
     return cfg, store, events
+
+
+@pytest.fixture
+def execution(tmp_path, monkeypatch, request):
+    return configure_execution(
+        tmp_path, monkeypatch, getattr(request, "param", ["2", None, "0.5", "0"])
+    )
 
 
 def test_real_stage_loops_use_frozen_priority_and_keep_analysis_phase_first(execution, capsys):

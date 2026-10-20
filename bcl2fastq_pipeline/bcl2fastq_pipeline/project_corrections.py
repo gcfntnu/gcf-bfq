@@ -210,6 +210,28 @@ def prepare_execution(store, run_id, cfg):
     if record["status"] in {"publishing", "published"}:
         raise StateConflictError("Recover correction publication before executing another attempt")
     root = Path(record["root"])
+    if (state.get("restart_request") or {}).get("reuse_project_correction"):
+        inputs = root / "inputs"
+        for item in record["inputs"]:
+            for role in ("sample_sheet", "submission_form"):
+                if _hash(inputs / item[role]) != item[f"{role}_sha256"]:
+                    raise StateConflictError(
+                        "Frozen correction inputs changed before delivery retry"
+                    )
+        cfg.run.output_override = Path(record["working"])
+        cfg.run.selected_projects = set(state["restart_request"]["projects"])
+        cfg.run.input_selection = _selection(inputs)
+        cfg.run.sample_sheet = cfg.run.input_selection.sample_sheet
+        cfg.run.sample_submission_form = cfg.run.input_selection.submission_form
+        custom, _section = parse_custom_options(cfg.run.sample_sheet)
+        cfg.run.apply_custom(custom, cfg.run.sample_sheet, cfg.run.sample_submission_form)
+
+        def retrying(current_state):
+            _record(current_state).update(status="running", delivery_attempt=state["attempt"])
+            return current_state
+
+        store.mutate(run_id, retrying)
+        return cfg.run.output_override
     working = root / f"attempt-{state['attempt']}" / state["run_id"]
     if working.exists():
         raise StateConflictError(f"Correction attempt staging already exists: {working}")
@@ -281,10 +303,27 @@ def prepare_execution(store, run_id, cfg):
     return working
 
 
-def _publication_plan(state, record):
+def delivery_retry_record(state, projects=None):
+    record = _record(state)
+    if record is None or record["status"] == "committed" or not record.get("working"):
+        return None
+    selected = set(record["projects"] if projects is None else projects)
+    if not selected <= set(record["projects"]):
+        return None
+    for project in selected:
+        analysis = state.get("project_progress", {}).get(project, {}).get("analysis", {})
+        if (
+            analysis.get("status") != "completed"
+            or analysis.get("output_path") != record["working"]
+        ):
+            return None
+    return record
+
+
+def _publication_plan(state, record, *, projects=None, backup=None):
     canonical = Path(state["output_path"])
     working = Path(record["working"])
-    projects = record["projects"]
+    projects = record["projects"] if projects is None else projects
     names = {
         path.name for path in canonical.iterdir() if belongs_to_project(path.name, projects)
     } | {path.name for path in working.iterdir() if belongs_to_project(path.name, projects)}
@@ -304,7 +343,7 @@ def _publication_plan(state, record):
         relative = Path(PROVENANCE_DIR) / "project-demultiplexing" / project
         if (working / relative).exists() or (canonical / relative).exists():
             names.add(str(relative))
-    backup = Path(record["root"]) / "previous"
+    backup = Path(record["root"]) / "previous" if backup is None else backup
     operations = []
     for name in sorted(names):
         target = canonical / name
@@ -380,8 +419,11 @@ def _set_status(state, status):
 
 def recover(store, run_id):
     """Repeatable publication recovery. Call under the run execution lease."""
+    _recover_projects(store, run_id)
     state = store.read(run_id)
     record = _record(state)
+    if record is not None and record.get("project_publications"):
+        return state
     if record is not None and record["status"] == "committed":
         return _discard_unused(store, state)
     if record is None or record["status"] not in {"publishing", "published"}:
@@ -421,6 +463,11 @@ def recover_pending(store):
     for state in store.list_states():
         record = _record(state)
         pending = record is not None and record["status"] in {"publishing", "published"}
+        pending = pending or any(
+            journal["status"] in {"publishing", "published"}
+            for item in state.get("project_corrections", [])
+            for journal in item.get("project_publications", {}).values()
+        )
         cleanup = any(
             item["status"] == "committed"
             and item.get("unused_output_cleanup", {}).get("status") != "completed"
@@ -438,6 +485,117 @@ def recover_pending(store):
             continue
         except Exception:
             log.exception("Correction recovery deferred for %s", state["run_id"])
+
+
+def publish_project(store, run_id, project):
+    state = store.read(run_id)
+    record = _record(state)
+    if record is None:
+        return
+    if record["status"] != "running" or project not in record["projects"]:
+        raise StateConflictError("Project correction is not ready for publication")
+    backup = Path(record["root"]) / "previous" / project
+    operations = _publication_plan(state, record, projects=[project], backup=backup)
+    for operation in operations:
+        for key in ("target", "source", "backup"):
+            Path(operation[key]).parent.mkdir(parents=True, exist_ok=True)
+    journal = {
+        "status": "publishing",
+        "attempt": state["attempt"],
+        "operations": operations,
+        "generation": state["project_progress"][project]["analysis"]["generation"],
+    }
+
+    def prepare_journal(current_state):
+        _record(current_state).setdefault("project_publications", {})[project] = journal
+        return current_state
+
+    store.mutate(run_id, prepare_journal)
+    for operation in operations:
+        target, source, previous = (Path(operation[key]) for key in ("target", "source", "backup"))
+        if operation["had_original"]:
+            os.replace(target, previous)
+        if operation["has_replacement"]:
+            os.replace(source, target)
+            source.symlink_to(target, target_is_directory=operation["source_is_directory"])
+        for directory in (target.parent, source.parent, previous.parent):
+            _sync_directory(directory)
+
+    def published(current_state):
+        _record(current_state)["project_publications"][project]["status"] = "published"
+        return current_state
+
+    store.mutate(run_id, published)
+
+
+def _recover_projects(store, run_id):
+    state = store.read(run_id)
+    for record in state.get("project_corrections", []):
+        journals = record.get("project_publications", {})
+        if not journals:
+            continue
+        for project, journal in journals.items():
+            if journal["status"] not in {"publishing", "published"}:
+                continue
+            completed = state.get("project_progress", {}).get(project, {}).get("finalization", {})
+            committed = (
+                completed.get("status") == "completed"
+                and completed.get("generation") == journal["generation"]
+                and completed.get("attempt") == journal["attempt"]
+            )
+            if not committed:
+                for operation in reversed(journal["operations"]):
+                    target, source, previous = (
+                        Path(operation[key]) for key in ("target", "source", "backup")
+                    )
+                    if previous.exists() or previous.is_symlink():
+                        if target.exists() or target.is_symlink():
+                            if source.is_symlink():
+                                source.unlink()
+                            os.replace(target, source)
+                        os.replace(previous, target)
+                    elif (
+                        not operation["had_original"]
+                        and (not source.exists() or source.is_symlink())
+                        and target.exists()
+                    ):
+                        if source.is_symlink():
+                            source.unlink()
+                        os.replace(target, source)
+                    for directory in (target.parent, source.parent, previous.parent):
+                        _sync_directory(directory)
+
+            def finish(current_state, identifier=record["id"], name=project, success=committed):
+                item = next(
+                    item
+                    for item in current_state["project_corrections"]
+                    if item["id"] == identifier
+                )
+                item["project_publications"][name]["status"] = (
+                    "committed" if success else "rolled_back"
+                )
+                return current_state
+
+            state = store.mutate(run_id, finish)
+        latest = next(item for item in state["project_corrections"] if item["id"] == record["id"])
+        if all(
+            latest["project_publications"].get(project, {}).get("status") == "committed"
+            for project in latest["projects"]
+        ):
+
+            def complete(current_state, identifier=record["id"]):
+                next(
+                    item
+                    for item in current_state["project_corrections"]
+                    if item["id"] == identifier
+                )["status"] = "committed"
+                return current_state
+
+            state = store.mutate(run_id, complete)
+            latest = next(
+                item for item in state["project_corrections"] if item["id"] == record["id"]
+            )
+            state = _discard_unused(store, state, record=latest)
 
 
 def _discard_unused(store, state, *, record=None):

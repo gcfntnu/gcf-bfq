@@ -399,6 +399,15 @@ and attempts its email **before FASTQ MD5 generation and analysis**. Processing
 continues normally: this report has no QC threshold, pass/fail gate, pause,
 index correction or sample-exclusion policy. Review and intervention are manual.
 
+BFQ attempts each project's Analysis complete notification after its workflow and
+required project reports have committed, before the next project's analysis
+starts. All selected analyses finish before archiving starts. During delivery,
+each project commits its archives, checksums, retained snapshot and publication,
+then attempts its finalized notification before the next project is archived.
+The flowcell stays incomplete until its outstanding projects finish. See
+[project scheduling and progress](docs/project-scheduling.md) for priority,
+scoped corrections and recovery.
+
 | Notification | Recipients | Contents |
 | --- | --- | --- |
 | `sequencing` — Demultiplexing complete — sequencing QC | `finished_to` | Flowcell/projects/user, instrument and read geometry; yield, lane density/PF/PhiX/R1/R2 Q30 where available; assigned reads, undetermined fraction, planned and zero-read samples, and available top unknown indexes. Includes disk availability and the sequencing MultiQC attachment. |
@@ -408,7 +417,7 @@ index correction or sample-exclusion policy. Review and intervention are manual.
 Absent metrics say unavailable; a sample omitted from statistics is not assumed
 to have zero reads. Counts describe read clusters/assignments in sequencing QC;
 fastp counts individual reads, including both mates. Optional fastp summaries are
-snapshotted at reporting from the matching analysis workdir so notification
+snapshotted at each project's analysis boundary from its matching workdir so notification
 retries do not need that workdir. Full per-sample details remain in MultiQC.
 
 The sequencing report uses a BFQ-owned configuration and run XML, InterOp,

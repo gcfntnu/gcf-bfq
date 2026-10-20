@@ -153,7 +153,9 @@ def completed_analysis_plan(cfg, state):
         completion = state.get("project_completion", {}).get(project, {})
         previous = completion.get("stages", {}).get("analysis", {}).get("metadata", {})
         previous = previous.get("project_schedule") or {}
-        entry = previous.get("projects", {}).get(project)
+        entry = previous.get("projects", {}).get(project) or state.get("project_progress", {}).get(
+            project, {}
+        ).get("analysis", {}).get("scheduling")
         plan["projects"][project] = (
             copy.deepcopy(entry) if entry else {**resolve_priority({}), "sample_sheet_sha256": None}
         )

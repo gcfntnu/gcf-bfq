@@ -373,14 +373,20 @@ def require_valid_inputs(
 
 
 def freeze_execution_inputs(cfg, store):
-    """Bind multi-pair analysis to invocation-owned copies of validated bytes."""
+    """Bind analysis to attempt-owned copies of validated bytes, including legacy pairs."""
     selection = getattr(cfg.run, "input_selection", None)
-    if not selection or not selection.multi_pair or getattr(cfg.run, "selected_projects", None):
+    if not selection or getattr(cfg.run, "selected_projects", None):
         return
     state = store.read(cfg.run.run_id)
     directory = (
         cfg.static.paths.manager_dir / "execution-inputs" / cfg.run.run_id / str(state["attempt"])
     )
+    if not selection.multi_pair:
+        # Legacy demultiplexers read this path inside their tool container; keep
+        # it under the already mounted output tree, rather than the manager mount.
+        directory = cfg.output_path / "provenance" / "execution-inputs" / str(state["attempt"])
+        if directory.parent.is_symlink() or directory.parent.parent.is_symlink():
+            raise StateError("Execution-input provenance directories must not be symlinks")
     copied = copy_run_inputs(selection, directory)
     geometry = []
     if cfg.run.flowcell_path is not None:
@@ -402,7 +408,9 @@ def freeze_execution_inputs(cfg, store):
     # Duplicate candidates are recorded separately in the original report; compare
     # exactly the effective pair files used during execution.
     effective_names = {
-        path.name for pair in selection.pairs for path in (pair.sample_sheet, pair.submission_form)
+        path.name
+        for pair in (selection.pairs or (selection,))
+        for path in (pair.sample_sheet, pair.submission_form)
     }
     if identities(
         [item for item in before if Path(item["path"]).name in effective_names]

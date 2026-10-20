@@ -48,13 +48,15 @@ selected project products. Unselected canonical FASTQs, manifests, reports,
 archives and successful snapshots remain in place throughout.
 
 Publication runs under the existing flowcell execution lease. BFQ journals each
-selected replacement, retains the prior products under the correction's
-`previous/` directory and then commits processing completion through the state
-store. Recovery restores previous products if processing completion was not
-committed. After committed completion it retains the replacements. Snapshot
-candidates are prepared before this publication and become current only after
-the completion commit. Notification delivery remains independent of processing
-completion. Startup recovers publication before discovering runs or retrying mail.
+project's replacements, retains prior products under the correction's
+`previous/` directory and commits that project's delivery through the state store.
+Recovery restores an uncommitted project's previous products and retains a
+committed project's replacements even if another selected project fails.
+Snapshot candidates become current after their own project's completion commit.
+The project's finalized notification follows publication/snapshot recovery and
+precedes the next project's archiving. Startup recovers publication before
+discovering runs or retrying mail. Earlier combined publication journals remain
+supported for historical state.
 After successful publication, unused regenerated unselected FASTQs are discarded;
 failed candidates and prior selected generations remain available for recovery.
 This staging and history require additional storage; no general retention policy
@@ -69,11 +71,20 @@ workflow metadata, so a retained project's history is distinguishable from the
 current correction's stage status. No automatic retention cleanup is introduced.
 
 After a failed analysis or demultiplexing correction, retry from that scientific
-boundary. A reporting or finalization retry cannot combine unpublished analysis
-with retained canonical FASTQs. Finish an interrupted restart preparation before
-requesting a later boundary. Delivery-only failures can retry delivery without
-repeating scientific processing. Downstream retries retain each project's
-successful analysis snapshot; resumed scientific analysis creates a fresh one.
+boundary. Once the new per-project analysis record is committed, a reporting or
+finalization retry reuses its frozen staged reads, analysis and metadata. It
+does not combine unpublished analysis with retained canonical FASTQs. The preview
+identifies this staged retry and skips already committed project deliveries.
+Older failed corrections without that generation record still require restarting
+at their scientific boundary. Finish interrupted restart preparation before
+requesting a later boundary. Downstream retries retain each project's successful
+analysis snapshot; resumed scientific analysis creates a fresh one.
+
+Each successful analysis commits its own Analysis complete intent and immutable
+report/input copies before the next project starts. These remain available if a
+later project or delivery fails. Explicit reruns invalidate only the selected
+projects' dependent intents; automatic recovery does not resend known delivered
+mail. See [project scheduling and progress](project-scheduling.md).
 
 ## Verification before merge
 

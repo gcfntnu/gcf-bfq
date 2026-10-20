@@ -28,6 +28,7 @@ from bcl2fastq_pipeline import (
     preflight,
     processing_times,
     project_corrections,
+    project_lifecycle,
     project_scheduling,
     sequencing_delivery,
     undetermined_fastqs,
@@ -156,6 +157,10 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
         if project_corrections.current(state):
             project_corrections.prepare_execution(store, run_id, cfg)
         project_scheduling.restore(cfg, store, state)
+        cfg.run.project_lifecycle = project_lifecycle.ProjectLifecycle(cfg, store)
+        requested_projects = (state.get("restart_request") or {}).get("projects")
+        if requested_projects is not None:
+            cfg.run.selected_projects = set(requested_projects)
         first_stage = state["current_stage"]
         start_time = datetime.datetime.now()
         processing_started = time.monotonic()
@@ -297,11 +302,19 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                             "sequencing_qc_duration_seconds": early_seconds,
                             "duration_seconds": late_seconds + (early_seconds or 0),
                         },
-                        notification={"kind": "processed", "payload": payload},
+                        notification=(
+                            None
+                            if cfg.run.project_lifecycle.analysis_committed
+                            else {"kind": "processed", "payload": payload}
+                        ),
                     )
                 elif stage == "finalization":
                     log.info("Starting finalization: %s", run_id)
                     bcl2fastq_pipeline.afterFastq.finalize(store=store)
+                    if cfg.run.project_lifecycle.delivery_mode:
+                        cfg.run.project_lifecycle.complete_flowcell()
+                        notification_delivery.deliver_pending(cfg, store, run_id, kind="sequencing")
+                        continue
                     selected = getattr(cfg.run, "selected_projects", None)
                     projects = (
                         sorted(selected)

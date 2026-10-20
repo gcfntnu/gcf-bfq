@@ -59,7 +59,43 @@ retries. Historical completed analyses without a recorded plan retain
 project-ID ordering on downstream retries; current source edits do not assign
 them a new priority retrospectively.
 
-## State, provenance and remaining work
+## Project progress and notifications
+
+After each project's workflow and required project reports succeed, BFQ commits
+its analysis outcome and an Analysis complete notification intent together. It
+attempts that notification before starting the next project's workflow. Each
+generation retains its own report and effective-input copies under
+`provenance/project-analysis/`, so a later failure or replacement cannot change
+the metadata or attachments of an earlier email. Analysis complete describes
+analysis readiness; delivery follows in the archiving phase.
+
+During archiving BFQ finishes one project's delivery archives, checksums,
+successful retained snapshot and publication, commits its completion record,
+and attempts its finalized notification before archiving the next project.
+Status shows each project's analysis and delivery outcomes while the flowcell
+remains incomplete. Mail failures preserve processing outcomes and allow other
+projects to continue. Use `fm retry-notifications` for failed delivery;
+uncertain acceptance also requires the existing `--retry-uncertain` acknowledgement.
+Known delivered intents are not resent automatically.
+
+If B's analysis fails after A succeeds, a scoped analysis rerun of B preserves
+A's workdir, reports, generation and notification. Once B's selected delivery
+commits, any other successfully analyzed projects still awaiting delivery are
+queued for their remaining finalization. A flowcell with unfinished failed
+analysis still requires explicit recovery. A held-project policy is separate
+work in #161.
+
+If B's delivery fails after A commits, a reporting/finalization retry retains A's
+archives, checksums, snapshot, completion record and known delivered intent.
+For a staged correction with committed analysis, the same command reuses that
+frozen analysis/read generation and retries only unfinished delivery products.
+The preview identifies staged retries and retained completed projects. An
+explicit new analysis/demultiplexing rerun instead deliberately invalidates the
+selected projects' downstream outcomes and creates new generations. Omitting
+`--project` applies that scientific restart to the whole run. Analysis resume
+retains the established repaired-workdir/Snakemake behavior.
+
+## State and provenance
 
 The preflight report adds `summary.project_schedule`, including decimal strings,
 explicit/default sources, hashes and planned order. Optional
@@ -70,12 +106,14 @@ it; project-paired analysis input provenance also includes each project's
 scheduling values. Existing state without these optional records remains usable.
 Use the manager commands to inspect state.
 
-This is the priority increment of issue #160. Analysis and finalized notifications
-still use the existing flowcell-level timing. Per-project analysis notification,
-durable progress and finalization notification are remaining #160 work. Persistent
-hold/release controls belong to #161 and depend on those completion boundaries.
-Priority alone does not hold a project or allow archiving ahead of other pending
-analyses.
+Optional `project_progress` records bind each analysis and finalization outcome
+to its generation, inputs/workdir and notification identity. New notification
+identities include the project (`processed:ATTEMPT:PROJECT` and
+`finalized:ATTEMPT:PROJECT`). Existing combined notification records keep their
+identities and retry rules; loading historical state creates no new analysis
+emails. Legacy execution also captures its effective shared pair without
+rewriting authoritative inputs. Hold/release controls belong to #161; priority
+alone does not hold work or bypass the analysis phase.
 
 ## Verification
 
@@ -86,6 +124,10 @@ ties/precision, missing/blank defaults, invalid priority before a selected refre
 legacy shared pairs, frozen inputs, actual stage order and downstream retry.
 The standard `scripts/dev.py check all` gate also runs existing restart,
 correction, notification, installed-command and packaging checks.
+`tests/test_project_lifecycle.py` additionally covers actual project boundaries,
+later-project failures, worker interruption, before/after-commit publication
+faults, partial delivery retries, immutable notification generations and
+failed/uncertain SMTP handling. Its external processing and mail use doubles.
 
 Before merging operational changes, use disposable integration inputs with
 priorities `0`, `0.5`, blank/missing and `2`. Compare manager preview, actual
@@ -95,3 +137,11 @@ an original sheet and verify that the completed analysis's order, FASTQs,
 manifests and snapshots are retained. Record source/image identities and actual
 observations in the implementing PR. Local synthetic checks do not establish
 scientific output correctness or actual notification delivery.
+For notification acceptance on an authorized test server, inspect the actual
+Analysis complete send before the next workflow starts, and finalized send after
+that project's commit before the next archive. Exercise a later-project failure,
+staged delivery retry and restart; verify earlier files, completion records and
+known delivered intents remain intact. Verify subjects, project scope,
+attachments and actual configured test-relay acceptance separately from mailbox
+receipt. Never use the local SMTP guard/doubles in an authorized real-mail server
+integration or edit state JSON to manufacture success.
