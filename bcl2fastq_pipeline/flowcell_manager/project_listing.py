@@ -18,6 +18,8 @@ COLUMNS = [
     "last_delivery",
     "priority",
     "priority_source",
+    "eligibility",
+    "waiting_reason",
     "parent_status",
     "parent_stage",
     "origin",
@@ -165,6 +167,8 @@ def _pending_analysis(state, project, progress):
 
 
 def _progress_values(state, project, progress, completion):  # noqa: PLR0911
+    from bcl2fastq_pipeline import project_holds  # noqa: PLC0415
+
     analysis_detail = progress.get("analysis", {})
     delivery_detail = progress.get("finalization", {})
     analysis = _outcome(state, analysis_detail, "analysis")
@@ -187,7 +191,15 @@ def _progress_values(state, project, progress, completion):  # noqa: PLR0911
     if _completion_is_current(state, project, progress, completion):
         status = "archived" if state.get("archive", {}).get("status") == "archived" else "completed"
         return status, "finalization", "completed", "completed"
-    if not analysis_detail and _completed_stage(state, project, "analysis"):
+    if (
+        not analysis_detail
+        and _completed_stage(state, project, "analysis")
+        and (
+            not state.get("project_controls")
+            or not _selected(state, project)
+            or project_holds.analysis_complete(state, project)
+        )
+    ):
         analysis = "completed"
     if not progress and _completed_stage(state, project, "finalization"):
         status = "archived" if state.get("archive", {}).get("status") == "archived" else "completed"
@@ -229,11 +241,35 @@ def project_rows(state):
     completion = state.get("project_completion", {})
     names = set(state.get("projects", [])) | progress.keys() | completion.keys()
     names.update(_attempt_plan(state).get("projects", {}))
+    names.update(state.get("project_controls", {}))
     rows = []
     for project in sorted(names) or [UNIDENTIFIED]:
         current = progress.get(project, {})
         prior = completion.get(project, {})
         status, stage, analysis, delivery = _progress_values(state, project, current, prior)
+        control = state.get("project_controls", {}).get(project, {})
+        eligibility = "released"
+        waiting_reason = ""
+        if control.get("held"):
+            eligibility = "held" if control.get("applied") else "hold_requested"
+            waiting_reason = control.get("reason", "")
+            if stage != "demultiplexing" and status not in {
+                "running",
+                "failed",
+                "interrupted",
+                "completed",
+                "archived",
+            }:
+                status = "held"
+                if not current.get("analysis"):
+                    analysis = "pending"
+                    stage = "analysis"
+        elif state.get("project_controls") and status in {"pending", "waiting", "queued"}:
+            status = "queued"
+            if project not in state.get("project_batch", {}).get("projects", []):
+                waiting_reason = "Waiting for the next released batch"
+            else:
+                waiting_reason = "Waiting for earlier eligible work"
         priority = _priority(state, project, current, prior)
         last_delivery, last_generation = _last_delivery(state, project, current, prior)
         generation = current.get("analysis", {}).get("generation")
@@ -250,6 +286,8 @@ def project_rows(state):
                 "last_delivery": last_delivery,
                 "priority": priority.get("priority", UNAVAILABLE),
                 "priority_source": priority.get("priority_source", UNAVAILABLE),
+                "eligibility": eligibility,
+                "waiting_reason": waiting_reason,
                 "parent_status": state["status"],
                 "parent_stage": state["current_stage"],
                 "origin": state["origin"],
@@ -279,6 +317,8 @@ def legacy_project_row(project, run_id, flowcell_path, archived="0", timestamp="
         "last_delivery": timestamp if timestamp != "0" else UNAVAILABLE,
         "priority": UNAVAILABLE,
         "priority_source": UNAVAILABLE,
+        "eligibility": UNAVAILABLE,
+        "waiting_reason": "",
         "parent_status": status,
         "parent_stage": "legacy",
         "origin": "legacy_inventory",

@@ -14,6 +14,7 @@ from bcl2fastq_pipeline import (
     notifications,
     processing_times,
     project_corrections,
+    project_holds,
     project_scheduling,
 )
 from bcl2fastq_pipeline.state import StateConflictError, project_analysis_completed_at, utcnow
@@ -63,6 +64,36 @@ class ProjectLifecycle:
             return state
 
         self.store.mutate(self.run_id, update)
+
+    def claim(self, project, stage):
+        state = self.store.read(self.run_id)
+        if stage == "analysis" and project_holds.analysis_complete(state, project):
+            return False
+        return project_holds.claim(self.store, self.run_id, project, stage)
+
+    @contextmanager
+    def measure_batch(self, step):
+        """Accumulate successful batches without charging held or SMTP time."""
+        state = self.store.read(self.run_id)
+        records = state.get("processing_timings", {}).get(step, [])
+        previous = records[-1] if records else {}
+        retained = (
+            previous["duration_seconds"]
+            if previous.get("attempt") == state["attempt"]
+            and previous.get("outcome") == "completed"
+            and not previous.get("invalidated_at")
+            else 0
+        )
+        with processing_times.measure(self.store, self.run_id, step) as timer:
+            yield timer
+
+        if retained:
+
+            def accumulated(current):
+                current["processing_timings"][step][-1]["duration_seconds"] += retained
+                return current
+
+            self.store.mutate(self.run_id, accumulated)
 
     @property
     def analysis_committed(self):
@@ -251,6 +282,8 @@ class ProjectLifecycle:
             if project in completed_deliveries(self.store.read(self.run_id)):
                 self._inventory(project)
                 continue
+            if not self.claim(project, "archiving"):
+                continue
             self._hydrate_analysis(project)
 
             def starting(state):
@@ -310,7 +343,15 @@ class ProjectLifecycle:
     def complete_flowcell(self):
         from bcl2fastq_pipeline import afterFastq  # noqa: PLC0415
 
-        projects = afterFastq.get_project_names(afterFastq.get_project_dirs(self.cfg))
-        if set(projects) - completed_deliveries(self.store.read(self.run_id)):
+        state = self.store.read(self.run_id)
+        if state.get("project_controls") and project_holds.unfinished(state):
+            return project_holds.advance(self.store, self.run_id)
+        projects = (
+            state["projects"]
+            if state.get("project_controls")
+            else afterFastq.get_project_names(afterFastq.get_project_dirs(self.cfg))
+        )
+        required = (state.get("restart_request") or {}).get("projects")
+        if set(projects if required is None else required) - completed_deliveries(state):
             raise StateConflictError("Project deliveries remain incomplete")
         return self.store.complete_run(self.run_id, sorted(projects), project_boundaries=True)

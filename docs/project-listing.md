@@ -4,12 +4,13 @@
 `search` commands project recorded state into **one project on one flowcell**
 per row. This intentionally replaces the former comma-joined flowcell table.
 `list-processed` still shows the compatibility inventory unchanged. This projection
-is the foundation for #161; it does not introduce holds or change scheduling.
+also displays [persistent hold/release eligibility](project-holds.md) and waiting reasons.
 
 ## Columns and identity
 
 | Column | Meaning |
 | --- | --- |
+| `eligibility`, `waiting_reason` | Released, held or a hold requested during claimed work; reason for waiting. Processing failures and completed deliveries keep their own outcomes. |
 | `project`, `run_id` | Row identity; run IDs normalize historical path spellings. Unknown project identities use `<unidentified>`. |
 | `status`, `stage` | Current project outcome and active/next boundary, using the rules below. Filters use these columns. |
 | `analysis`, `delivery` | Separate current analysis and finalization outcomes. Delivery describes committed processing, independently of notification acceptance. |
@@ -45,6 +46,15 @@ leases. Use the existing recovery commands to persist an interruption.
 | Historical state without individual progress | Completed shared stages support known completion; ambiguous running/failure detail displays `unavailable` at its boundary | Do not assign the parent's analysis/archive failure to every project. |
 | Inventory-only history | `completed` or `archived` / `legacy` | Analysis/delivery/generation/priority detail unavailable; a nonzero inventory timestamp records historical completed processing. |
 
+After shared demultiplexing, held unfinished work shows `status=held` at its next
+boundary. Running, failed, interrupted, completed and archived outcomes keep
+their own status; `eligibility` independently shows `held` or `hold_requested`.
+In attempts with recorded hold/release controls, released work waiting for its
+turn shows `queued`, with `waiting_reason` distinguishing earlier eligible work
+from the next released batch. A project whose analysis has not started stays at
+`analysis`, even while another batch is
+archiving; that batch's completed shared stages do not establish its completion.
+
 A selected new scientific attempt invalidates its earlier current completion;
 its prior delivery stays visible in `last_delivery`. Current analysis and delivery
 must refer to the same generation to establish current completion. Unselected
@@ -68,6 +78,8 @@ boundaries is impossible. Arbitrary output path components are not searched.
 `--status` and `--stage` match exact project row values, independently of parent
 status/stage. `--status legacy` is a compatibility selector for inventory-only
 rows; their stage is `legacy` and their historical status is completed/archived.
+`--status held` selects rows whose project status is held; it does not select
+running, failed or completed projects solely because their eligibility is held.
 Unknown selectors return no rows. Both filters may be combined.
 
 Exit conventions stay unchanged: 0 for a successful command including no

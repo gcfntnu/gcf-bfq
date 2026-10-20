@@ -210,7 +210,9 @@ def prepare_execution(store, run_id, cfg):
     if record["status"] in {"publishing", "published"}:
         raise StateConflictError("Recover correction publication before executing another attempt")
     root = Path(record["root"])
-    if (state.get("restart_request") or {}).get("reuse_project_correction"):
+    if (state.get("restart_request") or {}).get("reuse_project_correction") or state.get(
+        "project_continuation"
+    ):
         inputs = root / "inputs"
         for item in record["inputs"]:
             for role in ("sample_sheet", "submission_form"):
@@ -218,6 +220,9 @@ def prepare_execution(store, run_id, cfg):
                     raise StateConflictError(
                         "Frozen correction inputs changed before delivery retry"
                     )
+        for item in record.get("geometry", []):
+            if _hash(inputs / item["name"]) != item["sha256"]:
+                raise StateConflictError("Frozen correction run geometry changed")
         cfg.run.output_override = Path(record["working"])
         cfg.run.selected_projects = set(state["restart_request"]["projects"])
         cfg.run.input_selection = _selection(inputs)

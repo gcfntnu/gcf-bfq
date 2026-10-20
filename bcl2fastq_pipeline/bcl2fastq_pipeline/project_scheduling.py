@@ -82,7 +82,7 @@ def print_plan(plan, *, projects=None):
         return
     order = ordered(plan, projects)
     label = f"for attempt {plan['attempt']}" if "attempt" in plan else "preview"
-    print(f"Project scheduling {label} (all selected analyses before archiving):")
+    print(f"Project scheduling {label} (eligible analyses before archiving each released batch):")
     for project in order:
         entry = plan["projects"][project]
         print(f"  {project}: priority {entry['priority']} ({entry['priority_source']})")
@@ -109,6 +109,7 @@ def _bind(cfg, store, plan):
         if state["attempt"] != frozen["attempt"] or state["status"] != "running":
             raise StateConflictError("Attempt changed while freezing project scheduling")
         state["attempts"][-1]["project_schedule"] = copy.deepcopy(frozen)
+        state["projects"] = sorted(set(state["projects"]) | set(frozen["projects"]))
         return state
 
     store.mutate(cfg.run.run_id, record)
@@ -169,6 +170,9 @@ def record_start(cfg, stage, project):
     """Persist actual starts before launching a project's external work."""
     plan = getattr(cfg.run, "project_schedule", None)
     if plan is None:
+        return
+    if getattr(cfg.run, "project_lifecycle", None) is not None:
+        # The lifecycle records the start atomically with its eligibility claim.
         return
     store = FlowcellStateStore(cfg.static.paths.manager_dir)
     expected_stage = "analysis" if stage == "analysis" else "finalization"

@@ -17,10 +17,13 @@ preflight before cleanup or processing. Missing or blank priority resolves to
 `1.0` and `1.00` tie, with project ID deciding their order. Values are compared as
 exact decimals, independently of floating-point or decimal arithmetic rounding.
 
-Priority applies separately to analysis and archiving. BFQ finishes **all
-selected analyses before archiving starts**, then archives in the same priority
-order. It continues to run projects sequentially within one flowcell. Priority
-does not change workflow selection, scientific parameters or read assignment.
+Priority applies separately to analysis and archiving. Within each admitted
+batch, BFQ finishes **all eligible analyses before archiving that batch**, then
+archives in the same priority order. Without hold/release intervention, all
+selected projects belong to one batch; a later release joins a subsequent batch
+as described in [project holds](project-holds.md#stage-boundaries-and-batches). BFQ continues to
+run projects sequentially within one flowcell. Priority does not change workflow
+selection, scientific parameters or read assignment.
 With no priorities, both stages use project-ID order. For a legacy shared input
 pair, its one priority applies equally to every project in that pair.
 
@@ -42,7 +45,7 @@ Status identifies the recorded attempt and actual project starts in each stage.
 `fm list` and `fm search` expose one project per flowcell row with its own
 analysis/delivery outcomes and recorded priority/source; see the
 [project listing contract](project-listing.md). That projection is the foundation
-for the separate hold/release controls in #161.
+for [persistent hold/release controls](project-holds.md).
 An attempt's recorded start means processing began, rather than that the project
 completed. Existing stage and flowcell outcomes remain authoritative.
 
@@ -88,8 +91,8 @@ If B's analysis fails after A succeeds, a scoped analysis rerun of B preserves
 A's workdir, reports, generation and notification. Once B's selected delivery
 commits, any other successfully analyzed projects still awaiting delivery are
 queued for their remaining finalization. A flowcell with unfinished failed
-analysis still requires explicit recovery. A held-project policy is separate
-work in #161.
+analysis still requires explicit recovery. [Held projects](project-holds.md) wait
+without preventing released projects from reaching delivery.
 
 If B's delivery fails after A commits, a reporting/finalization retry retains A's
 archives, checksums, snapshot, completion record and known delivered intent.
@@ -118,8 +121,8 @@ identities include the project (`processed:ATTEMPT:PROJECT` and
 `finalized:ATTEMPT:PROJECT`). Existing combined notification records keep their
 identities and retry rules; loading historical state creates no new analysis
 emails. Legacy execution also captures its effective shared pair without
-rewriting authoritative inputs. Hold/release controls belong to #161; priority
-alone does not hold work or bypass the analysis phase.
+rewriting authoritative inputs. Priority alone does not hold work or bypass the
+analysis phase; persistent [hold/release controls](project-holds.md) set eligibility.
 
 ## Verification
 

@@ -35,6 +35,7 @@ STAGE_STATUSES = {"pending", "queued", "running", "completed", "failed", "skippe
 DELIVERY_STATUSES = {"pending", "sending", "sent", "failed", "uncertain", "superseded"}
 DELIVERY_ATTEMPT_STATUSES = {"sending", "sent", "failed", "uncertain"}
 RUN_STATUSES = {
+    "waiting",
     "preparing",
     "queued",
     "running",
@@ -220,8 +221,11 @@ def new_state(  # noqa: PLR0913
 
 
 def validate_state(state: dict) -> None:
+    from bcl2fastq_pipeline import project_holds  # noqa: PLC0415
+
     if not isinstance(state, dict):
         raise StateValidationError("State must be a JSON object")
+    project_holds.validate(state)
     required = {
         "schema_version",
         "run_id",
@@ -778,6 +782,14 @@ class FlowcellStateStore:
         def update(state: dict) -> dict:
             if output_path is not None:
                 state["output_path"] = str(output_path)
+            if state.get("project_controls"):
+                from bcl2fastq_pipeline import project_holds  # noqa: PLC0415
+
+                project_holds.retain_pending_contexts(state, projects)
+            state.pop("project_continuation", None)
+            state.pop("project_batch", None)
+            state.pop("active_project_stage", None)
+            state.pop("waiting_reason", None)
             if projects is not None:
                 _retain_project_completion(state)
             recovering = state["status"] in {"failed", "interrupted"} and start_stage in {
@@ -833,6 +845,10 @@ class FlowcellStateStore:
             raise StateValidationError(f"Unsupported stage: {start_stage}")
 
         def update(state: dict) -> dict:
+            state.pop("project_batch", None)
+            state.pop("project_continuation", None)
+            state.pop("active_project_stage", None)
+            state.pop("waiting_reason", None)
             if any(item["status"] == "pending" for item in state.get("index_corrections", [])):
                 raise StateConflictError("Recover pending index toggle history before queueing")
             validate_restart_boundary(state, start_stage)
@@ -876,6 +892,10 @@ class FlowcellStateStore:
                 raise StateConflictError(f"Current stage {stage} is not queued")
             if cfg is not None:
                 state["output_path"] = str(resolve_output_path(state["output_path"], run_id, cfg))
+            if state.get("project_continuation"):
+                state["status"] = "running"
+                state["stages"][stage]["status"] = "running"
+                return state
             state["attempt"] += 1
             now = utcnow()
             state["status"] = "running"
@@ -988,6 +1008,9 @@ class FlowcellStateStore:
                     "generation": generation,
                 },
             )
+            from bcl2fastq_pipeline.project_holds import finish_claim  # noqa: PLC0415
+
+            finish_claim(state)
             return state
 
         return self.mutate(run_id, update)
@@ -1032,6 +1055,9 @@ class FlowcellStateStore:
                     "generation": analysis["generation"],
                 },
             )
+            from bcl2fastq_pipeline.project_holds import finish_claim  # noqa: PLC0415
+
+            finish_claim(state)
             return state
 
         return self.mutate(run_id, update)
@@ -1082,7 +1108,11 @@ class FlowcellStateStore:
                         else:
                             detail["metadata"][key] = value
                 else:
-                    detail["metadata"].update(metadata_)
+                    for key, value in metadata_.items():
+                        if key in {"workdirs", "project_workflows"}:
+                            detail["metadata"].setdefault(key, {}).update(value)
+                        else:
+                            detail["metadata"][key] = value
             if stage == "demultiplexing" and state.get("fastq_cleanup"):
                 state["fastq_cleanup"]["status"] = "regenerated"
                 state["fastq_cleanup"]["regenerated_at"] = utcnow()
@@ -1231,6 +1261,9 @@ class FlowcellStateStore:
                 detail = progress.get(key, {})
                 if detail.get("status") == "running":
                     detail.update(status="failed", failed_at=now, failure=summary)
+            from bcl2fastq_pipeline.project_holds import finish_claim  # noqa: PLC0415
+
+            finish_claim(state)
             state["status"] = "interrupted" if interrupted else "failed"
             state["current_stage"] = stage
             state["failed_at"] = now
@@ -1466,6 +1499,9 @@ class FlowcellStateStore:
             stage["status"] = "completed"
             stage["completed_at"] = now
             state["status"] = "completed"
+            state.pop("project_continuation", None)
+            state.pop("project_batch", None)
+            state.pop("waiting_reason", None)
             state["current_stage"] = "finalization"
             state["completed_at"] = now
             state["failed_at"] = None
@@ -1541,6 +1577,12 @@ class FlowcellStateStore:
                             + ", ".join(remaining),
                             "report_path": None,
                         }
+                    if state.get("project_controls"):
+                        from bcl2fastq_pipeline import project_holds  # noqa: PLC0415
+
+                        project_holds.continue_pending(state, remaining)
+                        if state["status"] in {"queued", "waiting"}:
+                            state["last_error"] = None
             return state
 
         return self.mutate(run_id, update)

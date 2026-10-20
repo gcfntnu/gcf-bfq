@@ -170,6 +170,7 @@ class RunContext:
     demultiplexing_plan: object | None = None
     project_schedule: dict | None = None
     project_lifecycle: object | None = None
+    batch_projects: set[str] | None = None
 
     def __repr__(self):
         return f"<RunContext run_id={self.run_id!r} pipeline={self.pipeline!r} user={self.user!r}>"
@@ -263,6 +264,7 @@ class RunContext:
         self.output_override = None
         self.demultiplexing_plan = None
         self.project_schedule = None
+        self.batch_projects = None
         self.project_lifecycle = None
         self.custom.clear()
 

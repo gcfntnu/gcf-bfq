@@ -21,7 +21,7 @@ delivery failures remain separate from processing failures.
 | Persistent state and locking | `state.py` | Schema validation, atomic state updates, per-run execution lease, attempts, restart state and notification records. `tests/test_state.py`, `tests/test_notification_state.py`. |
 | Input validation | `preflight.py` | Resolve effective inputs and call shared `gcf-tools` validation before demultiplexing/analysis. `tests/test_input_preflight.py`. |
 | Stage orchestration | `cli.py: _run_state_backed_flowcell` | Run the four restart boundaries; commit processing outcomes separately from notification delivery. `tests/test_notification_integration.py`, `tests/test_early_qc_integration.py`. |
-| Project scheduling and completion | `project_scheduling.py`, `project_lifecycle.py`, `project_corrections.py` | Freeze decimal priorities, commit each project's analysis/report intent and delivery independently, and recover partial publication without replaying earlier successes. `tests/test_project_scheduling.py`, `tests/test_project_lifecycle.py`. |
+| Project scheduling and completion | `project_scheduling.py`, `project_holds.py`, `project_lifecycle.py`, `project_corrections.py` | Freeze decimal priorities, serialize persistent hold/release controls with project stage starts, admit released batches, commit project analysis/delivery independently and recover partial publication. `tests/test_project_scheduling.py`, `tests/test_project_holds.py`, `tests/test_project_lifecycle.py`. |
 | Demultiplexing and corrections | `makeFastq.py`, `index_corrections.py`, `index_sequences.py` | Conversion selection, FASTQ naming and explicit index-orientation corrections. `tests/test_index_cli.py`, `tests/test_index_corrections.py`. |
 | Analysis and finalization | `afterFastq.py`, `workflow_config.py`, `analysis_resume.py` | Capture library-prep configuration, invoke configmaker/Snakemake, copy reports, create archives/checksums. `tests/test_after_fastq.py`, `tests/test_workflow_config.py`, `tests/test_fastq_checksums.py`. |
 | Operator CLI and cleanup | `../flowcell_manager/flowcell_manager.py`, `../flowcell_manager/project_listing.py`, `state.py: cleanup_plan`, `fastq_cleanup.py` | Shared `fm`/`flowcell-manager`, validation and rerun previews, explicit initialization, search/status, cleanup and archive operations. `tests/test_state_integration.py`, `tests/test_flowcell_search.py`, `tests/test_fastq_cleanup.py`. |
@@ -140,6 +140,7 @@ Use the relevant existing guide to specify the remaining manual integration:
 | Input selection and validation | [Input preflight](input-preflight.md), [coordinated preflight checks](preflight-integration-tests.md) |
 | Mixed project inputs and scoped corrections | [Project-paired flowcells](project-inputs.md) |
 | Project priority and stage ordering | [Project scheduling](project-scheduling.md) |
+| Project holds, release batches and waiting/restart behavior | [Project holds and server checks](project-holds.md#verification) |
 | Libprep selection and configmaker propagation | [Library-prep authority](libprep-configuration.md) |
 | Restart/state and notification recovery | [README](../README.md), [notification recovery](notification-recovery.md) |
 | Analysis email size and attachment omission | [Report email size policy and server checks](report-email-size.md) |

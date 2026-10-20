@@ -401,12 +401,16 @@ index correction or sample-exclusion policy. Review and intervention are manual.
 
 BFQ attempts each project's Analysis complete notification after its workflow and
 required project reports have committed, before the next project's analysis
-starts. All selected analyses finish before archiving starts. During delivery,
+starts. Within each admitted batch, all eligible analyses finish before that
+batch's archiving starts. Later releases join the next batch. During delivery,
 each project commits its archives, checksums, retained snapshot and publication,
 then attempts its finalized notification before the next project is archived.
 The flowcell stays incomplete until its outstanding projects finish. See
 [project scheduling and progress](docs/project-scheduling.md) for priority,
-scoped corrections and recovery.
+scoped corrections and recovery. [Persistent project holds](docs/project-holds.md)
+let released projects reach delivery while other projects wait after shared
+demultiplexing. Release queues only the remaining stages and preserves completed
+projects and their delivered notifications.
 
 | Notification | Recipients | Contents |
 | --- | --- | --- |
@@ -901,6 +905,10 @@ archives still exist. Priority and its source come from frozen scheduling record
 never a fresh read of an editable SampleSheet. Missing historical detail displays
 `unavailable`; unidentified queued/discovered projects display `<unidentified>`.
 See [project listing](docs/project-listing.md) for all columns and exact mappings.
+`eligibility` and `waiting_reason` show requested/applied project holds separately
+from processing outcomes. Use `fm hold RUN --project GCF-2099-002 --reason TEXT`
+and the matching `fm release` command; both support repeatable projects and
+read-only `--dry-run`. `--status held` finds held unfinished work.
 
 Rows sort by run ID, then project. Completed and archived history stays visible
 when outputs are missing. JSON state is authoritative for the entire normalized

@@ -165,6 +165,8 @@ def test_one_row_per_project_and_run_has_explicit_parent_context(search_inventor
         "last_delivery",
         "priority",
         "priority_source",
+        "eligibility",
+        "waiting_reason",
         "parent_status",
         "parent_stage",
         "origin",
