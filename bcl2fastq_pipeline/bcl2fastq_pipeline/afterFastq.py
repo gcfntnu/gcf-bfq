@@ -29,10 +29,11 @@ from bcl2fastq_pipeline import (
     analysis_snapshots,
     processing_times,
     project_corrections,
+    project_scheduling,
     undetermined_fastqs,
     workflow_config,
 )
-from bcl2fastq_pipeline.config import PipelineConfig
+from bcl2fastq_pipeline.config import PipelineConfig, ProjectConfig
 from bcl2fastq_pipeline.workflow_config import select_workflow
 
 log = logging.getLogger(__name__)
@@ -326,12 +327,15 @@ def _run_archive_command(cmd, cfg, project, kind):
         raise
 
 
-def archive_worker(cfg):
+def archive_worker(cfg, *, projects=None):
     project_dirs = get_project_dirs(cfg)
     pnames = get_project_names(project_dirs)
+    if projects is not None:
+        pnames &= set(projects)
     run_date = str(cfg.run.run_id).split("_")[0]
 
-    for p in pnames:
+    for p in project_scheduling.project_order(cfg, pnames):
+        project_scheduling.record_start(cfg, "archiving", p)
         project_config = workflow_config.delivery_project_config(cfg, p)
         sensitive = project_config.sensitive if project_config else cfg.run.sensitive
         # ------------------------------------------------------------------ #
@@ -517,11 +521,14 @@ def full_align(cfg, *, resume=None):
     if not resume and not cfg.run.project_configs:
         selection = select_workflow(cfg)
     project_names = get_project_names(get_project_dirs(cfg))
+    if getattr(cfg.run, "project_lifecycle", None) is not None:
+        cfg.run.project_lifecycle.plan_analysis(project_names)
     run_date = str(cfg.run.run_id).split("_")[0]
     workdirs = {}
     if resume and set(project_names) != set(resume["projects"]):
         raise RuntimeError("Resume projects differ from available FASTQs; inspect and requeue")
-    for p in sorted(project_names):
+    for p in project_scheduling.project_order(cfg, project_names):
+        project_scheduling.record_start(cfg, "analysis", p)
         if not resume and cfg.run.project_configs:
             selection = select_workflow(cfg, p)
         pipeline = resume["projects"][p]["workflow"] if resume else selection.workflow
@@ -574,6 +581,17 @@ def full_align(cfg, *, resume=None):
                 selection.entry,
             ]
             project_config = getattr(cfg.run, "project_configs", {}).get(p)
+            if project_config is None and getattr(cfg.run, "input_selection", None) is not None:
+                project_config = ProjectConfig(
+                    p,
+                    cfg.run.sample_sheet,
+                    cfg.run.sample_submission_form,
+                    dict(cfg.run.custom),
+                    tuple(selection.read_geometry),
+                    selection,
+                    pipeline,
+                )
+                cfg.run.project_configs[p] = project_config
             if project_config:
                 retained_inputs = analysis_dir / "inputs"
                 retained_inputs.mkdir(exist_ok=True)
@@ -586,6 +604,11 @@ def full_align(cfg, *, resume=None):
                             "sample_sheet": project_config.sample_sheet.name,
                             "submission_form": project_config.submission_form.name,
                             "custom": project_config.custom,
+                            "scheduling": (
+                                cfg.run.project_schedule["projects"][p]
+                                if cfg.run.project_schedule
+                                else None
+                            ),
                             "libprep_selection": selection.diagnostics(),
                             "inputs": {
                                 original.name: hashlib.sha256(original.read_bytes()).hexdigest()
@@ -619,6 +642,9 @@ def full_align(cfg, *, resume=None):
                 shutil.copy2(discovery_summary, cfg.output_path / f"configmaker-analysis-{p}.json")
 
         # run snakemake pipeline
+        lifecycle = getattr(cfg.run, "project_lifecycle", None)
+        if lifecycle is not None:
+            lifecycle.start_analysis(p, workdirs[p], pipeline)
         cmd = snakemake_command(resume=bool(resume))
         snakemake_log = cfg.static.paths.log_dir / f"{cfg.run.run_id}_{p}_snakemake.log"
         run_logged_command(cmd, cwd=analysis_dir, log_path=snakemake_log)
@@ -669,6 +695,8 @@ def full_align(cfg, *, resume=None):
             cfg.output_path / f".multiqc_config_{p}.yaml",
         )
         cfg.run.project_workdirs[p] = analysis_dir
+        if lifecycle is not None:
+            lifecycle.complete_analysis(p)
 
     return workdirs
 
@@ -725,6 +753,11 @@ def postMakeSteps():
 
 def finalize(*, store=None):
     cfg = PipelineConfig.get()
+    if (
+        getattr(cfg.run, "project_lifecycle", None) is not None
+        and cfg.run.project_lifecycle.analysis_committed
+    ):
+        return cfg.run.project_lifecycle.finalize()
     with (
         processing_times.measure(store, cfg.run.run_id, "archiving")
         if store is not None

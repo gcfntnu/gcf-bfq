@@ -59,6 +59,11 @@ retains derived sheets, source row mappings, hashes, effective settings and tool
 identity. Analysis configuration, delivery inputs and retained snapshots identify
 their own project and execution attempt.
 
+Optional SampleSheet `Priority` controls deterministic ordering within analysis
+and archiving, with all selected analyses finishing before archiving starts.
+See [project scheduling](project-scheduling.md) for decimal values, defaults,
+manager previews and the frozen execution plan.
+
 ## Correct one project
 
 `fm` and `flowcell-manager` remain the same installed interface. Preview before

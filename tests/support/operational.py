@@ -282,6 +282,13 @@ class Scenario:
                 f"{afterFastq.file_md5(path)}  {path.name}\n"
             )
 
+    def archive_checksum(self, path):
+        """Hash one completed project archive without launching an external process."""
+        record(self.root, "archive-md5sum-process")
+        (path.parent / f"md5sum_{path.stem}_archive.txt").write_text(
+            f"{afterFastq.file_md5(path)}  {path.name}\n"
+        )
+
 
 def make_scenario(root, monkeypatch):
     """Build beneath one pytest-owned directory, without acquiring any remote data."""
@@ -359,6 +366,7 @@ def make_scenario(root, monkeypatch):
     monkeypatch.setattr(afterFastq, "run_logged_command", scenario.logged_command)
     monkeypatch.setattr(afterFastq, "multiqc_stats", scenario.sequencing_report)
     monkeypatch.setattr(afterFastq, "md5sum_archive_worker", scenario.archive_checksums)
+    monkeypatch.setattr(afterFastq, "md5sum_archive", scenario.archive_checksum)
     monkeypatch.setattr(smtplib, "SMTP", smtp_double(root))
     monkeypatch.setattr(smtplib, "SMTP_SSL", smtp_double(root))
     return scenario

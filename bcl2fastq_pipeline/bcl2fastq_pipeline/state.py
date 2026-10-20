@@ -278,6 +278,31 @@ def validate_state(state: dict) -> None:
     # Optional in v1: loading an older document must not invent mail to send.
     if "delivery_notifications" in state:
         _validate_delivery_notifications(state["delivery_notifications"])
+    progress = state.get("project_progress", {})
+    if not isinstance(progress, dict):
+        raise StateValidationError("Invalid project progress")
+    for project, details in progress.items():
+        if (
+            not isinstance(project, str)
+            or not re.fullmatch(r"GCF-[A-Za-z0-9][A-Za-z0-9-]*", project)
+            or not isinstance(details, dict)
+        ):
+            raise StateValidationError("Invalid project progress identity")
+        for key in ("analysis", "finalization"):
+            if key not in details:
+                continue
+            outcome = details[key]
+            if not isinstance(outcome, dict) or outcome.get("status") not in {
+                "running",
+                "failed",
+                "completed",
+            }:
+                raise StateValidationError("Invalid project stage progress")
+            if outcome["status"] == "completed" and (
+                not isinstance(outcome.get("generation"), str)
+                or not isinstance(outcome.get("completed_at"), str)
+            ):
+                raise StateValidationError("Invalid completed project generation")
     qc = state.get("sequencing_qc")
     if qc is not None:
         if (
@@ -328,9 +353,17 @@ def _validate_delivery_notifications(notifications) -> None:
             or not isinstance(entry["attempt"], int)
             or isinstance(entry["attempt"], bool)
             or entry["attempt"] < 1
-            or entry["id"] != f"{entry['kind']}:{entry['attempt']}"
+            or entry["id"]
+            != notification_identity(entry["kind"], entry["attempt"], entry.get("project"))
         ):
             raise StateValidationError("Invalid delivery notification identity")
+        if entry.get("project") is not None and (
+            not isinstance(entry["project"], str)
+            or not re.fullmatch(r"GCF-[A-Za-z0-9][A-Za-z0-9-]*", entry["project"])
+            or not isinstance(entry.get("generation"), str)
+            or not entry["generation"]
+        ):
+            raise StateValidationError("Invalid project notification generation")
         if entry["id"] in identifiers:
             raise StateValidationError(f"Duplicate delivery notification: {entry['id']}")
         identifiers.add(entry["id"])
@@ -364,6 +397,21 @@ def _validate_delivery_notifications(notifications) -> None:
                     raise StateValidationError(f"Invalid delivery attempt {field}")
 
 
+def notification_identity(kind, attempt, project=None):
+    return f"{kind}:{attempt}" + (f":{project}" if project is not None else "")
+
+
+def project_notification_complete(state, entry):
+    progress = state.get("project_progress", {}).get(entry.get("project"), {})
+    key = "analysis" if entry["kind"] == "processed" else "finalization"
+    outcome = progress.get(key, {})
+    return (
+        outcome.get("status") == "completed"
+        and outcome.get("generation") == entry.get("generation")
+        and outcome.get("notification_id") == entry["id"]
+    )
+
+
 def _append_delivery_notification(
     state: dict, stage: str, notification: dict | None, *, attempt: int | None = None
 ) -> None:
@@ -379,7 +427,7 @@ def _append_delivery_notification(
     attempt = state["attempt"] if attempt is None else attempt
     state.setdefault("delivery_notifications", []).append(
         {
-            "id": f"{notification['kind']}:{attempt}",
+            "id": notification_identity(notification["kind"], attempt, notification.get("project")),
             "kind": notification["kind"],
             "stage": stage,
             "attempt": attempt,
@@ -389,23 +437,36 @@ def _append_delivery_notification(
             "last_error": None,
             "payload": copy.deepcopy(notification["payload"]),
             "attempts": [],
+            **(
+                {key: notification[key] for key in ("project", "generation")}
+                if notification.get("project")
+                else {}
+            ),
         }
     )
 
 
-def _invalidate_delivery_notifications(
+def _invalidate_delivery_notifications(  # noqa: PLR0913
     state: dict,
     from_stage: str,
     reason: str,
     *,
     unsent_only: bool = False,
     preserve_sequencing: bool = False,
+    projects=None,
+    preserve_project_success=False,
 ) -> None:
     boundary = STAGES.index(from_stage)
     now = utcnow()
     for entry in state.get("delivery_notifications", []):
         if (
-            (preserve_sequencing and entry["kind"] == "sequencing")
+            (entry.get("project") and projects is not None and entry["project"] not in projects)
+            or (
+                preserve_project_success
+                and entry.get("project")
+                and project_notification_complete(state, entry)
+            )
+            or (preserve_sequencing and entry["kind"] == "sequencing")
             or STAGES.index(entry["stage"]) < boundary
             or entry["status"] == "superseded"
             or (unsent_only and entry["status"] == "sent")
@@ -455,6 +516,12 @@ def validate_restart_boundary(state: dict, start_stage: str) -> None:
             state["status"] == "completed" and state["attempt"] == correction["attempt"]
         )
         if not committed:
+            progress = state.get("project_progress", {})
+            if all(
+                progress.get(project, {}).get("analysis", {}).get("status") == "completed"
+                for project in correction["projects"]
+            ):
+                return
             raise StateConflictError(
                 "An unsuccessful project correction has unpublished results. "
                 f"Restart from {correction['from_stage']} with the project selector, "
@@ -465,6 +532,9 @@ def validate_restart_boundary(state: dict, start_stage: str) -> None:
 
 def project_analysis_completed_at(state, project):
     """Keep a retained project's analysis time across other projects' corrections."""
+    progress = state.get("project_progress", {}).get(project, {}).get("analysis", {})
+    if progress.get("status") == "completed":
+        return progress["completed_at"]
     analysis = state["stages"]["analysis"]
     prior = (
         state.get("project_completion", {}).get(project, {}).get("stages", {}).get("analysis", {})
@@ -488,6 +558,9 @@ def _project_completion(state, project, completed_at):
     if isinstance(workflow, dict):
         workflow = workflow.get("workflow")
     stages = copy.deepcopy(state["stages"])
+    progress = state.get("project_progress", {}).get(project, {})
+    if progress.get("finalization", {}).get("status") == "completed":
+        stages["finalization"].update(status="completed", completed_at=completed_at)
     stages["analysis"]["completed_at"] = project_analysis_completed_at(state, project)
     for detail in stages.values():
         metadata = detail.get("metadata", {})
@@ -500,6 +573,7 @@ def _project_completion(state, project, completed_at):
         "attempt": state["attempt"],
         "completed_at": completed_at,
         "workflow": workflow,
+        **({"generation": progress["analysis"]["generation"]} if progress.get("analysis") else {}),
         "stages": stages,
         "snapshot": {
             key: copy.deepcopy(value)
@@ -706,8 +780,31 @@ class FlowcellStateStore:
                 state["output_path"] = str(output_path)
             if projects is not None:
                 _retain_project_completion(state)
+            recovering = state["status"] in {"failed", "interrupted"} and start_stage in {
+                "reporting",
+                "finalization",
+            }
             processing_times.invalidate(state, start_stage)
-            _invalidate_delivery_notifications(state, start_stage, f"Restart from {start_stage}")
+            _invalidate_delivery_notifications(
+                state,
+                start_stage,
+                f"Restart from {start_stage}",
+                projects=projects,
+                preserve_project_success=recovering,
+            )
+            for project, progress in state.get("project_progress", {}).items():
+                if projects is not None and project not in projects:
+                    continue
+                state.setdefault("project_progress_history", []).append(
+                    {"project": project, **copy.deepcopy(progress)}
+                )
+                if start_stage in {"demultiplexing", "analysis"}:
+                    progress.clear()
+                elif not (
+                    recovering and progress.get("finalization", {}).get("status") == "completed"
+                ):
+                    progress.pop("finalization", None)
+                    progress.pop("timings", None)
             if start_stage == "demultiplexing" and state.get("sequencing_qc"):
                 state.setdefault("sequencing_qc_history", []).append(state.pop("sequencing_qc"))
             state["status"] = "preparing"
@@ -718,6 +815,7 @@ class FlowcellStateStore:
                 "hostname": hostname or socket.gethostname(),
                 "requested_at": utcnow(),
                 "refresh_inputs": bool(refresh_inputs),
+                "preserve_completed_projects": recovering,
             }
             if analysis_resume is not None:
                 state["restart_request"]["analysis_resume"] = copy.deepcopy(analysis_resume)
@@ -739,7 +837,14 @@ class FlowcellStateStore:
                 raise StateConflictError("Recover pending index toggle history before queueing")
             validate_restart_boundary(state, start_stage)
             processing_times.invalidate(state, start_stage)
-            _invalidate_delivery_notifications(state, start_stage, f"Restart from {start_stage}")
+            request = state.get("restart_request") or {}
+            _invalidate_delivery_notifications(
+                state,
+                start_stage,
+                f"Restart from {start_stage}",
+                projects=request.get("projects"),
+                preserve_project_success=request.get("preserve_completed_projects", False),
+            )
             if start_stage == "demultiplexing" and state.get("sequencing_qc"):
                 state.setdefault("sequencing_qc_history", []).append(state.pop("sequencing_qc"))
             start_index = STAGES.index(start_stage)
@@ -834,6 +939,103 @@ class FlowcellStateStore:
 
         return self.mutate(run_id, update)
 
+    def start_project_analysis(  # noqa: PLR0913
+        self, run_id, project, generation, identity, workflow, output, scheduling=None
+    ):
+        def update(state):
+            if state["status"] != "running" or state["current_stage"] != "analysis":
+                raise StateConflictError("Project analysis requires the running analysis stage")
+            state["projects"] = sorted(set(state["projects"]) | {project})
+            state.setdefault("project_progress", {}).setdefault(project, {})["analysis"] = {
+                "status": "running",
+                "generation": generation,
+                "attempt": state["attempt"],
+                "started_at": utcnow(),
+                "completed_at": None,
+                "workdir": copy.deepcopy(identity),
+                "workflow": workflow,
+                "output_path": str(output),
+                "scheduling": copy.deepcopy(scheduling),
+            }
+            metadata = state["stages"]["analysis"]["metadata"]
+            metadata.setdefault("workdirs", {})[project] = copy.deepcopy(identity)
+            metadata.setdefault("project_workflows", {})[project] = workflow
+            return state
+
+        return self.mutate(run_id, update)
+
+    def complete_project_analysis(self, run_id, project, generation, payload):
+        def update(state):
+            progress = state["project_progress"][project]["analysis"]
+            if progress["generation"] != generation or state["status"] != "running":
+                raise StateConflictError("Project analysis generation changed before completion")
+            if progress["status"] == "completed":
+                return state
+            identity = notification_identity("processed", state["attempt"], project)
+            progress.update(
+                status="completed",
+                completed_at=utcnow(),
+                notification_id=identity,
+                reports=payload["output_path"],
+            )
+            _append_delivery_notification(
+                state,
+                "analysis",
+                {
+                    "kind": "processed",
+                    "payload": payload,
+                    "project": project,
+                    "generation": generation,
+                },
+            )
+            return state
+
+        return self.mutate(run_id, update)
+
+    def complete_project_finalization(self, run_id, project, payload, snapshot):
+        def update(state):
+            if state["status"] != "running" or state["current_stage"] != "finalization":
+                raise StateConflictError(
+                    "Project finalization requires the running finalization stage"
+                )
+            progress = state.setdefault("project_progress", {}).setdefault(project, {})
+            analysis = progress["analysis"]
+            if analysis["status"] != "completed":
+                raise StateConflictError("Project analysis must be committed before delivery")
+            if progress.get("finalization", {}).get("status") == "completed":
+                return state
+            now = utcnow()
+            progress["finalization"] = {
+                "status": "completed",
+                "generation": analysis["generation"],
+                "attempt": state["attempt"],
+                "completed_at": now,
+                "notification_id": notification_identity("finalized", state["attempt"], project),
+            }
+            state["stages"]["finalization"]["metadata"].setdefault("analysis_snapshots", {})[
+                project
+            ] = {key: value for key, value in snapshot.items() if key != "pending"}
+            if snapshot["status"] == "available":
+                state.setdefault("analysis_snapshots", {})[project] = {
+                    key: value for key, value in snapshot.items() if key != "status"
+                }
+            state.setdefault("project_completion", {})[project] = _project_completion(
+                state, project, now
+            )
+            _append_delivery_notification(
+                state,
+                "finalization",
+                {
+                    "kind": "finalized",
+                    "payload": payload,
+                    "project": project,
+                    "generation": analysis["generation"],
+                },
+            )
+            return state
+
+        return self.mutate(run_id, update)
+
     def complete_stage(
         self,
         run_id: str,
@@ -855,6 +1057,19 @@ class FlowcellStateStore:
             if metadata_:
                 scoped = (state.get("restart_request") or {}).get("projects")
                 if scoped is not None:
+                    for project, progress in state.get("project_progress", {}).items():
+                        completed = progress.get("analysis", {})
+                        if (
+                            project not in scoped
+                            and completed.get("status") == "completed"
+                            and stage == "analysis"
+                        ):
+                            detail["metadata"].setdefault("workdirs", {})[project] = copy.deepcopy(
+                                completed["workdir"]
+                            )
+                            detail["metadata"].setdefault("project_workflows", {})[project] = (
+                                completed["workflow"]
+                            )
                     for project, completion in state.get("project_completion", {}).items():
                         if project in scoped:
                             continue
@@ -1008,8 +1223,14 @@ class FlowcellStateStore:
                 stage,
                 f"Processing failed at {stage}",
                 preserve_sequencing=bool(state.get("sequencing_qc")),
+                preserve_project_success=True,
             )
             processing_times.interrupt(state)
+            key = "analysis" if stage == "analysis" else "finalization"
+            for progress in state.get("project_progress", {}).values():
+                detail = progress.get(key, {})
+                if detail.get("status") == "running":
+                    detail.update(status="failed", failed_at=now, failure=summary)
             state["status"] = "interrupted" if interrupted else "failed"
             state["current_stage"] = stage
             state["failed_at"] = now
@@ -1085,7 +1306,7 @@ class FlowcellStateStore:
             self._atomic_write_unlocked(state)
             return True
 
-    def deliver_notification(  # noqa: PLR0913
+    def deliver_notification(  # noqa: PLR0913, PLR0911
         self,
         run_id: str,
         notification_id: str,
@@ -1130,17 +1351,29 @@ class FlowcellStateStore:
                 None,
             )
             if entry["status"] in {"sent", "superseded"} or (
-                correction is not None and correction["status"] != "committed"
+                not entry.get("project")
+                and correction is not None
+                and correction["status"] != "committed"
             ):
                 # A generated correction is not the delivered replacement until
                 # publication and processing completion have both committed.
                 return False
             qc = state.get("sequencing_qc", {})
             producing_complete = (
-                qc.get("status") == "completed" and qc.get("execution") == entry["attempt"]
-                if entry["kind"] == "sequencing"
-                else state["stages"][entry["stage"]]["status"] == "completed"
+                project_notification_complete(state, entry)
+                if entry.get("project")
+                else (
+                    qc.get("status") == "completed" and qc.get("execution") == entry["attempt"]
+                    if entry["kind"] == "sequencing"
+                    else state["stages"][entry["stage"]]["status"] == "completed"
+                )
             )
+            if (
+                entry.get("project")
+                and entry["kind"] == "finalized"
+                and "pending" in state.get("analysis_snapshots", {}).get(entry["project"], {})
+            ):
+                return False
             if not producing_complete:
                 if entry["kind"] == "sequencing":
                     if qc.get("execution") == entry["attempt"]:
@@ -1160,7 +1393,10 @@ class FlowcellStateStore:
                 # Defense for older/inconsistent records: completion mail must
                 # never advertise work whose producing stage is not complete.
                 _invalidate_delivery_notifications(
-                    state, entry["stage"], f"Producing stage {entry['stage']} is not completed"
+                    state,
+                    entry["stage"],
+                    f"Producing stage {entry['stage']} is not completed",
+                    projects=[entry["project"]] if entry.get("project") else None,
                 )
                 state["updated_at"] = utcnow()
                 self._atomic_write_unlocked(state)
@@ -1218,6 +1454,7 @@ class FlowcellStateStore:
         *,
         notification: dict | None = None,
         snapshots: dict | None = None,
+        project_boundaries: bool = False,
     ) -> dict:
         """Atomically record finalization and its optional delivery intent."""
 
@@ -1255,11 +1492,55 @@ class FlowcellStateStore:
                         }
             completion = state.setdefault("project_completion", {})
             for project in selected if selected is not None else projects:
-                completion[project] = _project_completion(state, project, now)
+                if (
+                    state.get("project_progress", {})
+                    .get(project, {})
+                    .get("finalization", {})
+                    .get("status")
+                    != "completed"
+                ):
+                    completion[project] = _project_completion(state, project, now)
             if state["attempts"] and state["attempts"][-1].get("outcome") == "running":
                 state["attempts"][-1]["outcome"] = "completed"
                 state["attempts"][-1]["completed_at"] = now
             _append_delivery_notification(state, "finalization", notification)
+            if project_boundaries:
+                progress = state.get("project_progress", {})
+                delivered = {
+                    project
+                    for project, item in progress.items()
+                    if item.get("finalization", {}).get("status") == "completed"
+                }
+                delivered.update(project for project in completion if project not in progress)
+                remaining = sorted(set(state["projects"]) - delivered)
+                if remaining:
+                    analyses_complete = all(
+                        progress.get(project, {}).get("analysis", {}).get("status") == "completed"
+                        for project in remaining
+                    )
+                    boundary = "finalization" if analyses_complete else "analysis"
+                    state.update(
+                        status="queued" if analyses_complete else "failed",
+                        current_stage=boundary,
+                        completed_at=None,
+                    )
+                    state["stages"][boundary]["status"] = (
+                        "queued" if analyses_complete else "failed"
+                    )
+                    state["stages"][boundary]["completed_at"] = None
+                    state["restart_request"] = {
+                        "from": boundary,
+                        "projects": remaining,
+                        "requested_at": now,
+                        "reason": "Continue unfinished projects after committed scoped delivery",
+                        "preserve_completed_projects": True,
+                    }
+                    if not analyses_complete:
+                        state["last_error"] = {
+                            "summary": "Unfinished project analysis requires an explicit rerun: "
+                            + ", ".join(remaining),
+                            "report_path": None,
+                        }
             return state
 
         return self.mutate(run_id, update)

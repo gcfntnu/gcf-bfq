@@ -254,6 +254,10 @@ def _run_summary(payload):
     from bcl2fastq_pipeline import afterFastq  # noqa: PLC0415
 
     lines = [f"Projects: {', '.join(payload['projects']) or '(none)'}"]
+    if payload.get("generation"):
+        lines.append(
+            f"Analysis generation: {payload['generation']}; processing attempt: {payload['attempt']}"
+        )
     contexts = payload.get("project_contexts", {})
     if contexts:
         for project, context in sorted(contexts.items()):
@@ -359,7 +363,8 @@ def _processed_message(cfg, message, payload):
         )
     if payload.get("processing_timing") is not None:
         html_sections.append(
-            escape(processing_times.format_summary(payload["processing_timing"])).replace(
+            ("Flowcell processing timings so far:<br>" if payload.get("generation") else "")
+            + escape(processing_times.format_summary(payload["processing_timing"])).replace(
                 "\n", "<br>\n"
             )
         )
@@ -441,6 +446,9 @@ def build_message(cfg, entry, *, apply_size_limit=True):
     _host, sender_header, sender, recipient_header, recipients = _settings(cfg, kind)
     limit = _message_limit(cfg) if kind == "processed" else None
     payload = entry["payload"]
+    for path, checksum in payload.get("artifact_hashes", {}).items():
+        if hashlib.sha256(Path(path).read_bytes()).hexdigest() != checksum:
+            raise ValueError(f"Notification artifact changed since analysis completion: {path}")
     projects = ", ".join(payload["projects"])
     international = any(not address.isascii() for address in (sender, *recipients))
     message = EmailMessage(policy=SMTP.clone(utf8=international))
@@ -476,7 +484,12 @@ def build_message(cfg, entry, *, apply_size_limit=True):
         message.set_content(
             f"{projects} has been finalized and prepared for delivery.\n\n"
             f"Flow cell: {payload['run_id']}\n"
-            f"{timing}"
+            + (
+                f"Analysis generation: {payload['generation']}\n"
+                if payload.get("generation")
+                else ""
+            )
+            + f"{timing}"
             f"{payload['message']}"
         )
     if kind == "processed" and apply_size_limit:

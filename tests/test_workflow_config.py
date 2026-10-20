@@ -11,6 +11,7 @@ import yaml
 from bcl2fastq_pipeline.state import FlowcellStateStore, new_state
 from configmaker.configmaker import add_workflow
 from configmaker.libprep import LibprepConfigError
+from openpyxl import load_workbook
 from test_state_integration import (
     RUN_ID,
     completed_state,
@@ -94,8 +95,17 @@ def test_daemon_and_configmaker_share_snapshot_through_source_edits(  # noqa: PL
     store = FlowcellStateStore(cfg.static.paths.manager_dir)
     store.create(new_state(RUN_ID, source, output, origin="new", start_stage=stage, cfg=cfg))
     projects = ["GCF-2026-001", "GCF-2026-002"]
-    for project in projects:
-        write_fastq(output / project / "sample_R1.fastq.gz")
+    # Both projects need real validated metadata in the frozen execution plan.
+    for directory in (source, output):
+        sheet = directory / "SampleSheet.csv"
+        sheet.write_text(sheet.read_text() + "sample-2,GCF-2026-002,TGCA\n")
+        form = directory / "Sample-Submission-Form.xlsx"
+        workbook = load_workbook(form)
+        workbook["Sample-Submission-Form"].append(["sample-2", "group"])
+        workbook["INFO (GCF-lab only)"].append(["sample-2"])
+        workbook.save(form)
+    for project, sample in zip(projects, ("sample", "sample-2"), strict=True):
+        write_fastq(output / project / f"{sample}_R1.fastq.gz")
     write_stats(output, geometry)
     real_prepare = workflow_config.prepare_execution
 
