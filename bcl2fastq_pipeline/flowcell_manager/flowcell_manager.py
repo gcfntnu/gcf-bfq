@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import argparse
+import copy
 import datetime
 import json
 import os
@@ -35,6 +36,7 @@ from bcl2fastq_pipeline import (
     notification_delivery,
     preflight,
     project_corrections,
+    project_holds,
     project_scheduling,
     sequencing_delivery,
 )
@@ -874,6 +876,7 @@ def status_flowcell(**args):
     if store.exists(run_id):
         state = store.recover_interrupted(run_id)
         print(f"{run_id}: {state['status']} ({state['current_stage']})")
+        project_holds.print_status(state)
         for project, progress in sorted(state.get("project_progress", {}).items()):
             analysis = progress.get("analysis", {}).get("status", "pending")
             delivery = progress.get("finalization", {}).get("status", "pending")
@@ -1017,6 +1020,37 @@ def _search_query(value):
     return value
 
 
+def control_projects(**args):
+    """Scheduling updates deliberately do not acquire the worker's execution lease."""
+    cfg = get_cfg()
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    run_id = _run_id(args["flowcell"])
+    state = store.read(run_id)
+    names = state["projects"]
+    if not names:
+        _selection, result = preflight.require_valid_inputs(
+            state["source_path"], state["output_path"]
+        )
+        names = sorted(result.summary["project_schedule"]["projects"])
+
+    def update(current):
+        if not current["projects"]:
+            current["projects"] = names
+        return project_holds.request(
+            current, args["projects"], hold=args["command"] == "hold", reason=args["reason"]
+        )
+
+    preview = update(copy.deepcopy(state))
+    print(f"{args['command'].capitalize()} projects: {', '.join(sorted(set(args['projects'])))}")
+    project_holds.print_status(preview)
+    if args.get("dry_run"):
+        print("Preview only; no scheduling state changed.")
+        return state
+    saved = store.mutate(run_id, update)
+    print("Scheduling request recorded; claimed work finishes before the next stage boundary.")
+    return saved
+
+
 def main():
     _remove_executable_directory_from_import_path()
     parser = argparse.ArgumentParser(
@@ -1149,6 +1183,22 @@ def main():
     parser_status = subparsers.add_parser("status", help="Show concise status for one run.")
     parser_status.set_defaults(func=status_flowcell)
     parser_status.add_argument("flowcell")
+
+    for command in ("hold", "release"):
+        control = subparsers.add_parser(
+            command, help=f"{command.capitalize()} future project stages."
+        )
+        control.set_defaults(func=control_projects)
+        control.add_argument("flowcell", help="State-backed run ID or flowcell path.")
+        control.add_argument(
+            "--project", dest="projects", action="append", required=True, metavar="GCF-ID"
+        )
+        control.add_argument(
+            "--reason", required=True, help="Reason retained in scheduling history."
+        )
+        control.add_argument(
+            "--dry-run", action="store_true", help="Preview eligibility without changing state."
+        )
 
     parser_validate = subparsers.add_parser(
         "validate", help="Check the effective input pair read-only, before any processing."

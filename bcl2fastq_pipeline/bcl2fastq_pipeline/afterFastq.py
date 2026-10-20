@@ -458,6 +458,8 @@ def get_project_dirs(cfg):
     dirs = to_dirs(fastq_paths)
     if getattr(getattr(cfg, "run", None), "selected_projects", None) is not None:
         dirs = {d for d in dirs if get_project_names([d]) & cfg.run.selected_projects}
+    if getattr(getattr(cfg, "run", None), "batch_projects", None) is not None:
+        dirs = {d for d in dirs if get_project_names([d]) & cfg.run.batch_projects}
     return dirs
 
 
@@ -525,9 +527,15 @@ def full_align(cfg, *, resume=None):
         cfg.run.project_lifecycle.plan_analysis(project_names)
     run_date = str(cfg.run.run_id).split("_")[0]
     workdirs = {}
-    if resume and set(project_names) != set(resume["projects"]):
+    if resume and (
+        not set(project_names).issubset(resume["projects"])
+        or (cfg.run.batch_projects is None and set(project_names) != set(resume["projects"]))
+    ):
         raise RuntimeError("Resume projects differ from available FASTQs; inspect and requeue")
     for p in project_scheduling.project_order(cfg, project_names):
+        lifecycle = getattr(cfg.run, "project_lifecycle", None)
+        if lifecycle is not None and not lifecycle.claim(p, "analysis"):
+            continue
         project_scheduling.record_start(cfg, "analysis", p)
         if not resume and cfg.run.project_configs:
             selection = select_workflow(cfg, p)

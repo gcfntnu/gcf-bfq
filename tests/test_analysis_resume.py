@@ -1,8 +1,10 @@
 """Resume safety and orchestration without scientific tools or operational data."""
 
 import json
+import logging
 import shutil
 
+from pathlib import Path
 from unittest.mock import Mock
 
 import flowcell_manager.flowcell_manager as manager
@@ -14,7 +16,15 @@ from bcl2fastq_pipeline.state import ExecutionLeaseError, FlowcellStateStore, St
 from openpyxl import load_workbook
 from support.fixtures import RUN_ID, completed_state, configured_bfq, write_fastq, write_inputs
 
-from bcl2fastq_pipeline import afterFastq, analysis_resume, analysis_snapshots, preflight
+from bcl2fastq_pipeline import (
+    afterFastq,
+    analysis_resume,
+    analysis_snapshots,
+    cli,
+    misc,
+    notifications,
+    preflight,
+)
 
 PROJECT = "GCF-2026-001"
 
@@ -158,6 +168,39 @@ def test_active_lease_not_bypassed_by_force(prepared):
     cfg, store, output, work = prepared
     with store.execution_lease(RUN_ID), pytest.raises((ExecutionLeaseError, StateConflictError)):
         queue()
+
+
+def test_held_resume_waits_and_release_keeps_repaired_workdir(prepared, monkeypatch):
+    cfg, store, output, work = prepared
+    manager.control_projects(command="hold", flowcell=RUN_ID, projects=[PROJECT], reason="Review")
+    queue()
+    monkeypatch.setattr(misc, "enoughFreeSpace", lambda: True)
+    monkeypatch.setattr(misc, "send_error_report", Mock())
+    monkeypatch.setattr(afterFastq, "multiqc_stats", lambda _cfg: None)
+    monkeypatch.setattr(notifications, "send_notification", Mock())
+    scientific = []
+
+    def external(command, cwd, log_path):
+        if command[0] == "7za":
+            Path(command[2]).write_bytes(b"synthetic archive")
+        else:
+            scientific.append(command)
+
+    monkeypatch.setattr(afterFastq, "run_logged_command", external)
+    before = bytes_and_times(work)
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("held-resume"), prepare=True)
+    waiting = store.read(RUN_ID)
+    assert waiting["status"] == "waiting", waiting.get("last_error")
+    assert scientific == []
+    assert bytes_and_times(work) == before
+    cfg.run.begin(waiting["source_path"], cfg.static.paths)
+    manager.control_projects(command="release", flowcell=RUN_ID, projects=[PROJECT], reason="Ready")
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("held-resume"), prepare=True)
+    completed = store.read(RUN_ID)
+    assert completed["status"] == "completed", completed.get("last_error")
+    assert completed["attempt"] == waiting["attempt"]
+    assert len(scientific) == 1 and "--rerun-incomplete" in scientific[0]
+    assert bytes_and_times(work) == before
 
 
 @pytest.mark.parametrize("gpu", ["0", "1"])

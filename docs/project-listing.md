@@ -4,12 +4,13 @@
 `search` commands project recorded state into **one project on one flowcell**
 per row. This intentionally replaces the former comma-joined flowcell table.
 `list-processed` still shows the compatibility inventory unchanged. This projection
-is the foundation for #161; it does not introduce holds or change scheduling.
+also displays [persistent hold/release eligibility](project-holds.md) and waiting reasons.
 
 ## Columns and identity
 
 | Column | Meaning |
 | --- | --- |
+| `eligibility`, `waiting_reason` | Released, held or a hold requested during claimed work; reason for waiting. Processing failures and completed deliveries keep their own outcomes. |
 | `project`, `run_id` | Row identity; run IDs normalize historical path spellings. Unknown project identities use `<unidentified>`. |
 | `status`, `stage` | Current project outcome and active/next boundary, using the rules below. Filters use these columns. |
 | `analysis`, `delivery` | Separate current analysis and finalization outcomes. Delivery describes committed processing, independently of notification acceptance. |

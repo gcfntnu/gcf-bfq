@@ -18,6 +18,8 @@ COLUMNS = [
     "last_delivery",
     "priority",
     "priority_source",
+    "eligibility",
+    "waiting_reason",
     "parent_status",
     "parent_stage",
     "origin",
@@ -229,11 +231,35 @@ def project_rows(state):
     completion = state.get("project_completion", {})
     names = set(state.get("projects", [])) | progress.keys() | completion.keys()
     names.update(_attempt_plan(state).get("projects", {}))
+    names.update(state.get("project_controls", {}))
     rows = []
     for project in sorted(names) or [UNIDENTIFIED]:
         current = progress.get(project, {})
         prior = completion.get(project, {})
         status, stage, analysis, delivery = _progress_values(state, project, current, prior)
+        control = state.get("project_controls", {}).get(project, {})
+        eligibility = "released"
+        waiting_reason = ""
+        if control.get("held"):
+            eligibility = "held" if control.get("applied") else "hold_requested"
+            waiting_reason = control.get("reason", "")
+            if stage != "demultiplexing" and status not in {
+                "running",
+                "failed",
+                "interrupted",
+                "completed",
+                "archived",
+            }:
+                status = "held"
+                if not current.get("analysis"):
+                    analysis = "pending"
+                    stage = "analysis"
+        elif state.get("project_controls") and status in {"pending", "waiting", "queued"}:
+            status = "queued"
+            if project not in state.get("project_batch", {}).get("projects", []):
+                waiting_reason = "Waiting for the next released batch"
+            else:
+                waiting_reason = "Waiting for earlier eligible work"
         priority = _priority(state, project, current, prior)
         last_delivery, last_generation = _last_delivery(state, project, current, prior)
         generation = current.get("analysis", {}).get("generation")
@@ -250,6 +276,8 @@ def project_rows(state):
                 "last_delivery": last_delivery,
                 "priority": priority.get("priority", UNAVAILABLE),
                 "priority_source": priority.get("priority_source", UNAVAILABLE),
+                "eligibility": eligibility,
+                "waiting_reason": waiting_reason,
                 "parent_status": state["status"],
                 "parent_stage": state["current_stage"],
                 "origin": state["origin"],
@@ -279,6 +307,8 @@ def legacy_project_row(project, run_id, flowcell_path, archived="0", timestamp="
         "last_delivery": timestamp if timestamp != "0" else UNAVAILABLE,
         "priority": UNAVAILABLE,
         "priority_source": UNAVAILABLE,
+        "eligibility": UNAVAILABLE,
+        "waiting_reason": "",
         "parent_status": status,
         "parent_stage": "legacy",
         "origin": "legacy_inventory",

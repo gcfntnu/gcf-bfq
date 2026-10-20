@@ -28,6 +28,7 @@ from bcl2fastq_pipeline import (
     preflight,
     processing_times,
     project_corrections,
+    project_holds,
     project_lifecycle,
     project_scheduling,
     sequencing_delivery,
@@ -149,29 +150,29 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
             output_entries(output, allow_missing=current["current_stage"] == "demultiplexing")
             if current["output_path"] != str(output):
                 store.write({**current, "output_path": str(output)})
-            if not project_corrections.current(current):
+            if not project_corrections.current(current) and not current.get("project_continuation"):
                 bcl2fastq_pipeline.findFlowCells.newFlowCell()
                 if not cfg.run.run_id:
                     return
         state = store.begin_attempt(run_id, cfg=cfg)
         if project_corrections.current(state):
             project_corrections.prepare_execution(store, run_id, cfg)
-        project_scheduling.restore(cfg, store, state)
+        continuation = state.get("project_continuation", False)
+        if continuation:
+            project_holds.restore_execution(cfg, state)
+        else:
+            project_scheduling.restore(cfg, store, state)
         cfg.run.project_lifecycle = project_lifecycle.ProjectLifecycle(cfg, store)
         requested_projects = (state.get("restart_request") or {}).get("projects")
         if requested_projects is not None:
             cfg.run.selected_projects = set(requested_projects)
-        first_stage = state["current_stage"]
         start_time = datetime.datetime.now()
         processing_started = time.monotonic()
 
         if not bcl2fastq_pipeline.misc.enoughFreeSpace():
             raise RuntimeError("Insufficient free space!")
 
-        stages = ("demultiplexing", "analysis", "reporting", "finalization")
-        start_index = stages.index(first_stage)
-
-        for index, stage in enumerate(stages[start_index:], start=start_index):
+        for initial, stage in _processing_stages(store, run_id):
             current = store.read(run_id)
             if current["stages"][stage]["status"] == "queued":
                 store.start_stage(run_id, stage)
@@ -180,7 +181,7 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                 resume = (current.get("restart_request") or {}).get("analysis_resume")
                 if stage in {"demultiplexing", "analysis"}:
                     result = preflight.run_preflight(cfg, store, stage)
-                    if index == start_index and not resume:
+                    if initial and not resume and not continuation:
                         preflight.freeze_execution_inputs(cfg, store)
                     project_scheduling.freeze(cfg, store, result)
                     if resume and stage == "analysis":
@@ -212,9 +213,15 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                         workflow_config.prepare_execution(cfg, "reporting", **resume_options)
                     if prepare and not cfg.run.custom:
                         raise RuntimeError("BFQ SampleSheet is missing usable [CustomOptions]")
-                if prepare and index == start_index and not (resume and stage == "analysis"):
+                if (
+                    prepare
+                    and initial
+                    and not continuation
+                    and not (resume and stage == "analysis")
+                ):
                     _prepare_workflow(cfg, store, current)
-                if index == start_index and stage != "demultiplexing":
+                    project_holds.save_config(cfg, store)
+                if initial and stage != "demultiplexing":
                     log.info("Checking FASTQ manifests before %s: %s", stage, run_id)
                     bcl2fastq_pipeline.afterFastq.md5sum_worker(cfg, store=store)
                 if stage == "demultiplexing":
@@ -245,6 +252,11 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                         {"tool": tool, "version": version},
                     )
                 elif stage == "analysis":
+                    batch = project_holds.admit(store, run_id)
+                    cfg.run.batch_projects = set(batch["project_batch"]["projects"])
+                    if not cfg.run.batch_projects:
+                        project_holds.advance(store, run_id)
+                        continue
                     # Conversion, raw QC statistics and project checksums are
                     # durable before unlinking. Fail/retry at this boundary,
                     # preserving completed demultiplexing and early QC/mail.
@@ -310,6 +322,12 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                         ),
                     )
                 elif stage == "finalization":
+                    if current.get("project_controls"):
+                        batch = project_holds.admit(store, run_id)
+                        cfg.run.batch_projects = set(batch["project_batch"]["projects"])
+                        if not cfg.run.batch_projects:
+                            project_holds.advance(store, run_id)
+                            continue
                     log.info("Starting finalization: %s", run_id)
                     bcl2fastq_pipeline.afterFastq.finalize(store=store)
                     if cfg.run.project_lifecycle.delivery_mode:
@@ -382,12 +400,15 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
             ):
                 notification_delivery.deliver_pending(cfg, store, run_id)
 
-            # complete_run finalizes the final stage itself.
-            if index == len(stages) - 1:
-                break
-
         log.info("bfq finished processing for %s", cfg.output_path)
         cfg.run.reset()
+
+
+def _processing_stages(store, run_id):
+    initial = True
+    while (state := store.read(run_id))["status"] == "running":
+        yield initial, state["current_stage"]
+        initial = False
 
 
 def candidate_flowcells(cfg, store):
