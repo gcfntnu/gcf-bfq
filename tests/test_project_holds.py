@@ -380,6 +380,31 @@ def test_downstream_retry_after_last_commit_failure_finishes_without_rework(exec
     assert events == []
 
 
+def test_scoped_success_does_not_queue_a_held_siblings_failed_archive(execution, monkeypatch):
+    cfg, store, events = execution
+    external = afterFastq.run_logged_command
+
+    def fail_archive(command, cwd, log_path):
+        if command[0] == "7za" and Path(command[2]).name.startswith(A):
+            raise RuntimeError("Synthetic sibling archive failure")
+        return external(command, cwd=cwd, log_path=log_path)
+
+    monkeypatch.setattr(afterFastq, "run_logged_command", fail_archive)
+    first = run(cfg, store)
+    assert first["status"] == "failed"
+    control("hold", [A])
+    restart_context(cfg, first)
+    manager.rerun_flowcell(flowcell=RUN, from_stage="analysis", projects=[B], force=True)
+    monkeypatch.setattr(afterFastq, "run_logged_command", external)
+    events.clear()
+    state = run(cfg, store)
+    assert state["status"] == "failed"
+    assert state["project_progress"][A]["finalization"]["status"] == "failed"
+    assert state["project_progress"][B]["finalization"]["status"] == "completed"
+    assert "explicit recovery" in state["last_error"]["summary"]
+    assert events == [("analysis", B), ("archiving", B)]
+
+
 def test_controls_reject_unknown_projects_and_malformed_state_without_mutation(execution):
     _cfg, store, _events = execution
     before = store.read(RUN)

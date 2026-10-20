@@ -150,11 +150,21 @@ def continue_pending(state, remaining):
     )
     # Failed work still needs an explicit recovery, even when its siblings deliver.
     progress = state.get("project_progress", {})
-    if any(
-        progress.get(p, {}).get(key, {}).get("status") == "failed"
-        for p in group
+    failed = [
+        (p, key)
+        for p in remaining
         for key in ("analysis", "finalization")
-    ):
+        if progress.get(p, {}).get(key, {}).get("status") == "failed"
+    ]
+    if failed:
+        boundary = "analysis" if any(key == "analysis" for _, key in failed) else "finalization"
+        state.update(status="failed", current_stage=boundary, completed_at=None)
+        state["stages"][boundary].update(status="failed", completed_at=None)
+        state["last_error"] = {
+            "summary": "Unfinished projects require explicit recovery: "
+            + ", ".join(sorted({p for p, _ in failed})),
+            "report_path": None,
+        }
         return
     if context:
         state["continuation_context"] = copy.deepcopy(context)
