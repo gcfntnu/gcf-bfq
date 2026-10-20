@@ -181,6 +181,14 @@ def test_release_during_archiving_joins_subsequent_analysis_batch(execution, mon
             control("release", [B])
             assert store.execution_active(RUN)
             assert store.read(RUN)["project_batch"]["projects"] == [A]
+            row = next(row for row in project_rows(store.read(RUN)) if row["project"] == B)
+            assert (row["status"], row["stage"], row["analysis"], row["eligibility"]) == (
+                "queued",
+                "analysis",
+                "pending",
+                "released",
+            )
+            assert manager.combined_list(query=B, stage="analysis")["project"].tolist() == [B]
         return external(command, cwd=cwd, log_path=log_path)
 
     monkeypatch.setattr(afterFastq, "run_logged_command", release_in_archive)

@@ -167,6 +167,8 @@ def _pending_analysis(state, project, progress):
 
 
 def _progress_values(state, project, progress, completion):  # noqa: PLR0911
+    from bcl2fastq_pipeline import project_holds  # noqa: PLC0415
+
     analysis_detail = progress.get("analysis", {})
     delivery_detail = progress.get("finalization", {})
     analysis = _outcome(state, analysis_detail, "analysis")
@@ -189,7 +191,15 @@ def _progress_values(state, project, progress, completion):  # noqa: PLR0911
     if _completion_is_current(state, project, progress, completion):
         status = "archived" if state.get("archive", {}).get("status") == "archived" else "completed"
         return status, "finalization", "completed", "completed"
-    if not analysis_detail and _completed_stage(state, project, "analysis"):
+    if (
+        not analysis_detail
+        and _completed_stage(state, project, "analysis")
+        and (
+            not state.get("project_controls")
+            or not _selected(state, project)
+            or project_holds.analysis_complete(state, project)
+        )
+    ):
         analysis = "completed"
     if not progress and _completed_stage(state, project, "finalization"):
         status = "archived" if state.get("archive", {}).get("status") == "archived" else "completed"
