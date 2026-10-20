@@ -77,6 +77,7 @@ def search_inventory(tmp_path):
             for detail in state["stages"].values():
                 detail.update(status="completed", completed_at=DELIVERED_AT)
         if status == "archived":
+            state["archive"]["status"] = "archived"
             state["archive"]["archived_at"] = "2099-10-02T00:00:00+00:00"
         store.create(state)
     rows = [
@@ -222,6 +223,14 @@ def test_project_filters_do_not_resurrect_historical_inventory(search_inventory,
 
 
 def test_old_failed_state_preserves_unknown_project_outcomes(search_inventory):
+    _config, store = search_inventory
+
+    def historical_state(state):
+        state.pop("project_progress")
+        state.pop("project_completion")
+        return state
+
+    store.mutate(FAILED, historical_state)
     rows = manager.combined_list(query=FAILED).set_index("project")
     for project in (LITERAL_PROJECT, "Other"):
         assert rows.loc[project, "status"] == "unavailable"
@@ -230,7 +239,7 @@ def test_old_failed_state_preserves_unknown_project_outcomes(search_inventory):
         assert rows.loc[project, "priority"] == "unavailable"
         assert rows.loc[project, "priority_source"] == "unavailable"
     failed = manager.combined_list(query=FAILED, status="failed")
-    assert failed["project"].tolist() == [PROJECT]
+    assert failed.empty
 
 
 def test_search_does_not_change_records_or_require_output_directories(

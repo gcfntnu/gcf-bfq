@@ -1,5 +1,6 @@
 import logging
 
+from pathlib import Path
 from unittest.mock import Mock
 
 import flowcell_manager.flowcell_manager as manager
@@ -296,7 +297,7 @@ def test_project_inventory_tracks_analysis_failure_and_unstarted_frozen_projects
     before = store.state_path(RUN).read_bytes()
 
     # Today's editable metadata cannot change the frozen attempt's displayed plan.
-    for sheet in cfg.output_path.glob("SampleSheet*.csv"):
+    for sheet in Path(state["output_path"]).glob("SampleSheet*.csv"):
         sheet.write_text("unparseable edited inputs\nPriority,999\n")
 
     def forbidden_selection(*args, **kwargs):
