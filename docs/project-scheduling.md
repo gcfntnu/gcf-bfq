@@ -39,6 +39,10 @@ fm status 990101_SYNTHETIC_0001_TEST
 effective inputs. An analysis/demultiplexing rerun previews its proposed new
 plan; reporting/finalization retries preview the producing analysis's saved plan.
 Status identifies the recorded attempt and actual project starts in each stage.
+`fm list` and `fm search` expose one project per flowcell row with its own
+analysis/delivery outcomes and recorded priority/source; see the
+[project listing contract](project-listing.md). That projection is the foundation
+for the separate hold/release controls in #161.
 An attempt's recorded start means processing began, rather than that the project
 completed. Existing stage and flowcell outcomes remain authoritative.
 

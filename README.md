@@ -873,43 +873,52 @@ flowcell-manager archive RUN_ID
 flowcell-manager list-processed
 ```
 
-### Find flowcells by project or run ID
+### Find projects on flowcells
 
-Use native search to find structured records instead of filtering the printed
-list with `grep`:
+`fm list` and `fm search` show one project on one flowcell per row. A project
+occurring on several flowcells has several rows. Search uses case-insensitive
+literal substrings of project names and run IDs; characters such as `.` and `[`
+have no special meaning. A project match returns only matching projects; a run-ID
+match returns that run's project rows, subject to the filters. Quote queries
+containing shell metacharacters or spaces.
 
 ```console
-fm search GCF-2026-043
-fm search 260925_NB501038_0281_AHL2T7AFXC
-fm search HL2T7AFXC
-fm search GCF-2026 --status failed
-fm search GCF-2026 --stage analysis
-fm status 260925_NB501038_0281_AHL2T7AFXC
+fm list
+fm search GCF-2099-001
+fm search 990101_SYNTHETIC_0001_TEST
+fm search SYNTHETIC
+fm search GCF-2099 --status failed
+fm search GCF-2099 --stage analysis
 ```
 
-Search matches case-insensitive literal substrings of project names and run IDs;
-characters such as `.` and `[` have no special meaning. Quote queries containing
-shell metacharacters or spaces. Each matching run appears once, with all its
-associated projects, in the same columns and run-ID order as `list`. Completed
-and archived runs are included even when their output directories no longer exist.
+The table separates current project `status`, `stage`, `analysis` and `delivery`
+from explicitly labelled `parent_status` and `parent_stage`. A completed project
+remains completed when another project fails. `last_delivery` and its generation
+identify a recorded earlier success, separately from the current analysis
+generation: a correction can be pending or failed while its prior successful
+delivery remains recorded. These are state records, not a fresh check that
+archives still exist. Priority and its source come from frozen scheduling records,
+never a fresh read of an editable SampleSheet. Missing historical detail displays
+`unavailable`; unidentified queued/discovered projects display `<unidentified>`.
+See [project listing](docs/project-listing.md) for all columns and exact mappings.
 
-JSON state is authoritative over compatibility inventory for the same run ID,
-including its projects, status and stage. Filtering a state-backed run out cannot
-bring back its historical inventory row. Legacy-only entries for the same run ID
-are grouped across path spellings; their projects are combined and the first
-lexically sorted recorded path is displayed.
+Rows sort by run ID, then project. Completed and archived history stays visible
+when outputs are missing. JSON state is authoritative for the entire normalized
+run ID **before filtering**: excluded rows cannot reappear through stale inventory.
+Inventory-only duplicates collapse by project/run across path spellings.
 
-`--status` and `--stage` work exactly as for `list`: exact values filter the
-current status/stage, and `legacy` selects inventory-only runs. Legacy runs have
-stage `legacy` and status `completed` or `archived`. Both filters may be combined;
-unknown filter values produce no matches, as before.
+`--status` and `--stage` filter the **project** values in both commands. Shared
+preflight/conversion uses stage `demultiplexing`. The `legacy` status selector
+selects inventory-only rows; their stage is `legacy`, with status `completed` or
+`archived`. Unknown filter values produce no matches.
 
 A successful search exits **0**, including an empty result, which prints
 `No matching flowcells.` Empty or whitespace-only queries and other invalid
-arguments exit **2**; state errors exit **1**. `flowcell-manager search` behaves
-identically. `list` and `list-processed` remain available.
+arguments exit **2**; state errors exit **1**. `flowcell-manager` and `fm` use the
+same entry point. `list-processed` retains the compatibility inventory format.
+Listing/search do not recover state, refresh inputs, queue work or send mail.
 
-After rebuilding the image, follow the short
+After rebuilding the image, follow the
 [server smoke checks](docs/flowcell-search-integration-tests.md).
 
 ### Changes to a run
