@@ -223,9 +223,9 @@ def new_state(  # noqa: PLR0913
 def validate_state(state: dict) -> None:
     from bcl2fastq_pipeline import project_holds  # noqa: PLC0415
 
-    project_holds.validate(state)
     if not isinstance(state, dict):
         raise StateValidationError("State must be a JSON object")
+    project_holds.validate(state)
     required = {
         "schema_version",
         "run_id",

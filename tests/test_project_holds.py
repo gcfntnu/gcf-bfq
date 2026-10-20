@@ -342,6 +342,44 @@ def test_archive_failure_then_held_recovery_retains_first_delivery(execution, mo
     assert events == [("archiving", A)]
 
 
+def test_downstream_retry_after_last_commit_failure_finishes_without_rework(execution, monkeypatch):
+    cfg, store, events = execution
+    control("release", [A, B])
+    write = store._atomic_write_unlocked
+    raised = False
+
+    def fail_after_commit(state):
+        nonlocal raised
+        write(state)
+        if (
+            not raised
+            and state["status"] == "running"
+            and all(
+                state.get("project_progress", {}).get(p, {}).get("finalization", {}).get("status")
+                == "completed"
+                for p in (A, B)
+            )
+        ):
+            raised = True
+            raise OSError("Synthetic durability failure after the last project commit")
+
+    monkeypatch.setattr(store, "_atomic_write_unlocked", fail_after_commit)
+    first = run(cfg, store)
+    assert first["status"] == "failed"
+    monkeypatch.setattr(store, "_atomic_write_unlocked", write)
+    completion = copy.deepcopy(first["project_completion"])
+    control("hold", [A, B])
+    control("release", [A, B])
+    assert store.read(RUN)["status"] == "failed"
+    restart_context(cfg, first)
+    manager.rerun_flowcell(flowcell=RUN, from_stage="finalization", force=True)
+    events.clear()
+    completed = run(cfg, store)
+    assert completed["status"] == "completed", completed.get("last_error")
+    assert completed["project_completion"] == completion
+    assert events == []
+
+
 def test_controls_reject_unknown_projects_and_malformed_state_without_mutation(execution):
     _cfg, store, _events = execution
     before = store.read(RUN)

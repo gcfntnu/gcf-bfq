@@ -326,8 +326,13 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                         batch = project_holds.admit(store, run_id)
                         cfg.run.batch_projects = set(batch["project_batch"]["projects"])
                         if not cfg.run.batch_projects:
-                            project_holds.advance(store, run_id)
-                            continue
+                            if project_holds.unfinished(batch):
+                                project_holds.advance(store, run_id)
+                                continue
+                            # A prior project commit can survive a failed state
+                            # durability check. Reconcile inventory/completion
+                            # without starting another archive or waiting loop.
+                            cfg.run.batch_projects = set(requested_projects or batch["projects"])
                     log.info("Starting finalization: %s", run_id)
                     bcl2fastq_pipeline.afterFastq.finalize(store=store)
                     if cfg.run.project_lifecycle.delivery_mode:

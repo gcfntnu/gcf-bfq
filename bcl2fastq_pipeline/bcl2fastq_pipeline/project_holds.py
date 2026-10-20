@@ -359,12 +359,26 @@ def restore_execution(cfg, state):
 def print_status(state):
     from flowcell_manager.project_listing import project_rows  # noqa: PLC0415
 
+    from bcl2fastq_pipeline import project_scheduling  # noqa: PLC0415
+
     if state.get("waiting_reason"):
         print("  Waiting: " + state["waiting_reason"])
     if batch := state.get("project_batch"):
         print("  Current batch: " + ", ".join(batch["projects"]))
+    attempts = state.get("attempts", [])
+    plan = attempts[-1].get("project_schedule") if attempts else None
+    pending = eligible(state)
+    order = (
+        project_scheduling.ordered(plan, pending)
+        if plan and pending.issubset(plan["projects"])
+        else sorted(pending)
+    )
+    analyses = [p for p in order if not analysis_complete(state, p)]
+    deliveries = [p for p in order if analysis_complete(state, p)]
+    print("  Eligible analysis order: " + (" -> ".join(analyses) or "(none)"))
+    print("  Eligible delivery order: " + (" -> ".join(deliveries) or "(none)"))
     for row in project_rows(state):
         print(
-            f"  {row['project']}: {row['eligibility']}; next {row['stage']}; "
+            f"  {row['project']}: {row['status']}; {row['eligibility']}; next {row['stage']}; "
             f"priority {row['priority']}; {row['waiting_reason']}"
         )
