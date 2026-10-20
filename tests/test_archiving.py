@@ -13,7 +13,7 @@ import pytest
 
 from bcl2fastq_pipeline.state import apply_cleanup, cleanup_plan
 
-from bcl2fastq_pipeline import afterFastq, misc, undetermined_fastqs
+from bcl2fastq_pipeline import afterFastq, demultiplexing, misc, undetermined_fastqs
 
 PROJECT = "GCF-2026-001"
 RUN_ID = "260923_A01990_0001_AFLOWCELL"
@@ -217,6 +217,41 @@ def test_archive_worker_filters_nested_mkfastq_inputs_and_preserves_sample_reads
     assert "Undetermined_S0" not in qc_listing
     assert "analysis.txt" in qc_listing
     assert all(path.read_bytes() == b"unassigned" for path in discarded)
+
+
+@pytest.mark.skipif(REAL_ARCHIVER is None, reason="optional real 7-Zip contract check")
+def test_project_provenance_keeps_its_path_without_colliding_with_fastqs(archive_run, monkeypatch):
+    run = archive_run
+    own = run.cfg.output_path / "provenance" / "project-demultiplexing" / PROJECT
+    own.mkdir(parents=True)
+    (own / "plan.json").write_text('{"project": "synthetic"}')
+    other = own.parent / "GCF-2099-999"
+    other.mkdir()
+    (other / "plan.json").write_text("unselected provenance")
+    context = SimpleNamespace(
+        sensitive=False,
+        libprep="Custom",
+        sample_sheet=run.inputs["samplesheet"],
+        submission_form=run.inputs["submission_form"],
+    )
+    monkeypatch.setattr(afterFastq.workflow_config, "delivery_project_config", lambda *_: context)
+    monkeypatch.setattr(demultiplexing, "delivery_provenance", lambda *_: own)
+    original = afterFastq._run_archive_command
+    monkeypatch.setattr(
+        afterFastq,
+        "_run_archive_command",
+        lambda cmd, *args: original([REAL_ARCHIVER, *cmd[1:]], *args),
+    )
+
+    afterFastq.archive_worker(run.cfg)
+
+    listing = subprocess.check_output(
+        [REAL_ARCHIVER, "l", "-slt", str(run.fastq_archive)], text=True
+    )
+    assert f"Path = {PROJECT}/sample_R1.fastq.gz" in listing
+    assert f"Path = provenance/project-demultiplexing/{PROJECT}/plan.json" in listing
+    assert other.name not in listing
+    subprocess.run([REAL_ARCHIVER, "t", str(run.fastq_archive)], check=True, capture_output=True)
 
 
 @pytest.mark.parametrize(

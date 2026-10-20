@@ -14,6 +14,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -430,6 +431,91 @@ def validate_restart_boundary(state: dict, start_stage: str) -> None:
             f"Cannot restart from {start_stage}; upstream stages are not complete: "
             + ", ".join(invalid)
         )
+    request = state.get("restart_request") or {}
+    pending = request.get("from")
+    if state["status"] == "preparing" and pending in STAGES and start_index > STAGES.index(pending):
+        raise StateConflictError(
+            f"Unfinished restart preparation from {pending}; retry that boundary "
+            "before requesting a downstream-only restart"
+        )
+    correction = next(
+        (
+            item
+            for item in state.get("project_corrections", [])
+            if item["id"] == request.get("project_correction_id")
+        ),
+        None,
+    )
+    if (
+        start_stage in {"reporting", "finalization"}
+        and correction is not None
+        and correction["from_stage"] in {"demultiplexing", "analysis"}
+    ):
+        committed = correction["status"] == "committed" or (
+            state["status"] == "completed" and state["attempt"] == correction["attempt"]
+        )
+        if not committed:
+            raise StateConflictError(
+                "An unsuccessful project correction has unpublished results. "
+                f"Restart from {correction['from_stage']} with the project selector, "
+                "or preview a whole-run restart from that boundary; downstream-only "
+                "retries cannot mix these results with the retained delivery."
+            )
+
+
+def project_analysis_completed_at(state, project):
+    """Keep a retained project's analysis time across other projects' corrections."""
+    analysis = state["stages"]["analysis"]
+    prior = (
+        state.get("project_completion", {}).get(project, {}).get("stages", {}).get("analysis", {})
+    )
+    request = state.get("restart_request") or {}
+    selected = request.get("projects")
+    retained = request.get("from") in {"reporting", "finalization"} or (
+        selected is not None and project not in selected
+    )
+    original = prior.get("metadata", {}).get("workdirs", {}).get(project)
+    current = analysis["metadata"].get("workdirs", {}).get(project)
+    if retained and prior.get("completed_at") and current == original:
+        return prior["completed_at"]
+    return analysis["completed_at"]
+
+
+def _project_completion(state, project, completed_at):
+    analysis = state["stages"]["analysis"]["metadata"]
+    workflows = analysis.get("project_workflows") or {}
+    workflow = workflows.get(project, analysis.get("workflow"))
+    if isinstance(workflow, dict):
+        workflow = workflow.get("workflow")
+    stages = copy.deepcopy(state["stages"])
+    stages["analysis"]["completed_at"] = project_analysis_completed_at(state, project)
+    for detail in stages.values():
+        metadata = detail.get("metadata", {})
+        for key in ("workdirs", "project_workflows", "analysis_snapshots"):
+            if key in metadata:
+                metadata[key] = (
+                    {project: metadata[key][project]} if project in metadata[key] else {}
+                )
+    return {
+        "attempt": state["attempt"],
+        "completed_at": completed_at,
+        "workflow": workflow,
+        "stages": stages,
+        "snapshot": {
+            key: copy.deepcopy(value)
+            for key, value in state.get("analysis_snapshots", {}).get(project, {}).items()
+            if key != "pending"
+        },
+    }
+
+
+def _retain_project_completion(state):
+    completion = state.setdefault("project_completion", {})
+    if state["stages"]["finalization"]["status"] == "completed":
+        for project in state["projects"]:
+            completion.setdefault(
+                project, _project_completion(state, project, state["completed_at"])
+            )
 
 
 def _effective_index_correction(state):
@@ -610,6 +696,7 @@ class FlowcellStateStore:
         hostname: str | None = None,
         output_path: Path | None = None,
         analysis_resume: dict | None = None,
+        projects: list[str] | None = None,
     ) -> dict:
         if start_stage not in STAGES:
             raise StateValidationError(f"Unsupported stage: {start_stage}")
@@ -617,6 +704,8 @@ class FlowcellStateStore:
         def update(state: dict) -> dict:
             if output_path is not None:
                 state["output_path"] = str(output_path)
+            if projects is not None:
+                _retain_project_completion(state)
             processing_times.invalidate(state, start_stage)
             _invalidate_delivery_notifications(state, start_stage, f"Restart from {start_stage}")
             if start_stage == "demultiplexing" and state.get("sequencing_qc"):
@@ -632,6 +721,8 @@ class FlowcellStateStore:
             }
             if analysis_resume is not None:
                 state["restart_request"]["analysis_resume"] = copy.deepcopy(analysis_resume)
+            if projects is not None:
+                state["restart_request"]["projects"] = sorted(set(projects))
             state["completed_at"] = None
             state["failed_at"] = None
             state["last_error"] = None
@@ -694,6 +785,8 @@ class FlowcellStateStore:
                     "attempt": state["attempt"],
                     "restart_from": stage,
                     "reason": request.get("reason"),
+                    "projects": copy.deepcopy(request.get("projects")),
+                    "project_correction_id": request.get("project_correction_id"),
                     "analysis_resume": copy.deepcopy(request.get("analysis_resume")),
                     "requester_host": request.get("hostname"),
                     "started_at": now,
@@ -760,7 +853,21 @@ class FlowcellStateStore:
             detail["status"] = "completed"
             detail["completed_at"] = utcnow()
             if metadata_:
-                detail["metadata"].update(metadata_)
+                scoped = (state.get("restart_request") or {}).get("projects")
+                if scoped is not None:
+                    for project, completion in state.get("project_completion", {}).items():
+                        if project in scoped:
+                            continue
+                        retained = completion.get("stages", {}).get(stage, {}).get("metadata", {})
+                        for key in ("workdirs", "project_workflows", "analysis_snapshots"):
+                            detail["metadata"].setdefault(key, {}).update(retained.get(key, {}))
+                    for key, value in metadata_.items():
+                        if key in {"workdirs", "project_workflows", "analysis_snapshots"}:
+                            detail["metadata"].setdefault(key, {}).update(value)
+                        else:
+                            detail["metadata"][key] = value
+                else:
+                    detail["metadata"].update(metadata_)
             if stage == "demultiplexing" and state.get("fastq_cleanup"):
                 state["fastq_cleanup"]["status"] = "regenerated"
                 state["fastq_cleanup"]["regenerated_at"] = utcnow()
@@ -932,6 +1039,15 @@ class FlowcellStateStore:
                 attempt["failed_at"] = now
                 attempt["completed_at"] = None
                 attempt["failure"] = copy.deepcopy(state["last_error"])
+            correction_id = (state.get("restart_request") or {}).get("project_correction_id")
+            for correction in state.get("project_corrections", []):
+                if correction["id"] == correction_id and correction["status"] in {
+                    "prepared",
+                    "running",
+                }:
+                    correction.update(
+                        status="failed", failed_at=now, failure=copy.deepcopy(state["last_error"])
+                    )
             return state
 
         return self.mutate(run_id, update)
@@ -1005,7 +1121,19 @@ class FlowcellStateStore:
             )
             if entry is None:
                 raise StateConflictError(f"No notification {notification_id!r} for {run_id}")
-            if entry["status"] in {"sent", "superseded"}:
+            correction = next(
+                (
+                    item
+                    for item in state.get("project_corrections", [])
+                    if item.get("attempt") == entry["attempt"]
+                ),
+                None,
+            )
+            if entry["status"] in {"sent", "superseded"} or (
+                correction is not None and correction["status"] != "committed"
+            ):
+                # A generated correction is not the delivered replacement until
+                # publication and processing completion have both committed.
                 return False
             qc = state.get("sequencing_qc", {})
             producing_complete = (
@@ -1110,7 +1238,10 @@ class FlowcellStateStore:
                 "notified": False,
                 "notified_at": None,
             }
-            state["projects"] = sorted(set(projects))
+            selected = (state.get("restart_request") or {}).get("projects")
+            state["projects"] = sorted(
+                set(state["projects"]) | set(projects) if selected is not None else set(projects)
+            )
             if snapshots is not None:
                 stage["metadata"]["analysis_snapshots"] = {
                     project: {key: value for key, value in snapshot.items() if key != "pending"}
@@ -1122,6 +1253,9 @@ class FlowcellStateStore:
                         retained[project] = {
                             key: value for key, value in snapshot.items() if key != "status"
                         }
+            completion = state.setdefault("project_completion", {})
+            for project in selected if selected is not None else projects:
+                completion[project] = _project_completion(state, project, now)
             if state["attempts"] and state["attempts"][-1].get("outcome") == "running":
                 state["attempts"][-1]["outcome"] = "completed"
                 state["attempts"][-1]["completed_at"] = now
@@ -1222,16 +1356,52 @@ def validate_restored_fastqs(output_path: Path | str) -> tuple[bool, str]:  # no
     return True, "recognized restored FASTQs"
 
 
-def cleanup_plan(output_path: Path | str, from_stage: str) -> list[Path]:
+def cleanup_plan(
+    output_path: Path | str, from_stage: str, *, projects: list[str] | None = None
+) -> list[Path]:
     """Return existing paths invalidated by a restart boundary."""
     output = Path(output_path)
     if from_stage not in STAGES:
         raise StateValidationError(f"Unsupported restart stage: {from_stage}")
     children = output_entries(output, allow_missing=from_stage == "demultiplexing")
 
+    if projects is not None:
+        # Shared conversion/reporting artifacts are retained with their attempt;
+        # only project-owned paths can be replaced by a scoped correction.
+        from bcl2fastq_pipeline.project_corrections import belongs_to_project  # noqa: PLC0415
+
+        selected = [
+            path
+            for path in children
+            if belongs_to_project(path.name, projects) and not _is_input_path(path)
+        ]
+        if from_stage == "demultiplexing":
+            return sorted(selected, key=str)
+        if from_stage == "analysis":
+            return sorted(
+                (
+                    path
+                    for path in selected
+                    if path.name not in projects and not path.match("md5sum_*_fastq.txt")
+                ),
+                key=str,
+            )
+        return sorted(
+            (
+                path
+                for path in selected
+                if path.match("*.7za")
+                or path.match("encryption.*")
+                or path.match("md5sum_*_archive.txt")
+            ),
+            key=str,
+        )
+
     targets: set[Path] = set()
     if from_stage == "demultiplexing":
-        targets.update(path for path in children if path.name not in INPUT_FILES | {PROVENANCE_DIR})
+        targets.update(
+            path for path in children if path.name != PROVENANCE_DIR and not _is_input_path(path)
+        )
     else:
         # Finalization products are always downstream of analysis/reporting.
         targets.update(
@@ -1268,6 +1438,16 @@ def cleanup_plan(output_path: Path | str, from_stage: str) -> list[Path]:
             continue
         collapsed.append(path)
     return collapsed
+
+
+def _is_input_path(path):
+    return path.name in INPUT_FILES or (
+        re.search(r"GCF-\d{4}-\d+", path.name) is not None
+        and (
+            (path.name.startswith("SampleSheet") and path.suffix == ".csv")
+            or ("Sample-Submission-Form" in path.name and path.suffix == ".xlsx")
+        )
+    )
 
 
 def apply_cleanup(paths: list[Path]) -> None:

@@ -34,6 +34,7 @@ from bcl2fastq_pipeline import (
     index_corrections,
     notification_delivery,
     preflight,
+    project_corrections,
     sequencing_delivery,
 )
 
@@ -227,6 +228,14 @@ def _requested_indexes(args, from_stage):
     return tuple(indexes)
 
 
+def _require_single_pair_index_toggle(selection):
+    if len(getattr(selection, "pairs", (selection,))) > 1:
+        raise StateConflictError(
+            "Index-toggle options require a single input pair; edit the relevant project-qualified "
+            "SampleSheet explicitly and queue a project correction. No inputs or results were changed."
+        )
+
+
 def _require_separate_source(source_path, output_path):
     source = Path(source_path).resolve()
     output = Path(output_path).resolve()
@@ -279,6 +288,14 @@ def rerun_flowcell(**args):
     dry_run = args.get("dry_run", False)
     refresh_inputs = args.get("refresh_inputs", False)
     reason = args.get("reason")
+    projects = args.get("projects")
+    if projects:
+        if resume or indexes:
+            raise StateConflictError(
+                "--project cannot be combined with --resume or index-toggle options; "
+                "edit the selected project's input pair and queue a staged correction"
+            )
+        return _rerun_projects(args, cfg, store, run_id, state, legacy, from_stage, projects)
 
     if state is None:
         if resume:
@@ -329,6 +346,7 @@ def rerun_flowcell(**args):
             state["source_path"], output_path, refresh=refresh_inputs
         )
         if indexes:
+            _require_single_pair_index_toggle(selected)
             correction = index_corrections.plan(
                 store, run_id, selected, state["source_path"], indexes, reason=reason
             )
@@ -355,11 +373,13 @@ def rerun_flowcell(**args):
                 state["source_path"], output_path, refresh=refresh_inputs
             )
         if correction is not None:
+            _require_single_pair_index_toggle(selected)
             current = index_corrections.plan(
                 store, run_id, selected, state["source_path"], indexes, reason=reason
             )
             index_corrections.verify_plan(correction, current)
         if not creating:
+            project_corrections.recover(store, run_id)
             index_corrections.recover(store, run_id)
             analysis_snapshots.recover(store, run_id)
             if state["status"] == "running":
@@ -392,6 +412,64 @@ def rerun_flowcell(**args):
         if correction is not None:
             index_corrections.apply(store, run_id, correction)
         apply_cleanup(paths)
+        return store.queue(run_id, from_stage)
+
+
+def _rerun_projects(args, cfg, store, run_id, state, legacy, from_stage, projects):  # noqa: PLR0913
+    """Queue a validated scoped transaction without removing successful products."""
+    if state is None:
+        raise StateConflictError(
+            "--project requires state-backed project completion; initialize or rerun the "
+            "legacy run as a whole first"
+        )
+    force = args.get("force", False)
+    refresh = args.get("refresh_inputs", False)
+    state = _ensure_not_active(store, run_id, state, force, recover=False)
+    validate_restart_boundary(state, from_stage)
+    output = resolve_output_path(state["output_path"], run_id, cfg)
+    state = {**state, "output_path": str(output)}
+    _require_separate_source(state["source_path"], output)
+    fastq_cleanup.require_restored(state, output, from_stage)
+    selection, _result = preflight.require_valid_inputs(
+        state["source_path"], output, refresh=refresh, projects=projects
+    )
+    print(f"Rerun: {run_id}\nRestart boundary: {from_stage}\nOutput directory: {output}")
+    paths = project_corrections.print_plan(state, selection, projects, from_stage, refresh=refresh)
+    if args.get("dry_run", False):
+        return state
+    if not _confirm(f"Queue project correction for {run_id}", force):
+        print("Skipped; inputs and results unchanged.")
+        return state
+    with store.execution_lease(run_id):
+        if store.read(run_id)["updated_at"] != state["updated_at"]:
+            raise StateConflictError("Run changed while preparing the command; inspect and retry")
+        _require_separate_source(state["source_path"], output)
+        fastq_cleanup.require_restored(state, output, from_stage)
+        if cleanup_plan(output, from_stage, projects=projects) != paths:
+            raise StateConflictError("Output paths changed after the preview; inspect and retry")
+        selection, _result = preflight.require_valid_inputs(
+            state["source_path"], output, refresh=refresh, projects=projects
+        )
+        project_corrections.recover(store, run_id)
+        index_corrections.recover(store, run_id)
+        analysis_snapshots.recover(store, run_id)
+        if state["status"] == "running":
+            store.fail_stage(
+                run_id,
+                state["current_stage"],
+                summary="Interrupted before operator correction; execution lease is inactive",
+                report_path=None,
+                interrupted=True,
+            )
+        store.set_preparing(
+            run_id,
+            from_stage,
+            reason=args.get("reason"),
+            refresh_inputs=refresh,
+            output_path=output,
+            projects=projects,
+        )
+        project_corrections.prepare(store, run_id, selection, projects, from_stage, refresh=refresh)
         return store.queue(run_id, from_stage)
 
 
@@ -446,6 +524,7 @@ def initialize_flowcell(**args):
     )
     correction = None
     if indexes:
+        _require_single_pair_index_toggle(selected)
         correction = index_corrections.plan(
             store, run_id, selected, source_path, indexes, reason=reason
         )
@@ -469,6 +548,7 @@ def initialize_flowcell(**args):
             source_path, output_path, refresh=refresh_inputs
         )
         if correction is not None:
+            _require_single_pair_index_toggle(selected)
             current = index_corrections.plan(
                 store, run_id, selected, source_path, indexes, reason=reason
             )
@@ -503,7 +583,10 @@ def validate_flowcell(**args):
         source_path = locate_source_run(run_id, cfg) or cfg.static.paths.nova_base_dir / run_id
     print(f"Input validation: {run_id}")
     _selection, result = preflight.require_valid_inputs(
-        source_path, output_path, refresh=args.get("refresh_inputs", False)
+        source_path,
+        output_path,
+        refresh=args.get("refresh_inputs", False),
+        **({"projects": args["projects"]} if args.get("projects") else {}),
     )
     return result
 
@@ -902,6 +985,13 @@ def main():
     parser_rerun.add_argument("--reason")
     parser_rerun.add_argument("--refresh-inputs", action="store_true")
     parser_rerun.add_argument(
+        "--project",
+        dest="projects",
+        action="append",
+        metavar="GCF-ID",
+        help="Correct only this project; repeat to select more. Preserve other projects' products.",
+    )
+    parser_rerun.add_argument(
         "--resume",
         action="store_true",
         help="Reuse owned analysis workdirs/configuration; requires --from analysis, forbids --refresh-inputs.",
@@ -987,6 +1077,13 @@ def main():
     )
     parser_validate.set_defaults(func=validate_flowcell)
     parser_validate.add_argument("flowcell", help="Run ID or flowcell path.")
+    parser_validate.add_argument(
+        "--project",
+        dest="projects",
+        action="append",
+        metavar="GCF-ID",
+        help="With --refresh-inputs, refresh only selected pairs in the read-only preview.",
+    )
     parser_validate.add_argument(
         "--refresh-inputs",
         action="store_true",
