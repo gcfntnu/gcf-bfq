@@ -261,11 +261,18 @@ def test_stage_filtered_list_does_not_include_legacy_inventory(tmp_path):
     state["status"] = "failed"
     state["current_stage"] = "analysis"
     state["stages"]["analysis"]["status"] = "failed"
+    state["stages"]["reporting"]["status"] = "pending"
+    state["stages"]["finalization"]["status"] = "pending"
+    state["completed_at"] = None
     store.create(state)
 
     listed = manager.combined_list(stage="analysis")
 
     assert list(listed["run_id"]) == [RUN_ID]
+    assert listed.iloc[0]["status"] == "unavailable"
+    assert listed.iloc[0]["analysis"] == "unavailable"
+    assert listed.iloc[0]["parent_status"] == "failed"
+    assert manager.combined_list(status="failed").empty
 
 
 def test_archive_preserves_canonical_state(tmp_path):
