@@ -346,7 +346,7 @@ def test_manager_preview_is_read_only_and_previews_selected_scope(correction, mo
     assert f"Selected projects: {B}" in text
     assert f"Retained projects: {A}" in text
     assert "Restart boundary: analysis" in text
-    assert seen == [{"refresh": True, "projects": [B]}]
+    assert seen == [{"refresh": True, "projects": [B], "state": state_before}]
     assert store.read(RUN_ID) == state_before
     assert {path: identity(path) for path in before} == before
     assert not (output / "provenance" / "project-corrections").exists()

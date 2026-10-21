@@ -56,7 +56,7 @@ def held(state, project):
     return state.get("project_controls", {}).get(project, {}).get("held", False)
 
 
-def _event(state, project, action, reason):
+def _event(state, project, action, reason, *, source="manager"):
     state.setdefault("project_control_history", []).append(
         {
             "project": project,
@@ -65,6 +65,7 @@ def _event(state, project, action, reason):
             "at": utcnow(),
             "attempt": state["attempt"],
             "hostname": socket.gethostname(),
+            "source": source,
         }
     )
 
@@ -74,10 +75,16 @@ def apply_requests(state):
     for project, control in state.get("project_controls", {}).items():
         if project != active and control["held"] != control["applied"]:
             control.update(applied=control["held"], applied_at=utcnow())
-            _event(state, project, "held" if control["held"] else "released", control["reason"])
+            _event(
+                state,
+                project,
+                "held" if control["held"] else "released",
+                control["reason"],
+                source=control.get("source", "manager"),
+            )
 
 
-def request(state, projects, *, hold, reason):
+def request(state, projects, *, hold, reason, source="manager"):
     """Pure mutation used for both preview and the serialized committed request."""
     projects = set(projects)
     if not projects or projects - set(state["projects"]):
@@ -94,8 +101,15 @@ def request(state, projects, *, hold, reason):
             "applied": control["applied"] if control else False,
             "reason": reason.strip(),
             "requested_at": utcnow(),
+            "source": source,
         }
-        _event(state, project, "hold_requested" if hold else "release_requested", reason.strip())
+        _event(
+            state,
+            project,
+            "hold_requested" if hold else "release_requested",
+            reason.strip(),
+            source=source,
+        )
     apply_requests(state)
     if state["status"] == "waiting":
         remaining = {
@@ -216,6 +230,9 @@ def admit(store, run_id):
     """Freeze one batch; a later release is admitted after its delivery phase."""
 
     def update(state):
+        from bcl2fastq_pipeline import initial_holds  # noqa: PLC0415
+
+        initial_holds.require_initialized(state, unfinished(state))
         apply_requests(state)
         if not state.get("project_batch"):
             state["project_batch"] = {
@@ -234,6 +251,9 @@ def claim(store, run_id, project, stage):
 
     def update(state):
         nonlocal claimed
+        from bcl2fastq_pipeline import initial_holds  # noqa: PLC0415
+
+        initial_holds.require_initialized(state, [project])
         apply_requests(state)
         expected = "analysis" if stage == "analysis" else "finalization"
         if state["status"] != "running" or state["current_stage"] != expected:
@@ -397,3 +417,9 @@ def print_status(state):
             f"  {row['project']}: {row['status']}; {row['eligibility']}; next {row['stage']}; "
             f"priority {row['priority']}; {row['waiting_reason']}"
         )
+        if seed := state.get("project_initial_holds", {}).get(row["project"]):
+            print(
+                f"    InitialHold={str(seed['held']).lower()} ({seed['source']}); "
+                f"{seed['decision']}, attempt {seed['attempt']}; "
+                f"SampleSheet sha256 {seed['sample_sheet_sha256']}"
+            )

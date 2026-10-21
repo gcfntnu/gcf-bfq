@@ -221,11 +221,12 @@ def new_state(  # noqa: PLR0913
 
 
 def validate_state(state: dict) -> None:
-    from bcl2fastq_pipeline import project_holds  # noqa: PLC0415
+    from bcl2fastq_pipeline import initial_holds, project_holds  # noqa: PLC0415
 
     if not isinstance(state, dict):
         raise StateValidationError("State must be a JSON object")
     project_holds.validate(state)
+    initial_holds.validate(state)
     required = {
         "schema_version",
         "run_id",
@@ -782,6 +783,9 @@ class FlowcellStateStore:
         def update(state: dict) -> dict:
             if output_path is not None:
                 state["output_path"] = str(output_path)
+            from bcl2fastq_pipeline import initial_holds  # noqa: PLC0415
+
+            initial_holds.prepare(state)
             if state.get("project_controls"):
                 from bcl2fastq_pipeline import project_holds  # noqa: PLC0415
 
@@ -887,6 +891,9 @@ class FlowcellStateStore:
                 raise StateConflictError(
                     f"Run {run_id} is {state['status']!r}, not queued for execution"
                 )
+            from bcl2fastq_pipeline import initial_holds  # noqa: PLC0415
+
+            initial_holds.prepare(state)
             stage = state["current_stage"]
             if state["stages"][stage]["status"] != "queued":
                 raise StateConflictError(f"Current stage {stage} is not queued")
