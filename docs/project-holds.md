@@ -16,12 +16,55 @@ the same requested eligibility is idempotent: it creates no additional transitio
 or processing attempt. `--dry-run` previews the requested eligibility without
 writing files. `fm show RUN` includes the complete control history.
 
-Controls require state-backed, known projects. Before the first daemon scan, use
-the existing `fm initialize` command to queue the run, then hold projects before
+Controls require state-backed, known projects. To declare eligibility before the
+first daemon scan, use the optional SampleSheet field below. For a manual hold
+before processing, use `fm initialize` to queue the run, then `fm hold` before
 starting processing. If project identities have not been recorded, the command
 validates the complete effective input set read-only to identify them. Legacy
 inventory alone cannot safely establish pending work; initialize/rerun it through
 the existing interface first.
+
+## Initial SampleSheet eligibility
+
+Each effective SampleSheet may declare an initial hold independently of priority:
+
+```csv
+[CustomOptions]
+Priority,2
+InitialHold,true
+```
+
+`InitialHold` is optional. Missing or blank values default to **false**; existing
+SampleSheets and their producer require no changes. Explicit `true` and `false`
+are accepted case-insensitively after trimming whitespace. Other nonblank values
+fail complete-flowcell preflight before rerun cleanup or processing. The input is
+never rewritten to insert a default. Numeric `Priority` retains its existing
+validation, freezing and tie rules; a held project keeps its priority for release.
+
+Curated output-side inputs remain authoritative. `--refresh-inputs` retains its
+selected-project rules. A legacy shared multi-project sheet applies its one
+`InitialHold` value to every represented project, just as it does priority.
+
+BFQ commits initial eligibility for every project, including resolved false,
+after complete preflight and before any batch admission or project stage claim.
+Shared conversion still includes held projects. A released project can deliver
+while its held siblings wait; release always requires an explicit `fm release`.
+There is no automatic release or priority-based batch selection.
+
+The decision is seeded once using the state store's short mutation lock under
+the worker execution lease. State and control history retain the SampleSheet
+filename, SHA-256, resolved boolean/source, attempt and decision time. Manual
+requests win whether they occur before or after initialization: false cannot
+clear a manual hold and true cannot reapply a released hold. Source edits,
+rescans, restart, continuation, whole-run reruns and scoped corrections preserve
+the saved decision. An already active or historical run without initialization
+metadata retains its existing eligibility, including legacy inventory reruns.
+Unstarted queued runs may still receive their initial SampleSheet seed.
+
+`fm validate`, initialize/rerun previews and their `flowcell-manager` equivalents
+show the resolved field/source and effective persistent eligibility. These
+previews remain read-only. `fm status` shows the original decision and hash;
+`fm show` distinguishes `initial_eligibility` from later manager requests.
 
 ## Stage boundaries and batches
 
@@ -99,7 +142,9 @@ priority exclusion, claim/control serialization, release during delivery, scoped
 corrections, immutable continuation and retained completed products.
 
 For authorized server integration, use a disposable flowcell with at least two
-projects and the configured real test relay. Initialize it, hold B and process A.
+projects and the configured real test relay. Leave A's `InitialHold` absent and
+set B's effective sheet to `InitialHold,true`, then initialize and process the run
+without any manual hold command.
 Verify complete shared validation/conversion, A's analysis and finalized sends,
 reports, archives, manifests, snapshot and completion record while B stays held
 and the parent waits. Restart the daemon, release B, wake discovery and verify
@@ -114,3 +159,5 @@ supported recovery, preserving failed-run evidence and earlier successes. Inspec
 both installed command names, project filters, priorities and history. Record
 actual configured SMTP acceptance separately from mailbox receipt; local doubles
 do not establish either. Keep operational identifiers/logs in private evidence.
+Also check missing/blank/false and malformed values, curated-input precedence,
+manual hold/release overriding the original seed, and explicit scoped reruns.

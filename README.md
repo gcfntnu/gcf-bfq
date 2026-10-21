@@ -411,6 +411,10 @@ scoped corrections and recovery. [Persistent project holds](docs/project-holds.m
 let released projects reach delivery while other projects wait after shared
 demultiplexing. Release queues only the remaining stages and preserves completed
 projects and their delivered notifications.
+An optional `[CustomOptions]` setting `InitialHold,true` seeds a project's first
+hold before batch admission. Missing or blank values default to false, preserving
+existing SampleSheets. Release is an explicit `fm release` operation; later input
+edits and reruns do not override persistent manager decisions.
 
 | Notification | Recipients | Contents |
 | --- | --- | --- |
@@ -750,6 +754,8 @@ SensitiveData,False
 | `User` | Operationally expected | Operator or submitter shown in completion reporting. |
 | `Rerun` | No | Parsed as a boolean, but automatic rerun detection is currently disabled. Use `flowcell-manager rerun` for an explicit rerun. |
 | `SensitiveData` | No | When true, FASTQ and QC 7-Zip archives receive generated passwords written to `encryption.<name>` files in the flowcell output. |
+| `Priority` | No | Non-negative decimal scheduling priority, default `1.0`; frozen per attempt. See [project scheduling](docs/project-scheduling.md). |
+| `InitialHold` | No | Initial project eligibility: missing/blank means false; explicit `true`/`false` ignore case and surrounding whitespace. Other values fail preflight. Seeded once; release remains manual. See [project holds](docs/project-holds.md#initial-samplesheet-eligibility). |
 
 `Rerun` and `SensitiveData` treat `true`, `1`, and `yes` as true, ignoring
 letter case. Other custom keys are preserved in the run snapshot for downstream

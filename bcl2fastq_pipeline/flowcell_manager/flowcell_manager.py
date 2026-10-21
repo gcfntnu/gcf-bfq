@@ -33,6 +33,7 @@ from bcl2fastq_pipeline import (
     analysis_snapshots,
     fastq_cleanup,
     index_corrections,
+    initial_holds,
     notification_delivery,
     preflight,
     project_corrections,
@@ -357,6 +358,7 @@ def rerun_flowcell(**args):
         analysis_resume.print_plan(context)
     if resume or from_stage in {"reporting", "finalization"}:
         project_scheduling.print_plan(project_scheduling.saved_plan(state))
+        initial_holds.print_plan(state.get("project_initial_holds"), state=state)
     _print_plan("Rerun", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
     correction = None
     selected = None
@@ -365,6 +367,7 @@ def rerun_flowcell(**args):
             state["source_path"],
             output_path,
             refresh=refresh_inputs,
+            state=state,
             **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
         )
         if indexes:
@@ -395,6 +398,7 @@ def rerun_flowcell(**args):
                 state["source_path"],
                 output_path,
                 refresh=refresh_inputs,
+                state=state,
                 **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
             )
         if correction is not None:
@@ -452,7 +456,9 @@ def _retry_project_delivery(args, cfg, store, run_id, state, correction, from_st
         return state
     inputs = Path(correction["root"]) / "inputs"
     working = Path(correction["working"])
-    selection, _result = preflight.require_valid_inputs(inputs, inputs, show_schedule=False)
+    selection, _result = preflight.require_valid_inputs(
+        inputs, inputs, show_schedule=False, state=state
+    )
     print(f"Retry staged project delivery: {run_id}\nRestart boundary: {from_stage}")
     print("Selected projects: " + ", ".join(selected))
     print(
@@ -469,7 +475,7 @@ def _retry_project_delivery(args, cfg, store, run_id, state, correction, from_st
             raise StateConflictError("Run changed while preparing delivery retry")
         project_corrections.recover(store, run_id)
         analysis_snapshots.recover(store, run_id)
-        preflight.require_valid_inputs(inputs, inputs, show_schedule=False)
+        preflight.require_valid_inputs(inputs, inputs, show_schedule=False, state=state)
         store.set_preparing(
             run_id, from_stage, reason=args.get("reason"), refresh_inputs=False, projects=selected
         )
@@ -507,6 +513,7 @@ def _rerun_projects(args, cfg, store, run_id, state, legacy, from_stage, project
         output,
         refresh=refresh,
         projects=projects,
+        state=state,
         **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
     )
     print(f"Rerun: {run_id}\nRestart boundary: {from_stage}\nOutput directory: {output}")
@@ -528,6 +535,7 @@ def _rerun_projects(args, cfg, store, run_id, state, legacy, from_stage, project
             output,
             refresh=refresh,
             projects=projects,
+            state=state,
             **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
         )
         project_corrections.recover(store, run_id)
@@ -600,7 +608,7 @@ def initialize_flowcell(**args):
     paths = _cleanup_for_state(state, from_stage)
     _print_plan("Initialize", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
     selected, _result = preflight.require_valid_inputs(
-        source_path, output_path, refresh=refresh_inputs
+        source_path, output_path, refresh=refresh_inputs, state=state
     )
     correction = None
     if indexes:
@@ -625,7 +633,7 @@ def initialize_flowcell(**args):
         if _cleanup_for_state(state, from_stage) != paths:
             raise StateConflictError("Output paths changed after the preview; inspect and retry")
         selected, _result = preflight.require_valid_inputs(
-            source_path, output_path, refresh=refresh_inputs
+            source_path, output_path, refresh=refresh_inputs, state=state
         )
         if correction is not None:
             _require_single_pair_index_toggle(selected)
@@ -666,6 +674,7 @@ def validate_flowcell(**args):
         source_path,
         output_path,
         refresh=args.get("refresh_inputs", False),
+        state=state,
         **({"projects": args["projects"]} if args.get("projects") else {}),
     )
     return result

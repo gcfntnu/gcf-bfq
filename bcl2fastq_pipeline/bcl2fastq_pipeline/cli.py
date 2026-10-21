@@ -23,6 +23,7 @@ from bcl2fastq_pipeline import (
     analysis_qc,
     analysis_resume,
     analysis_snapshots,
+    initial_holds,
     notification_delivery,
     notifications,
     preflight,
@@ -184,6 +185,7 @@ def _run_state_backed_flowcell(cfg, store, log, *, prepare=False):
                     if initial and not resume and not continuation:
                         preflight.freeze_execution_inputs(cfg, store)
                     project_scheduling.freeze(cfg, store, result)
+                    initial_holds.initialize(store, run_id, result)
                     if resume and stage == "analysis":
                         context = analysis_resume.inspect(
                             current,

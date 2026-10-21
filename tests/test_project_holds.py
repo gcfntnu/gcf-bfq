@@ -26,7 +26,9 @@ from bcl2fastq_pipeline import (
     afterFastq,
     cli,
     findFlowCells,
+    initial_holds,
     notifications,
+    preflight,
     processing_times,
     project_holds,
     workflow_config,
@@ -295,6 +297,11 @@ def test_failed_analysis_stays_failed_under_controls_and_new_attempt_retains_hol
 def test_claim_and_hold_are_serialized_by_state_lock(execution):
     cfg, store, _events = execution
     state = store.begin_attempt(RUN, cfg=cfg)
+    initial_holds.initialize(
+        store,
+        RUN,
+        preflight.validate_selection(preflight.select_run_inputs(cfg.output_path, cfg.output_path)),
+    )
     control("hold", [B])
     reached = Event()
 
