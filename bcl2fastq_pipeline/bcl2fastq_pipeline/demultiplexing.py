@@ -233,11 +233,21 @@ def _combined_plan(selection, *, run_info=None, force_bcl2fastq=False):
         raise DemultiplexingPlanError(
             "FORCE_BCL2FASTQ cannot represent per-sample conversion settings; use BCL Convert >=4.1."
         )
+    for index, mismatch in (
+        ("index", "BarcodeMismatchesIndex1"),
+        ("index2", "BarcodeMismatchesIndex2"),
+    ):
+        if not any(row.get(index) for *_source, row in all_rows):
+            per_sample.discard(mismatch)
+            globals_.pop(mismatch, None)
     version_two = bool(per_sample) and not force_bcl2fastq
     columns = [
         key
         for key in ("Lane", "Sample_ID", "Sample_Name", "Sample_Project", "index", "index2")
-        if any(key in row for *_source, row in all_rows)
+        if any(
+            key in row and (key not in {"index", "index2"} or row[key])
+            for *_source, row in all_rows
+        )
         # v2 rejects Sample_Name unless name-based output is explicitly enabled.
         # BFQ names reads by Sample_ID; keep the optional name in source provenance.
         and not (version_two and key == "Sample_Name")
@@ -272,7 +282,7 @@ def _combined_plan(selection, *, run_info=None, force_bcl2fastq=False):
             if key.startswith("BarcodeMismatchesIndex"):
                 index = "index" if key.endswith("1") else "index2"
                 if not row.get(index) or row.get(index, "").casefold() == "na":
-                    value = "na"
+                    value = "0"
             effective[key] = value
         writer.writerow([effective.get(key, "") for key in columns])
         mappings.append(

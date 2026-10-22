@@ -360,6 +360,17 @@ def validate_selection(
     for duplicate in selection.ignored_duplicates:
         if hasattr(result, "duplicates") and duplicate not in result.duplicates:
             result.duplicates.append(duplicate)
+    if planned:
+        result.summary["demultiplexing"] = {
+            "passes": planned["passes"],
+            "plans": [
+                {
+                    key: item[key]
+                    for key in ("pass_id", "tool", "projects", "sources", "global_settings", "rows")
+                }
+                for item in demultiplexing.pass_plans(planned)
+            ],
+        }
     if error:
         result.add("error", "demux.unsupported_plan", str(error))
     return initial_holds.add_preflight_plan(

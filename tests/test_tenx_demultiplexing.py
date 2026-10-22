@@ -1,5 +1,7 @@
 """10x conversion contracts; all external execution and mail are doubled."""
 
+import csv
+import io
 import json
 import subprocess
 
@@ -101,6 +103,10 @@ def test_single_named_index_preserves_all_oligos_and_one_library(profiles, tmp_p
         "Y28;I8N2;N10;Y90"
     }
     assert all(row["index_provenance"]["original_index"] == "SI-GA-A1" for row in result["rows"])
+    parsed = list(csv.reader(io.StringIO(result["sample_sheet_content"])))
+    header = parsed[parsed.index(["[BCLConvert_Data]"]) + 1]
+    assert "index2" not in header
+    assert "BarcodeMismatchesIndex2" not in header
     assert source.sample_sheet.read_bytes() == before
     assert result["sources"][0]["profile"]["sha256"]
 

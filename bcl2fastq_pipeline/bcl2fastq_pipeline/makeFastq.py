@@ -16,12 +16,6 @@ from bcl2fastq_pipeline.undetermined_fastqs import is_undetermined
 
 log = logging.getLogger(__name__)
 
-MKFASTQ_10X = {
-    "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit": "spaceranger",
-    "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1": "cellranger-atac",
-    "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3": "cellranger",
-}
-
 DEMULTIPLEX_LOG_TAIL_LINES = 50
 
 
@@ -233,20 +227,7 @@ def bcl2fq():
     )
     force_bcl2fastq = os.environ.get("FORCE_BCL2FASTQ", None)
 
-    if "10X Genomics" in (cfg.run.libprep or "") and not multi_pair:
-        cellranger_cmd = MKFASTQ_10X[cfg.run.libprep]
-        cellranger_options = cfg.static.commands["cellranger_mkfastq_options"]
-        cmd = [cellranger_cmd, "mkfastq"]
-        cmd.extend(
-            [
-                f"--output-dir={cfg.output_path}",
-                f"--sample-sheet={cfg.run.sample_sheet}",
-                f"--run={cfg.run.flowcell_path}",
-            ]
-        )
-        cmd.extend(shlex.split(cellranger_options))
-        bcl_done = [f"{cellranger_cmd} mkfastq", image_version(cellranger_cmd)]
-    elif force_bcl2fastq:
+    if force_bcl2fastq:
         bcl2fastq_opts = cfg.static.commands["bcl2fastq_options"]
         cmd = ["bcl2fastq", *shlex.split(bcl2fastq_opts)]
         cmd.extend(
