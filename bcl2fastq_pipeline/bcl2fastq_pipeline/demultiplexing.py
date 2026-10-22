@@ -373,6 +373,12 @@ def plan(selection, *, run_info=None, force_bcl2fastq=False):
     pairs = conversion_pairs(selection)
     if not pairs:
         return None
+    if not getattr(selection, "pairs", ()):
+        custom, _ = parse_custom_options(Path(selection.sample_sheet))
+        if "10X Genomics" in custom.get("Libprep", ""):
+            # Historical single-sheet 10x routing ignored this ordinary-run
+            # override. The explicit workflow-owned profile still owns routing.
+            force_bcl2fastq = False
     grouped = {}
     for pair in pairs:
         custom, _ = parse_custom_options(Path(pair.sample_sheet))

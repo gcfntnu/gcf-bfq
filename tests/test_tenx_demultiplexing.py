@@ -120,6 +120,23 @@ def test_single_named_index_preserves_all_oligos_and_one_library(profiles, tmp_p
 
 
 @pytest.mark.parametrize(
+    "backend,tool", [("bcl-convert", "bcl-convert"), ("mkfastq", "cellranger-mkfastq")]
+)
+def test_single_sheet_10x_keeps_historical_force_override_precedence(
+    profiles, tmp_path, backend, tool
+):
+    source = tenx_pair(tmp_path, custom=f"Demultiplexer,{backend}\n")
+    result = demultiplexing.plan(
+        SimpleNamespace(
+            pairs=(), sample_sheet=source.sample_sheet, submission_form=source.submission_form
+        ),
+        run_info=physical(tmp_path / "RunInfo.xml"),
+        force_bcl2fastq=True,
+    )
+    assert result["tool"] == tool
+
+
+@pytest.mark.parametrize(
     "orientation,expected", [("forward", "AGTGTTACCT"), ("reverse-complement", "AGGTAACACT")]
 )
 def test_dual_symbolic_sequence_orientation_is_explicit_and_used_once(

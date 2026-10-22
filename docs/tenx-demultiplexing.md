@@ -41,6 +41,8 @@ Historical profiles default to this route; unsupported direct conversion fails
 with a remedy. There is no automatic retry using another converter or orientation.
 The existing non-10x path and `FORCE_BCL2FASTQ` behavior remain unchanged; multi-pair
 conversion still rejects that environment override in favor of a structured plan.
+Single-sheet 10x routing continues to ignore `FORCE_BCL2FASTQ`, as before; select
+its backend through `Demultiplexer` and the workflow-owned profile.
 
 RunInfo.xml must define R1/i7/[i5]/R2 for direct 10x conversion. Every cycle is
 allocated, excess index cycles are ignored explicitly, and R1 retains required
