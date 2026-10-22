@@ -375,7 +375,7 @@ def archive_worker(cfg, *, projects=None):
         )
         # A project delivery retains the exact combined conversion inputs and row
         # mappings that contributed its FASTQs, including source hashes.
-        if project_config:
+        if project_config or getattr(cfg.run, "demultiplexing_plan", None):
             from bcl2fastq_pipeline import demultiplexing  # noqa: PLC0415
 
             demux_provenance = demultiplexing.delivery_provenance(cfg, p)

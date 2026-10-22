@@ -307,17 +307,47 @@ def validate_selection(
     # flowcell-manager's entry point removes its executable directory from sys.path
     # before domain imports, avoiding a neighbouring configmaker.py script shadowing
     # the package. Metadata-independent commands (including help) stay lightweight.
+    from configmaker.project_pairs import validate_project_pairs  # noqa: PLC0415
     from configmaker.validation import validate_inputs  # noqa: PLC0415
 
-    if selection.multi_pair:
-        from configmaker.project_pairs import validate_project_pairs  # noqa: PLC0415
+    from bcl2fastq_pipeline import demultiplexing  # noqa: PLC0415
 
-        from bcl2fastq_pipeline.demultiplexing import (  # noqa: PLC0415
-            DemultiplexingPlanError,
-            plan,
+    run_info = run_info or getattr(selection, "run_info", None)
+    if run_info is None and (Path(selection.sample_sheet).parent / "RunInfo.xml").is_file():
+        run_info = Path(selection.sample_sheet).parent / "RunInfo.xml"
+    planned = None
+    error = None
+    try:
+        use_plan = selection.multi_pair or demultiplexing.needs_plan(selection)
+        if use_plan:
+            planned = demultiplexing.plan(
+                selection,
+                run_info=run_info,
+                force_bcl2fastq=bool(os.environ.get("FORCE_BCL2FASTQ")),
+            )
+    except (demultiplexing.DemultiplexingPlanError, OSError) as failure:
+        error = failure
+    if planned:
+        settings = {}
+        skipped = []
+        for item in demultiplexing.pass_plans(planned):
+            for source in item["sources"]:
+                key = source["project"] if selection.multi_pair else "legacy"
+                settings[key] = source["settings"]
+                if item["tool"] != "bcl-convert":
+                    skipped.append(key)
+        result = validate_project_pairs(
+            selection.sample_sheets if selection.multi_pair else [selection.sample_sheet],
+            selection.submission_forms if selection.multi_pair else [selection.submission_form],
+            run_info=run_info,
+            mismatch_policy=mismatch_policy,
+            libprep_config=libprep_config,
+            effective_settings=settings,
+            allow_separate_passes=True,
+            validate_legacy=True,
+            skip_conversion_projects=skipped,
         )
-
-        run_info = run_info or selection.run_info
+    elif selection.multi_pair:
         result = validate_project_pairs(
             selection.sample_sheets,
             selection.submission_forms,
@@ -325,22 +355,13 @@ def validate_selection(
             mismatch_policy=mismatch_policy,
             libprep_config=libprep_config,
         )
-        for duplicate in selection.ignored_duplicates:
-            if duplicate not in result.duplicates:
-                result.duplicates.append(duplicate)
-        if result.ok:
-            try:
-                plan(
-                    selection,
-                    run_info=run_info,
-                    force_bcl2fastq=bool(os.environ.get("FORCE_BCL2FASTQ")),
-                )
-            except DemultiplexingPlanError as error:
-                result.add("error", "demux.unsupported_plan", str(error))
-        return initial_holds.add_preflight_plan(
-            selection, project_scheduling.add_preflight_plan(selection, result)
-        )
-    result = validate_inputs([selection.sample_sheet], [selection.submission_form])
+    else:
+        result = validate_inputs([selection.sample_sheet], [selection.submission_form])
+    for duplicate in selection.ignored_duplicates:
+        if hasattr(result, "duplicates") and duplicate not in result.duplicates:
+            result.duplicates.append(duplicate)
+    if error:
+        result.add("error", "demux.unsupported_plan", str(error))
     return initial_holds.add_preflight_plan(
         selection, project_scheduling.add_preflight_plan(selection, result)
     )
@@ -358,14 +379,10 @@ def require_valid_inputs(  # noqa: PLR0913
 
         if AUTHORITATIVE_CONFIG.is_file():
             libprep_config = AUTHORITATIVE_CONFIG
-    result = (
-        validate_selection(
-            selection,
-            run_info=run_info if run_info.exists() else None,
-            libprep_config=libprep_config,
-        )
-        if selection.multi_pair
-        else validate_selection(selection)
+    result = validate_selection(
+        selection,
+        run_info=run_info if run_info.exists() else None,
+        libprep_config=libprep_config,
     )
     print(selection.describe())
     print(result.render_text())
@@ -453,9 +470,11 @@ def run_preflight(cfg, store, stage):
         run_info = None
     # Preserve legacy callers and validator test doubles, while multi-pair mode
     # additionally validates physical run geometry across all projects.
+    from bcl2fastq_pipeline.demultiplexing import needs_plan  # noqa: PLC0415
+
     result = (
         validate_selection(selection, run_info=run_info)
-        if selection.multi_pair
+        if selection.multi_pair or needs_plan(selection)
         else validate_selection(selection)
     )
     report_path = cfg.static.paths.report_dir / f"{cfg.run.run_id}.input-preflight.json"

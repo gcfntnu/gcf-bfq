@@ -1265,3 +1265,7 @@ deployment configuration.
 For a version supporting Illumina bcl2fastq v1, see the historical
 [`bcl2fastqV1`](https://github.com/maxplanck-ie/bcl2fastq_pipeline/tree/bcl2fastqV1)
 branch of the upstream project.
+
+For direct 10x BCL Convert profiles, named index sequences and pinned historical
+mkfastq reruns, see [10x conversion](docs/tenx-demultiplexing.md) and the linked
+cross-repository compatibility matrix.
