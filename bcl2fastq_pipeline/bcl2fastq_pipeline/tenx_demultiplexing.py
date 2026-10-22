@@ -100,9 +100,12 @@ def configure(custom, settings, rows, run_info):
     except (OSError, ET.ParseError, ValueError, KeyError) as error:
         raise ProfileError(f"Invalid physical 10x read structure: {error}") from error
     effective = dict(settings)
+    if "TrimUMI" in effective:
+        raise ProfileError(
+            "Remove TrimUMI from 10x settings: barcode/UMI cycles are retained as biological Y cycles; BCL Convert 4.2.4 rejects TrimUMI when no U cycles are defined"
+        )
     for key, expected in {
         "CreateFastqForIndexReads": "0",
-        "TrimUMI": "0",
         "MinimumTrimmedReadLength": "8",
         "MaskShortReads": "8",
     }.items():

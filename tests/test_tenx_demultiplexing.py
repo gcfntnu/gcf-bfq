@@ -5,6 +5,7 @@ import io
 import json
 import subprocess
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -105,6 +106,7 @@ def test_single_named_index_preserves_all_oligos_and_one_library(profiles, tmp_p
     assert all(row["index_provenance"]["original_index"] == "SI-GA-A1" for row in result["rows"])
     parsed = list(csv.reader(io.StringIO(result["sample_sheet_content"])))
     header = parsed[parsed.index(["[BCLConvert_Data]"]) + 1]
+    assert "TrimUMI" not in result["global_settings"]
     assert "index2" not in header
     assert "BarcodeMismatchesIndex2" not in header
     assert source.sample_sheet.read_bytes() == before
@@ -135,6 +137,7 @@ def test_dual_symbolic_sequence_orientation_is_explicit_and_used_once(
         ("unknown", "Unknown/unsupported"),
         ("orientation", "Index2Orientation"),
         ("trim", "trimming"),
+        ("trim-umi", "Remove TrimUMI"),
         ("short", "barcode/UMI"),
         ("cycles", "index allocation"),
         ("atac", "retains legacy"),
@@ -156,6 +159,10 @@ def test_unsafe_profiles_fail_before_execution(profiles, tmp_path, change, match
             source.sample_sheet.read_text().replace(
                 "[Settings]\n", "[Settings]\nAdapterRead1,ACGT\n"
             )
+        )
+    elif change == "trim-umi":
+        source.sample_sheet.write_text(
+            source.sample_sheet.read_text().replace("[Settings]\n", "[Settings]\nTrimUMI,0\n")
         )
     elif change == "short":
         cycles = (26, 10, 10, 90)
@@ -230,3 +237,67 @@ def test_real_conversion_contract_uses_profile_and_never_retries_after_failure(
     assert manifest["status"] == "failed"
     assert manifest["tool_image"] == "gcfntnu/bcl-convert:4.2.4"
     assert manifest["sources"][0]["profile"]["name"] == "gex"
+
+
+def test_separate_pass_publication_and_qc_do_not_double_count(profiles, tmp_path, monkeypatch):
+    from bcl2fastq_pipeline import sequencing_qc  # noqa: PLC0415
+
+    cfg, source, output = configured_bfq(tmp_path)
+    (source / "InterOp").mkdir()
+    physical(source / "RunInfo.xml")
+    first = tenx_pair(output, custom="DemultiplexingPass,tenx\n")
+    second = pair(output, PROJECTS[1], index="CCCCCCCCCC", settings="MaskShortReads,22\n")
+    cfg.run.input_selection = SimpleNamespace(pairs=(first, second))
+    monkeypatch.setattr(makeFastq, "image_version", lambda _tool: "4.2.4")
+    monkeypatch.setattr(makeFastq, "resolve_image", lambda _tool: "gcfntnu/bcl-convert:4.2.4")
+    commands = []
+
+    def convert(command, **_kwargs):
+        commands.append(command)
+        destination = Path(command[command.index("--output-directory") + 1])
+        tenx = destination.name == "tenx"
+        project, count = (PROJECTS[0], 100) if tenx else (PROJECTS[1], 80)
+        project_dir = destination / project
+        project_dir.mkdir()
+        (project_dir / f"sample-{project}_S1_R1_001.fastq.gz").write_bytes(
+            b"mocked converter output"
+        )
+        reports = destination / "Reports"
+        reports.mkdir()
+        (reports / "Demultiplex_Stats.csv").write_text(
+            "Lane,SampleID,Sample_Project,# Reads\n"
+            f"1,sample-{project},{project},{count}\n1,Undetermined,,{500 - count}\n"
+        )
+
+    monkeypatch.setattr(makeFastq.subprocess, "check_call", convert)
+    assert makeFastq.bcl2fq()[0] == "multiple conversion passes"
+    assert len(commands) == 2
+    for project in PROJECTS:
+        assert (output / project / f"sample-{project}_S1_R1_001.fastq.gz").is_file()
+        manifest = json.loads(
+            (output / "provenance/project-demultiplexing" / project / "plan.json").read_text()
+        )
+        assert manifest["project"] == project
+        assert all(row["project"] == project for row in manifest["rows"])
+    warnings = []
+    module, sources, samples = sequencing_qc._planned_sources(cfg, output, None, warnings)
+    lanes, unknown = sequencing_qc._parse_sources(sources, samples)
+    assert module == "custom_content" and warnings
+    assert lanes["1"]["total_reads"] == 500
+    assert lanes["1"]["undetermined_reads"] is None and unknown is None
+    assert sorted(sample["assigned_reads"] for sample in samples.values()) == [80, 100]
+
+
+def test_unverified_converter_version_fails_before_execution(profiles, tmp_path, monkeypatch):
+    cfg, source, output = configured_bfq(tmp_path)
+    (source / "InterOp").mkdir()
+    physical(source / "RunInfo.xml")
+    cfg.run.input_selection = SimpleNamespace(pairs=(tenx_pair(output),))
+    monkeypatch.setattr(makeFastq, "image_version", lambda _tool: "99.0")
+    convert = Mock()
+    monkeypatch.setattr(makeFastq.subprocess, "check_call", convert)
+    with pytest.raises(
+        demultiplexing.DemultiplexingPlanError, match="Profile requires BCL Convert"
+    ):
+        makeFastq.bcl2fq()
+    convert.assert_not_called()
