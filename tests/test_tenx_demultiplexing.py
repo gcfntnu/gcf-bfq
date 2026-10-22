@@ -139,6 +139,17 @@ def test_single_sheet_10x_keeps_historical_force_override_precedence(
     assert result["tool"] == tool
 
 
+def test_equivalent_explicit_and_implicit_output_defaults_combine(profiles, tmp_path):
+    first = tenx_pair(tmp_path, settings="FastqCompressionFormat,GZIP\nNoLaneSplitting,1\n")
+    second = tenx_pair(tmp_path, project=PROJECTS[1], index="SI-GA-A2")
+    result = demultiplexing.plan(
+        SimpleNamespace(pairs=(first, second)), run_info=physical(tmp_path / "RunInfo.xml")
+    )
+    assert result["passes"] == 1
+    assert result["global_settings"]["FastqCompressionFormat"] == "gzip"
+    assert result["global_settings"]["NoLaneSplitting"] == "true"
+
+
 @pytest.mark.parametrize(
     "orientation,expected", [("forward", "AGTGTTACCT"), ("reverse-complement", "AGGTAACACT")]
 )

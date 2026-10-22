@@ -52,6 +52,9 @@ ANNOTATION_COLUMNS = {
 }
 CANONICAL = {key.casefold(): key for key in GLOBAL_SETTINGS | DATA_COLUMNS}
 DEFAULTS = {
+    "FastqCompressionFormat": "gzip",
+    # BFQ explicitly selects this in the command, independently of converter defaults.
+    "NoLaneSplitting": "true",
     "BarcodeMismatchesIndex1": "1",
     "BarcodeMismatchesIndex2": "1",
     "AdapterRead1": "na",
