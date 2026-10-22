@@ -92,6 +92,8 @@ downstream reruns retain its original conversion identity. Source inputs remain
 curated and authoritative; derived sheets do not replace them.
 Analysis uses the effective biological read lengths from that retained conversion,
 including explicit cycle crops; later metadata edits cannot change retained FASTQs.
+Preparing and freezing a single-sheet input pair carries RunInfo with it, so clean
+initialization and retries validate the same physical geometry after copying inputs.
 
 ## Verification
 

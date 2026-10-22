@@ -9,17 +9,20 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import flowcell_manager.flowcell_manager as manager
 import pytest
 import yaml
 
+from bcl2fastq_pipeline.state import FlowcellStateStore
 from configmaker.indexes import normalize_indexes
 from test_project_execution import PROJECTS, pair
-from test_state_integration import configured_bfq
+from test_state_integration import configured_bfq, write_inputs
 
 from bcl2fastq_pipeline import (
     demultiplexing,
     index_sequences,
     makeFastq,
+    preflight,
     tenx_demultiplexing,
     workflow_config,
 )
@@ -359,3 +362,31 @@ def test_analysis_geometry_follows_retained_conversion_after_source_edit(
     (retained / "SampleSheet.project.csv").write_text("corrupted retained sheet")
     with pytest.raises(demultiplexing.DemultiplexingPlanError, match="hash differs"):
         workflow_config.prepare_analysis_projects(cfg)
+
+
+def test_clean_initialization_and_copied_inputs_retain_physical_geometry(profiles, tmp_path):
+    cfg, source, output = configured_bfq(tmp_path)
+    write_inputs(source)
+    sheet = source / "SampleSheet.csv"
+    sheet.write_text(
+        sheet.read_text().replace("Illumina DNA Prep", GEX).replace("ACGT", "SI-GA-A1")
+    )
+    original_info = physical(source / "RunInfo.xml").read_bytes()
+    assert not output.exists()
+    state = manager.initialize_flowcell(
+        flowcell=str(source), from_stage="demultiplexing", force=True
+    )
+    assert state["status"] == "queued"
+    assert (output / "RunInfo.xml").read_bytes() == original_info
+    selection = preflight.select_run_inputs(source, output)
+    copied = preflight.copy_run_inputs(selection, output / "attempt-inputs")
+    assert copied.run_info == output / "attempt-inputs/RunInfo.xml"
+    physical(source / "RunInfo.xml", cycles=(30, 10, 10, 90))
+    assert copied.run_info.read_bytes() == original_info
+    assert preflight.validate_selection(copied).ok
+    legacy_selection = preflight.InputSelection(copied.sample_sheet, copied.submission_form)
+    retained = preflight.copy_run_inputs(legacy_selection, output / "retained-inputs")
+    assert retained.run_info.read_bytes() == original_info
+    assert (
+        FlowcellStateStore(cfg.static.paths.manager_dir).read(cfg.run.run_id)["status"] == "queued"
+    )

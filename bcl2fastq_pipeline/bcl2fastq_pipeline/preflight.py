@@ -167,6 +167,14 @@ def select_run_inputs(source_path, output_path, *, refresh=False, projects=None)
     """
     source = Path(source_path)
     output = Path(output_path)
+    geometry = next(
+        (
+            directory / "RunInfo.xml"
+            for directory in (output, source)
+            if (directory / "RunInfo.xml").is_file()
+        ),
+        None,
+    )
     source_files = _input_files(source)
     output_files = _input_files(output)
     if (
@@ -195,14 +203,6 @@ def select_run_inputs(source_path, output_path, *, refresh=False, projects=None)
             effective.extend(path for path in curated or original if _project_key(path) is None)
             chosen.append(tuple(effective))
         selection = _project_selection(*chosen)
-        geometry = next(
-            (
-                directory / "RunInfo.xml"
-                for directory in (output, source)
-                if (directory / "RunInfo.xml").is_file()
-            ),
-            None,
-        )
         return replace(selection, run_info=geometry)
     chosen = []
     for canonical, pattern, sheet in (
@@ -215,7 +215,7 @@ def select_run_inputs(source_path, output_path, *, refresh=False, projects=None)
         if path is None:
             path = _candidate(source, canonical, pattern, sheet=sheet)
         chosen.append(path if path is not None else source / canonical)
-    return InputSelection(*chosen)
+    return InputSelection(*chosen, run_info=geometry)
 
 
 def copy_run_inputs(selection: InputSelection, output_path) -> InputSelection:
@@ -297,7 +297,22 @@ def copy_run_inputs(selection: InputSelection, output_path) -> InputSelection:
             finally:
                 temporary.unlink(missing_ok=True)
         destinations.append(destination)
-    return InputSelection(*destinations)
+    copied_info = None
+    physical_info = selection.run_info
+    if physical_info is None:
+        candidate = selection.sample_sheet.parent / "RunInfo.xml"
+        if candidate.is_file():
+            physical_info = candidate
+    if physical_info is not None:
+        copied_info = output / "RunInfo.xml"
+        if physical_info != copied_info:
+            temporary = output / f".RunInfo.xml.{os.getpid()}.tmp"
+            try:
+                shutil.copy2(physical_info, temporary)
+                os.replace(temporary, copied_info)
+            finally:
+                temporary.unlink(missing_ok=True)
+    return InputSelection(*destinations, run_info=copied_info)
 
 
 def validate_selection(
