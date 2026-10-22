@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from bcl2fastq_pipeline import sequencing_qc as qc
+from bcl2fastq_pipeline import sequencing_qc as qc, undetermined_fastqs
 
 RUN_INFO = """<RunInfo><Run Id="260925_NB501038_0281_AHL2T7AFXC"><Reads>
 <Read Number="1" NumCycles="151" IsIndexedRead="N"/>
@@ -204,6 +204,37 @@ def test_bcl2fastq_and_10x_layouts(cfg, report_commands, tool, nested):
     assert result["unknown_indexes"][0]["reads"] == 20
     assert result["zero_read_sample_count"] == 1
     assert report_commands[-1][-2] == "bcl2fastq"
+
+
+@pytest.mark.parametrize("tool", ["bcl-convert", "bcl2fastq", "cellranger mkfastq"])
+def test_cleanup_preserves_counts_unknown_indexes_and_report_regeneration(
+    cfg, report_commands, tool
+):
+    if tool == "bcl-convert":
+        reports = write_convert(cfg)
+        (reports / "Top_Unknown_Barcodes.csv").write_text(
+            "Lane,index,index2,# Reads\n1,AAAA,GGGG,9000\n"
+        )
+        fastq_dir = cfg.output_path
+    else:
+        fastq_dir = cfg.output_path / "outs/fastq_path" if "mkfastq" in tool else cfg.output_path
+        write_bcl2fastq(cfg, root=fastq_dir / "Stats")
+    fastq = fastq_dir / "Undetermined_S0_L001_I1_001.fastq.gz"
+    fastq.write_bytes(b"never used to compute sequencing statistics")
+    before = qc.generate(cfg, tool=tool)
+    retained = {
+        path: (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in cfg.output_path.rglob("*")
+        if path.is_file() and path != fastq
+    }
+    undetermined_fastqs.cleanup(cfg.output_path)
+    assert not fastq.exists()
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in retained} == retained
+    after = qc.generate(cfg, tool=tool)
+    assert before == after
+    assert after["undetermined_reads"] > 0
+    assert after["undetermined_percent"] > 0
+    assert after["unknown_indexes"]
 
 
 def test_source_identification_uses_real_outputs_without_environment(

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import argparse
+import copy
 import datetime
 import json
 import os
@@ -32,10 +33,15 @@ from bcl2fastq_pipeline import (
     analysis_snapshots,
     fastq_cleanup,
     index_corrections,
+    initial_holds,
     notification_delivery,
     preflight,
+    project_corrections,
+    project_holds,
+    project_scheduling,
     sequencing_delivery,
 )
+from flowcell_manager import project_listing
 
 pd.set_option("display.max_rows", 5000)
 pd.set_option("display.max_columns", 12)
@@ -194,8 +200,17 @@ def _print_plan(  # noqa: PLR0913
 
 
 def _cleanup_for_state(state, from_stage):
+    from bcl2fastq_pipeline import project_lifecycle  # noqa: PLC0415
+
     output = Path(state["output_path"])
     paths = cleanup_plan(output, from_stage)
+    retained = project_lifecycle.recovery_projects(state, from_stage)
+    if retained:
+        paths = [
+            path
+            for path in paths
+            if not project_corrections.belongs_to_project(path.name, retained)
+        ]
     if from_stage == "analysis":
         projects = set(state.get("projects") or [])
         if not projects and output.exists():
@@ -225,6 +240,14 @@ def _requested_indexes(args, from_stage):
             "no state or inputs were changed"
         )
     return tuple(indexes)
+
+
+def _require_single_pair_index_toggle(selection):
+    if len(getattr(selection, "pairs", (selection,))) > 1:
+        raise StateConflictError(
+            "Index-toggle options require a single input pair; edit the relevant project-qualified "
+            "SampleSheet explicitly and queue a project correction. No inputs or results were changed."
+        )
 
 
 def _require_separate_source(source_path, output_path):
@@ -279,6 +302,18 @@ def rerun_flowcell(**args):
     dry_run = args.get("dry_run", False)
     refresh_inputs = args.get("refresh_inputs", False)
     reason = args.get("reason")
+    projects = args.get("projects")
+    if state is not None and from_stage in {"reporting", "finalization"}:
+        correction = project_corrections.delivery_retry_record(state, projects)
+        if correction is not None:
+            return _retry_project_delivery(args, cfg, store, run_id, state, correction, from_stage)
+    if projects:
+        if resume or indexes:
+            raise StateConflictError(
+                "--project cannot be combined with --resume or index-toggle options; "
+                "edit the selected project's input pair and queue a staged correction"
+            )
+        return _rerun_projects(args, cfg, store, run_id, state, legacy, from_stage, projects)
 
     if state is None:
         if resume:
@@ -321,14 +356,22 @@ def rerun_flowcell(**args):
     paths = [] if resume else _cleanup_for_state(state, from_stage)
     if context:
         analysis_resume.print_plan(context)
+    if resume or from_stage in {"reporting", "finalization"}:
+        project_scheduling.print_plan(project_scheduling.saved_plan(state))
+        initial_holds.print_plan(state.get("project_initial_holds"), state=state)
     _print_plan("Rerun", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
     correction = None
     selected = None
     if not resume and (from_stage in {"demultiplexing", "analysis"} or refresh_inputs):
         selected, _result = preflight.require_valid_inputs(
-            state["source_path"], output_path, refresh=refresh_inputs
+            state["source_path"],
+            output_path,
+            refresh=refresh_inputs,
+            state=state,
+            **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
         )
         if indexes:
+            _require_single_pair_index_toggle(selected)
             correction = index_corrections.plan(
                 store, run_id, selected, state["source_path"], indexes, reason=reason
             )
@@ -352,14 +395,20 @@ def rerun_flowcell(**args):
             analysis_resume.verify(context, analysis_resume.inspect(state))
         if not resume and (from_stage in {"demultiplexing", "analysis"} or refresh_inputs):
             selected, _result = preflight.require_valid_inputs(
-                state["source_path"], output_path, refresh=refresh_inputs
+                state["source_path"],
+                output_path,
+                refresh=refresh_inputs,
+                state=state,
+                **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
             )
         if correction is not None:
+            _require_single_pair_index_toggle(selected)
             current = index_corrections.plan(
                 store, run_id, selected, state["source_path"], indexes, reason=reason
             )
             index_corrections.verify_plan(correction, current)
         if not creating:
+            project_corrections.recover(store, run_id)
             index_corrections.recover(store, run_id)
             analysis_snapshots.recover(store, run_id)
             if state["status"] == "running":
@@ -392,6 +441,123 @@ def rerun_flowcell(**args):
         if correction is not None:
             index_corrections.apply(store, run_id, correction)
         apply_cleanup(paths)
+        return store.queue(run_id, from_stage)
+
+
+def _retry_project_delivery(args, cfg, store, run_id, state, correction, from_stage):  # noqa: PLR0913
+    from bcl2fastq_pipeline import project_lifecycle  # noqa: PLC0415
+
+    state = _ensure_not_active(store, run_id, state, args.get("force", False), recover=False)
+    validate_restart_boundary(state, from_stage)
+    requested = set(args.get("projects") or correction["projects"])
+    selected = sorted(requested - project_lifecycle.completed_deliveries(state))
+    if not selected:
+        print("Requested project deliveries are already committed.")
+        return state
+    inputs = Path(correction["root"]) / "inputs"
+    working = Path(correction["working"])
+    selection, _result = preflight.require_valid_inputs(
+        inputs, inputs, show_schedule=False, state=state
+    )
+    print(f"Retry staged project delivery: {run_id}\nRestart boundary: {from_stage}")
+    print("Selected projects: " + ", ".join(selected))
+    print(
+        "Completed projects retained: "
+        + ", ".join(sorted(project_lifecycle.completed_deliveries(state)))
+    )
+    project_scheduling.print_plan(project_scheduling.saved_plan(state), projects=selected)
+    if args.get("dry_run", False):
+        return state
+    if not _confirm(f"Retry staged delivery for {run_id}", args.get("force", False)):
+        return state
+    with store.execution_lease(run_id):
+        if store.read(run_id)["updated_at"] != state["updated_at"]:
+            raise StateConflictError("Run changed while preparing delivery retry")
+        project_corrections.recover(store, run_id)
+        analysis_snapshots.recover(store, run_id)
+        preflight.require_valid_inputs(inputs, inputs, show_schedule=False, state=state)
+        store.set_preparing(
+            run_id, from_stage, reason=args.get("reason"), refresh_inputs=False, projects=selected
+        )
+
+        def reuse(current):
+            current["restart_request"].update(
+                project_correction_id=correction["id"], reuse_project_correction=True
+            )
+            return current
+
+        store.mutate(run_id, reuse)
+        apply_cleanup(cleanup_plan(working, from_stage, projects=selected))
+        return store.queue(run_id, from_stage)
+
+
+def _rerun_projects(args, cfg, store, run_id, state, legacy, from_stage, projects):  # noqa: PLR0913
+    """Queue a validated scoped transaction without removing successful products."""
+    if state is None:
+        raise StateConflictError(
+            "--project requires state-backed project completion; initialize or rerun the "
+            "legacy run as a whole first"
+        )
+    force = args.get("force", False)
+    refresh = args.get("refresh_inputs", False)
+    state = _ensure_not_active(store, run_id, state, force, recover=False)
+    validate_restart_boundary(state, from_stage)
+    output = resolve_output_path(state["output_path"], run_id, cfg)
+    state = {**state, "output_path": str(output)}
+    _require_separate_source(state["source_path"], output)
+    fastq_cleanup.require_restored(state, output, from_stage)
+    if from_stage in {"reporting", "finalization"}:
+        project_scheduling.print_plan(project_scheduling.saved_plan(state), projects=projects)
+    selection, _result = preflight.require_valid_inputs(
+        state["source_path"],
+        output,
+        refresh=refresh,
+        projects=projects,
+        state=state,
+        **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
+    )
+    print(f"Rerun: {run_id}\nRestart boundary: {from_stage}\nOutput directory: {output}")
+    paths = project_corrections.print_plan(state, selection, projects, from_stage, refresh=refresh)
+    if args.get("dry_run", False):
+        return state
+    if not _confirm(f"Queue project correction for {run_id}", force):
+        print("Skipped; inputs and results unchanged.")
+        return state
+    with store.execution_lease(run_id):
+        if store.read(run_id)["updated_at"] != state["updated_at"]:
+            raise StateConflictError("Run changed while preparing the command; inspect and retry")
+        _require_separate_source(state["source_path"], output)
+        fastq_cleanup.require_restored(state, output, from_stage)
+        if cleanup_plan(output, from_stage, projects=projects) != paths:
+            raise StateConflictError("Output paths changed after the preview; inspect and retry")
+        selection, _result = preflight.require_valid_inputs(
+            state["source_path"],
+            output,
+            refresh=refresh,
+            projects=projects,
+            state=state,
+            **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
+        )
+        project_corrections.recover(store, run_id)
+        index_corrections.recover(store, run_id)
+        analysis_snapshots.recover(store, run_id)
+        if state["status"] == "running":
+            store.fail_stage(
+                run_id,
+                state["current_stage"],
+                summary="Interrupted before operator correction; execution lease is inactive",
+                report_path=None,
+                interrupted=True,
+            )
+        store.set_preparing(
+            run_id,
+            from_stage,
+            reason=args.get("reason"),
+            refresh_inputs=refresh,
+            output_path=output,
+            projects=projects,
+        )
+        project_corrections.prepare(store, run_id, selection, projects, from_stage, refresh=refresh)
         return store.queue(run_id, from_stage)
 
 
@@ -442,10 +608,11 @@ def initialize_flowcell(**args):
     paths = _cleanup_for_state(state, from_stage)
     _print_plan("Initialize", run_id, from_stage, paths, refresh_inputs, output_path=output_path)
     selected, _result = preflight.require_valid_inputs(
-        source_path, output_path, refresh=refresh_inputs
+        source_path, output_path, refresh=refresh_inputs, state=state
     )
     correction = None
     if indexes:
+        _require_single_pair_index_toggle(selected)
         correction = index_corrections.plan(
             store, run_id, selected, source_path, indexes, reason=reason
         )
@@ -466,9 +633,10 @@ def initialize_flowcell(**args):
         if _cleanup_for_state(state, from_stage) != paths:
             raise StateConflictError("Output paths changed after the preview; inspect and retry")
         selected, _result = preflight.require_valid_inputs(
-            source_path, output_path, refresh=refresh_inputs
+            source_path, output_path, refresh=refresh_inputs, state=state
         )
         if correction is not None:
+            _require_single_pair_index_toggle(selected)
             current = index_corrections.plan(
                 store, run_id, selected, source_path, indexes, reason=reason
             )
@@ -503,7 +671,11 @@ def validate_flowcell(**args):
         source_path = locate_source_run(run_id, cfg) or cfg.static.paths.nova_base_dir / run_id
     print(f"Input validation: {run_id}")
     _selection, result = preflight.require_valid_inputs(
-        source_path, output_path, refresh=args.get("refresh_inputs", False)
+        source_path,
+        output_path,
+        refresh=args.get("refresh_inputs", False),
+        state=state,
+        **({"projects": args["projects"]} if args.get("projects") else {}),
     )
     return result
 
@@ -637,74 +809,49 @@ def archive_flowcell(**args):
 
 
 def combined_list(status=None, stage=None, query=None):
-    """List or search runs, with canonical state authoritative before filtering."""
+    """Project/run rows; canonical ownership is resolved before any row filters."""
     cfg = get_cfg()
     store = FlowcellStateStore(cfg.static.paths.manager_dir)
     rows = []
     state_run_ids = set()
-    needle = query.casefold() if query is not None else None
-
-    def matches(run_id, projects):
-        return needle is None or any(needle in value.casefold() for value in (run_id, *projects))
-
     for state in store.list_states():
-        # Excluded states must not reappear through stale compatibility inventory.
-        state_run_ids.add(state["run_id"])
-        if status and state["status"] != status:
-            continue
-        if stage and state["current_stage"] != stage:
-            continue
-        if not matches(state["run_id"], state["projects"]):
-            continue
-        output = state["output_path"]
-        rows.append(
-            {
-                "run_id": state["run_id"],
-                "status": state["status"],
-                "stage": state["current_stage"],
-                "origin": state["origin"],
-                "projects": ",".join(state["projects"]),
-                "output_path": output,
-                "archived": state["archive"]["archived_at"] or "0",
-            }
-        )
+        state_run_ids.add(_run_id(state["run_id"]))
+        rows.extend(project_listing.project_rows(state))
 
     inventory = _read_inventory(cfg)
     inventory = inventory.assign(run_id=inventory["flowcell_path"].map(_run_id))
-    for run_id, group in inventory.groupby("run_id", sort=True):
+    for (run_id, project), group in inventory.groupby(["run_id", "project"], sort=True):
         if run_id in state_run_ids:
             continue
-        if stage and stage != "legacy":
-            continue
-        if status and status not in {"completed", "archived", "legacy"}:
-            continue
-        archived_values = [value for value in group["archived"] if value != "0"]
-        legacy_status = "archived" if archived_values else "completed"
-        if status and status not in ("legacy", legacy_status):
-            continue
-        projects = sorted(set(group["project"]))
-        if not matches(run_id, projects):
-            continue
-        # Historical inventories can contain both a bare ID and an absolute path.
-        # Choose a stable representative without requiring archived outputs to exist.
-        flowcell_path = sorted(set(group["flowcell_path"]))[0]
+        # Stable representatives do not require historical outputs to exist.
+        archived = sorted(value for value in group["archived"] if value != "0")
+        timestamps = sorted(value for value in group["timestamp"] if value != "0")
         rows.append(
-            {
-                "run_id": run_id,
-                "status": legacy_status,
-                "stage": "legacy",
-                "origin": "legacy_inventory",
-                "projects": ",".join(projects),
-                "output_path": flowcell_path,
-                "archived": archived_values[-1] if archived_values else "0",
-            }
+            project_listing.legacy_project_row(
+                project,
+                run_id,
+                sorted(set(group["flowcell_path"]))[0],
+                archived=archived[-1] if archived else "0",
+                timestamp=timestamps[-1] if timestamps else "0",
+            )
         )
 
-    frame = pd.DataFrame(
-        rows,
-        columns=["run_id", "status", "stage", "origin", "projects", "output_path", "archived"],
-    )
-    return frame.sort_values(["run_id", "origin"]) if not frame.empty else frame
+    needle = query.casefold() if query is not None else None
+    selected = []
+    for row in rows:
+        if status and not (
+            row["status"] == status or (status == "legacy" and row["origin"] == "legacy_inventory")
+        ):
+            continue
+        if stage and row["stage"] != stage:
+            continue
+        if needle is not None and not any(
+            needle in str(row[key]).casefold() for key in ("run_id", "project")
+        ):
+            continue
+        selected.append(row)
+    frame = pd.DataFrame(selected, columns=project_listing.COLUMNS)
+    return frame.sort_values(["run_id", "project"], ignore_index=True) if not frame.empty else frame
 
 
 def show_flowcell(**args):
@@ -738,6 +885,21 @@ def status_flowcell(**args):
     if store.exists(run_id):
         state = store.recover_interrupted(run_id)
         print(f"{run_id}: {state['status']} ({state['current_stage']})")
+        project_holds.print_status(state)
+        for project, progress in sorted(state.get("project_progress", {}).items()):
+            analysis = progress.get("analysis", {}).get("status", "pending")
+            delivery = progress.get("finalization", {}).get("status", "pending")
+            print(f"  Project {project}: analysis {analysis}; delivery {delivery}")
+        attempts = state.get("attempts", [])
+        schedule = attempts[-1].get("project_schedule") if attempts else None
+        project_scheduling.print_plan(schedule)
+        if schedule:
+            for stage, starts in schedule["actual_order"].items():
+                if starts:
+                    print(
+                        f"  Actual {stage} starts: "
+                        + " -> ".join(item["project"] for item in starts)
+                    )
         qc = state.get("sequencing_qc")
         if qc:
             print(f"  Sequencing QC (demultiplexing execution {qc['execution']}): {qc['status']}")
@@ -867,6 +1029,37 @@ def _search_query(value):
     return value
 
 
+def control_projects(**args):
+    """Scheduling updates deliberately do not acquire the worker's execution lease."""
+    cfg = get_cfg()
+    store = FlowcellStateStore(cfg.static.paths.manager_dir)
+    run_id = _run_id(args["flowcell"])
+    state = store.read(run_id)
+    names = state["projects"]
+    if not names:
+        _selection, result = preflight.require_valid_inputs(
+            state["source_path"], state["output_path"]
+        )
+        names = sorted(result.summary["project_schedule"]["projects"])
+
+    def update(current):
+        if not current["projects"]:
+            current["projects"] = names
+        return project_holds.request(
+            current, args["projects"], hold=args["command"] == "hold", reason=args["reason"]
+        )
+
+    preview = update(copy.deepcopy(state))
+    print(f"{args['command'].capitalize()} projects: {', '.join(sorted(set(args['projects'])))}")
+    project_holds.print_status(preview)
+    if args.get("dry_run"):
+        print("Preview only; no scheduling state changed.")
+        return state
+    saved = store.mutate(run_id, update)
+    print("Scheduling request recorded; claimed work finishes before the next stage boundary.")
+    return saved
+
+
 def main():
     _remove_executable_directory_from_import_path()
     parser = argparse.ArgumentParser(
@@ -901,6 +1094,13 @@ def main():
     parser_rerun.add_argument("--force", action="store_true")
     parser_rerun.add_argument("--reason")
     parser_rerun.add_argument("--refresh-inputs", action="store_true")
+    parser_rerun.add_argument(
+        "--project",
+        dest="projects",
+        action="append",
+        metavar="GCF-ID",
+        help="Correct only this project; repeat to select more. Preserve other projects' products.",
+    )
     parser_rerun.add_argument(
         "--resume",
         action="store_true",
@@ -939,19 +1139,28 @@ def main():
     parser_initialize.add_argument("--refresh-inputs", action="store_true")
     _add_index_options(parser_initialize)
 
-    parser_list = subparsers.add_parser("list", help="List state-backed and legacy flowcells.")
+    parser_list = subparsers.add_parser(
+        "list",
+        help="List one project per flowcell row, including legacy entries.",
+        description=(
+            "Show project analysis/delivery progress and recorded priorities. Parent flowcell "
+            "status/stage and last successful delivery are separate columns. Missing historical "
+            "detail is unavailable; projects not yet identified appear as <unidentified>."
+        ),
+    )
     parser_search = subparsers.add_parser(
         "search",
-        help="Find flowcells by project name or run/flowcell ID.",
+        help="Find project rows by project name or run/flowcell ID.",
         description=(
             "Search project names and run/flowcell IDs using case-insensitive literal "
-            "substrings (not regular expressions). Includes completed and archived runs. "
+            "substrings (not regular expressions). A project match returns only matching project "
+            "rows; a run match returns its project rows. Includes completed and archived runs. "
             "Exit 0 for a successful search, including no matches; 2 for invalid arguments; "
             "1 for state errors."
         ),
         epilog=(
-            "Examples: fm search GCF-2026-043; fm search HL2T7AFXC; "
-            "fm search GCF-2026 --status failed"
+            "Examples: fm search GCF-2099-001; fm search SYNTHETIC; "
+            "fm search GCF-2099 --status failed"
         ),
     )
     parser_search.add_argument("query", metavar="QUERY", type=_search_query)
@@ -963,10 +1172,12 @@ def main():
             print_res=True,
         )
         list_parser.add_argument(
-            "--status", help="Filter by exact status; legacy selects inventory-only runs."
+            "--status",
+            help="Filter project status (not parent status); legacy selects inventory-only rows.",
         )
         list_parser.add_argument(
-            "--stage", help="Filter by exact stage; legacy selects inventory-only runs."
+            "--stage",
+            help="Filter project stage, including shared demultiplexing; legacy selects inventory rows.",
         )
 
     parser_list_processed = subparsers.add_parser(
@@ -982,11 +1193,34 @@ def main():
     parser_status.set_defaults(func=status_flowcell)
     parser_status.add_argument("flowcell")
 
+    for command in ("hold", "release"):
+        control = subparsers.add_parser(
+            command, help=f"{command.capitalize()} future project stages."
+        )
+        control.set_defaults(func=control_projects)
+        control.add_argument("flowcell", help="State-backed run ID or flowcell path.")
+        control.add_argument(
+            "--project", dest="projects", action="append", required=True, metavar="GCF-ID"
+        )
+        control.add_argument(
+            "--reason", required=True, help="Reason retained in scheduling history."
+        )
+        control.add_argument(
+            "--dry-run", action="store_true", help="Preview eligibility without changing state."
+        )
+
     parser_validate = subparsers.add_parser(
         "validate", help="Check the effective input pair read-only, before any processing."
     )
     parser_validate.set_defaults(func=validate_flowcell)
     parser_validate.add_argument("flowcell", help="Run ID or flowcell path.")
+    parser_validate.add_argument(
+        "--project",
+        dest="projects",
+        action="append",
+        metavar="GCF-ID",
+        help="With --refresh-inputs, refresh only selected pairs in the read-only preview.",
+    )
     parser_validate.add_argument(
         "--refresh-inputs",
         action="store_true",

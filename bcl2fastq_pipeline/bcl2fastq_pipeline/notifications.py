@@ -76,6 +76,19 @@ def make_payload(  # noqa: PLR0913
         "run_time": str(run_time),
         "finalize_time": str(finalize_time),
     }
+    project_configs = getattr(run, "project_configs", {})
+    if project_configs:
+        payload["project_contexts"] = {
+            project: {
+                "libprep": context.libprep,
+                "workflow": context.pipeline,
+                "custom": dict(context.custom),
+                "sample_sheet": str(context.sample_sheet),
+                "submission_form": str(context.submission_form),
+            }
+            for project, context in project_configs.items()
+            if not projects or project in projects
+        }
     if processing_timing is not None:
         payload["processing_timing"] = processing_timing
         payload["run_time"] = processing_times.format_duration(processing_timing["total_seconds"])
@@ -241,7 +254,19 @@ def _run_summary(payload):
     from bcl2fastq_pipeline import afterFastq  # noqa: PLC0415
 
     lines = [f"Projects: {', '.join(payload['projects']) or '(none)'}"]
-    if payload.get("user") not in (None, "", "N/A"):
+    if payload.get("generation"):
+        lines.append(
+            f"Analysis generation: {payload['generation']}; processing attempt: {payload['attempt']}"
+        )
+    contexts = payload.get("project_contexts", {})
+    if contexts:
+        for project, context in sorted(contexts.items()):
+            user = context.get("custom", {}).get("User") or "unavailable"
+            lines.append(
+                f"{project}: user {user}; library prep {context.get('libprep')}; "
+                f"workflow {context.get('workflow') or 'pending analysis'}"
+            )
+    elif payload.get("user") not in (None, "", "N/A"):
         lines.append(f"User: {payload['user']}")
     lines.extend(
         (
@@ -338,7 +363,8 @@ def _processed_message(cfg, message, payload):
         )
     if payload.get("processing_timing") is not None:
         html_sections.append(
-            escape(processing_times.format_summary(payload["processing_timing"])).replace(
+            ("Flowcell processing timings so far:<br>" if payload.get("generation") else "")
+            + escape(processing_times.format_summary(payload["processing_timing"])).replace(
                 "\n", "<br>\n"
             )
         )
@@ -356,9 +382,12 @@ def _analysis_reports(payload):
         reports.append(
             email_attachments.Report(output / f"multiqc_{project}_{date}.html", "MultiQC report", 2)
         )
-        if (payload.get("libprep") or "").startswith(
-            ("10X Genomics Chromium Single Cell", "Parse Biosciences")
-        ):
+        libprep = (
+            payload.get("project_contexts", {})
+            .get(project, {})
+            .get("libprep", payload.get("libprep"))
+        )
+        if (libprep or "").startswith(("10X Genomics Chromium Single Cell", "Parse Biosciences")):
             report = output / f"all_samples_web_summary_{project}_{date}.html"
             if report.exists():
                 reports.append(
@@ -417,6 +446,9 @@ def build_message(cfg, entry, *, apply_size_limit=True):
     _host, sender_header, sender, recipient_header, recipients = _settings(cfg, kind)
     limit = _message_limit(cfg) if kind == "processed" else None
     payload = entry["payload"]
+    for path, checksum in payload.get("artifact_hashes", {}).items():
+        if hashlib.sha256(Path(path).read_bytes()).hexdigest() != checksum:
+            raise ValueError(f"Notification artifact changed since analysis completion: {path}")
     projects = ", ".join(payload["projects"])
     international = any(not address.isascii() for address in (sender, *recipients))
     message = EmailMessage(policy=SMTP.clone(utf8=international))
@@ -452,7 +484,12 @@ def build_message(cfg, entry, *, apply_size_limit=True):
         message.set_content(
             f"{projects} has been finalized and prepared for delivery.\n\n"
             f"Flow cell: {payload['run_id']}\n"
-            f"{timing}"
+            + (
+                f"Analysis generation: {payload['generation']}\n"
+                if payload.get("generation")
+                else ""
+            )
+            + f"{timing}"
             f"{payload['message']}"
         )
     if kind == "processed" and apply_size_limit:

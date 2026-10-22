@@ -1,0 +1,163 @@
+# Holding and releasing projects
+
+`fm` and `flowcell-manager` expose the same persistent scheduling controls:
+
+```bash
+fm hold 990101_SYNTHETIC_0001_TEST --project GCF-2099-002 --reason "Awaiting operator review" --dry-run
+fm hold 990101_SYNTHETIC_0001_TEST --project GCF-2099-002 --reason "Awaiting operator review"
+fm status 990101_SYNTHETIC_0001_TEST
+fm search SYNTHETIC --status held
+fm release 990101_SYNTHETIC_0001_TEST --project GCF-2099-002 --reason "Review complete"
+```
+
+Repeat `--project` to select several projects. A nonempty reason is required and
+retained with the request, application time, attempt and requester host. Repeating
+the same requested eligibility is idempotent: it creates no additional transition
+or processing attempt. `--dry-run` previews the requested eligibility without
+writing files. `fm show RUN` includes the complete control history.
+
+Controls require state-backed, known projects. To declare eligibility before the
+first daemon scan, use the optional SampleSheet field below. For a manual hold
+before processing, use `fm initialize` to queue the run, then `fm hold` before
+starting processing. If project identities have not been recorded, the command
+validates the complete effective input set read-only to identify them. Legacy
+inventory alone cannot safely establish pending work; initialize/rerun it through
+the existing interface first.
+
+## Initial SampleSheet eligibility
+
+Each effective SampleSheet may declare an initial hold independently of priority:
+
+```csv
+[CustomOptions]
+Priority,2
+InitialHold,true
+```
+
+`InitialHold` is optional. Missing or blank values default to **false**; existing
+SampleSheets and their producer require no changes. Explicit `true` and `false`
+are accepted case-insensitively after trimming whitespace. Other nonblank values
+fail complete-flowcell preflight before rerun cleanup or processing. The input is
+never rewritten to insert a default. Numeric `Priority` retains its existing
+validation, freezing and tie rules; a held project keeps its priority for release.
+
+Curated output-side inputs remain authoritative. `--refresh-inputs` retains its
+selected-project rules. A legacy shared multi-project sheet applies its one
+`InitialHold` value to every represented project, just as it does priority.
+
+BFQ commits initial eligibility for every project, including resolved false,
+after complete preflight and before any batch admission or project stage claim.
+Shared conversion still includes held projects. A released project can deliver
+while its held siblings wait; release always requires an explicit `fm release`.
+There is no automatic release or priority-based batch selection.
+
+The decision is seeded once using the state store's short mutation lock under
+the worker execution lease. State and control history retain the SampleSheet
+filename, SHA-256, resolved boolean/source, attempt and decision time. Manual
+requests win whether they occur before or after initialization: false cannot
+clear a manual hold and true cannot reapply a released hold. Source edits,
+rescans, restart, continuation, whole-run reruns and scoped corrections preserve
+the saved decision. An already active or historical run without initialization
+metadata retains its existing eligibility, including legacy inventory reruns.
+Unstarted queued runs may still receive their initial SampleSheet seed.
+
+`fm validate`, initialize/rerun previews and their `flowcell-manager` equivalents
+show the resolved field/source and effective persistent eligibility. These
+previews remain read-only. `fm status` shows the original decision and hash;
+`fm show` distinguishes `initial_eligibility` from later manager requests.
+
+## Stage boundaries and batches
+
+Shared preflight and demultiplexing still include **every** effective project,
+including held projects. Holds never remove reads from the combined conversion
+plan or change assignment, priority, scientific configuration or statistics.
+
+After demultiplexing, BFQ admits a batch of released unfinished projects. It
+finishes that batch's eligible analyses before reporting and archiving it. The
+same frozen decimal priority rules apply independently at each stage: `0`, `0.5`,
+`1.0` by default, then `2`, with equal numbers tied by project ID. A held priority
+`0` project remains ineligible. With no holds, all selected analyses still precede
+the first archive.
+
+A release after batch admission joins the next batch, including releases during
+analysis, archiving or finalization. BFQ finishes the admitted batch's delivery
+phase safely before admitting more analysis. A new hold is evaluated again at
+each project start: a project already analyzed can therefore wait before delivery.
+
+Control updates and project starts serialize under the state store's short lock.
+The worker records a stage claim **before** project setup or external work. If
+the hold wins that race, the stage cannot start. If the claim wins, status shows
+`hold_requested` until that stage finishes; the scientific workflow or complete
+archive/checksum/snapshot/publication transaction finishes safely. There is one
+worker under the existing flowcell execution lease; manager requests neither
+start another worker nor interrupt the active one.
+
+## Waiting, completion and recovery
+
+Released A can finish analysis, its Analysis complete notification, archiving,
+snapshot publication and finalized notification while B stays held. A keeps its
+own completed project row and compatibility-inventory entry. The parent stays
+incomplete with status `waiting`, a next boundary and a waiting reason. All-held
+work waits without retrying scientific processing or recording a failure.
+
+`fm list` and `fm search` add `eligibility` and `waiting_reason` to their common
+project projection. `--status held` selects held unfinished project rows. Running,
+failed, interrupted and completed outcomes remain visible even when their future
+eligibility is held. Status includes batch membership, next stage, frozen priority,
+requested/applied eligibility and actual starts. A completed project's hold can
+remain recorded for a later explicit rerun; releasing it never reopens delivery.
+
+Release queues remaining work for the daemon's next discovery scan. Use the
+[daemon wake-up procedure](../README.md#waking-and-restarting) when an immediate
+scan is needed. Holds and release requests survive manager, daemon and container
+restarts. Continuation uses the same attempt, verified frozen SampleSheet/workbook/run geometry and
+captured library-prep configuration. Editing curated originals cannot refresh or
+reprioritize that continuation. Completed sibling files, manifests, generation
+records, snapshots and delivered notification intents remain intact.
+
+Analysis and reporting durations accumulate successful released batches. Time
+spent held is excluded, and synchronous notification delivery remains excluded
+from analysis time.
+
+An explicit whole-run or scoped rerun still performs its normal validated
+invalidation and creates a new attempt. **Holds carry forward** until explicitly
+released. Scoped correction staging is retained while waiting; continuation does
+not recreate it. A correction of another project preserves suspended siblings'
+original input context and pending work. Completed deliveries remain protected by
+the existing publication journal and snapshot recovery. Analysis resume retains
+its existing strict workdir/input checks; a hold does not make a missing or invalid
+resume context valid.
+
+A failed stage remains failed until the existing rerun/resume recovery is
+requested. Hold/release does not clear errors or fabricate success. Notifications
+for committed work remain independent: failed or uncertain delivery uses
+`fm retry-notifications` with its existing explicit uncertainty acknowledgement.
+
+## Verification
+
+Run `python3.11 scripts/dev.py check all`. The hold regressions use synthetic
+metadata, real state/manager/lifecycle/publication and explicit external-processing
+and SMTP doubles, including subprocess mail guards. They exercise waiting/release,
+priority exclusion, claim/control serialization, release during delivery, scoped
+corrections, immutable continuation and retained completed products.
+
+For authorized server integration, use a disposable flowcell with at least two
+projects and the configured real test relay. Leave A's `InitialHold` absent and
+set B's effective sheet to `InitialHold,true`, then initialize and process the run
+without any manual hold command.
+Verify complete shared validation/conversion, A's analysis and finalized sends,
+reports, archives, manifests, snapshot and completion record while B stays held
+and the parent waits. Restart the daemon, release B, wake discovery and verify
+only B's remaining stages and notifications run. Compare A's file hashes,
+timestamps/inodes, completion/snapshot records and delivered intents before and
+after release. Check manifests from the output directory and archive integrity.
+
+Repeat with all projects held, with a hold during analysis, and with B released
+during A's archive transaction. Confirm deferred application, stable batch order
+and eventual completion. Exercise a controlled stage/publication failure and
+supported recovery, preserving failed-run evidence and earlier successes. Inspect
+both installed command names, project filters, priorities and history. Record
+actual configured SMTP acceptance separately from mailbox receipt; local doubles
+do not establish either. Keep operational identifiers/logs in private evidence.
+Also check missing/blank/false and malformed values, curated-input precedence,
+manual hold/release overriding the original seed, and explicit scoped reruns.

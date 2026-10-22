@@ -1,5 +1,6 @@
 import logging
 
+from pathlib import Path
 from unittest.mock import Mock
 
 import flowcell_manager.flowcell_manager as manager
@@ -7,6 +8,7 @@ import pytest
 
 from bcl2fastq_pipeline.state import FlowcellStateStore, StateConflictError, new_state
 from support.fixtures import RUN_ID, completed_state, configured_bfq, write_fastq, write_inputs
+from test_project_scheduling import PROJECTS, RUN, configure_execution, set_priority
 
 from bcl2fastq_pipeline import afterFastq, cli, findFlowCells, makeFastq, misc, notifications
 
@@ -261,11 +263,113 @@ def test_stage_filtered_list_does_not_include_legacy_inventory(tmp_path):
     state["status"] = "failed"
     state["current_stage"] = "analysis"
     state["stages"]["analysis"]["status"] = "failed"
+    state["stages"]["reporting"]["status"] = "pending"
+    state["stages"]["finalization"]["status"] = "pending"
+    state["completed_at"] = None
     store.create(state)
 
     listed = manager.combined_list(stage="analysis")
 
     assert list(listed["run_id"]) == [RUN_ID]
+    assert listed.iloc[0]["status"] == "unavailable"
+    assert listed.iloc[0]["analysis"] == "unavailable"
+    assert listed.iloc[0]["parent_status"] == "failed"
+    assert manager.combined_list(status="failed").empty
+
+
+def test_project_inventory_tracks_analysis_failure_and_unstarted_frozen_projects(
+    tmp_path, monkeypatch
+):
+    first, failed, pending = PROJECTS[:3]
+    cfg, store, _events = configure_execution(tmp_path, monkeypatch, ["0", None, "2"])
+    external = afterFastq.run_logged_command
+
+    def fail_second_analysis(command, cwd, log_path):
+        if command[0] != "7za" and cwd.name.startswith(failed):
+            raise RuntimeError("synthetic second-project failure")
+        return external(command, cwd=cwd, log_path=log_path)
+
+    monkeypatch.setattr(afterFastq, "run_logged_command", fail_second_analysis)
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("listing-failure"), prepare=True)
+    state = store.read(RUN)
+    assert state["status"] == "failed", state.get("last_error")
+    assert "synthetic second-project failure" in state["last_error"]["summary"]
+    before = store.state_path(RUN).read_bytes()
+
+    # Today's editable metadata cannot change the frozen attempt's displayed plan.
+    for sheet in Path(state["output_path"]).glob("SampleSheet*.csv"):
+        sheet.write_text("unparseable edited inputs\nPriority,999\n")
+
+    def forbidden_selection(*args, **kwargs):
+        raise AssertionError("Project inventory must not reparse current inputs")
+
+    monkeypatch.setattr(manager.preflight, "select_run_inputs", forbidden_selection)
+    rows = manager.combined_list(query=RUN).set_index("project")
+    assert rows.loc[first, "analysis"] == "completed"
+    assert rows.loc[first, "status"] == "pending"
+    assert rows.loc[first, "stage"] == "reporting"
+    assert rows.loc[first, "delivery"] == "pending"
+    assert rows.loc[failed, "status"] == rows.loc[failed, "analysis"] == "failed"
+    assert rows.loc[failed, "stage"] == "analysis"
+    assert rows.loc[pending, "status"] == rows.loc[pending, "analysis"] == "pending"
+    assert rows.loc[pending, "stage"] == "analysis"
+    assert rows["parent_status"].eq("failed").all()
+    assert rows.loc[first, "priority"] == "0"
+    assert rows.loc[first, "priority_source"] == "samplesheet"
+    assert rows.loc[failed, "priority"] == "1.0"
+    assert rows.loc[failed, "priority_source"] == "default"
+    assert rows.loc[pending, "priority"] == "2"
+    assert manager.combined_list(status="failed")["project"].tolist() == [failed]
+    assert set(manager.combined_list(stage="analysis")["project"]) == {failed, pending}
+    assert store.state_path(RUN).read_bytes() == before
+
+
+def test_project_inventory_keeps_prior_delivery_separate_from_failed_correction(
+    tmp_path, monkeypatch
+):
+    retained, selected = PROJECTS[:2]
+    cfg, store, _events = configure_execution(tmp_path, monkeypatch, ["2", None])
+    cli._run_state_backed_flowcell(cfg, store, logging.getLogger("listing-original"), prepare=True)
+    original = store.read(RUN)
+    assert original["status"] == "completed", original.get("last_error")
+    previous = original["project_completion"]
+    cfg.run.begin(cfg.static.paths.nova_base_dir / RUN, cfg.static.paths)
+    set_priority(cfg.output_path / f"SampleSheet_{selected}.csv", "0.125")
+    manager.rerun_flowcell(flowcell=RUN, from_stage="analysis", projects=[selected], force=True)
+    queued = manager.combined_list(query=RUN).set_index("project")
+    assert queued.loc[selected, "status"] == "queued"
+    assert queued.loc[selected, "analysis"] == queued.loc[selected, "delivery"] == "pending"
+    assert queued.loc[selected, "analysis_generation"] == "unavailable"
+    assert queued.loc[selected, "last_delivery"] == previous[selected]["completed_at"]
+    assert queued.loc[selected, "last_delivery_generation"] == previous[selected]["generation"]
+    assert queued.loc[retained, "status"] == "completed"
+    assert queued.loc[retained, "priority"] == "2"
+
+    def fail_correction(command, cwd, log_path):
+        raise RuntimeError("synthetic corrected-project failure")
+
+    monkeypatch.setattr(afterFastq, "run_logged_command", fail_correction)
+    cli._run_state_backed_flowcell(
+        cfg, store, logging.getLogger("listing-correction"), prepare=True
+    )
+    corrected = store.read(RUN)
+    assert corrected["status"] == "failed", corrected.get("last_error")
+    assert "synthetic corrected-project failure" in corrected["last_error"]["summary"]
+    rows = manager.combined_list(query=RUN).set_index("project")
+    assert rows.loc[selected, "status"] == rows.loc[selected, "analysis"] == "failed"
+    assert rows.loc[selected, "delivery"] == "pending"
+    assert rows.loc[selected, "last_delivery"] == previous[selected]["completed_at"]
+    assert rows.loc[selected, "last_delivery_generation"] == previous[selected]["generation"]
+    assert rows.loc[selected, "analysis_generation"] != previous[selected]["generation"]
+    assert rows.loc[selected, "priority"] == "0.125"
+    assert rows.loc[selected, "priority_source"] == "samplesheet"
+    assert rows.loc[retained, "status"] == "completed"
+    assert rows.loc[retained, "analysis"] == rows.loc[retained, "delivery"] == "completed"
+    assert rows.loc[retained, "parent_status"] == "failed"
+    assert rows.loc[retained, "last_delivery"] == previous[retained]["completed_at"]
+    assert rows.loc[retained, "analysis_generation"] == previous[retained]["generation"]
+    assert rows.loc[retained, "priority"] == "2"
+    assert corrected["project_completion"] == previous
 
 
 def test_archive_preserves_canonical_state(tmp_path):

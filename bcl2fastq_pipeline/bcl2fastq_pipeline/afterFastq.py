@@ -25,8 +25,15 @@ from pathlib import Path
 from configmaker.configmaker import SEQUENCERS
 from configmaker.validation import VALIDATOR_VERSION
 
-from bcl2fastq_pipeline import analysis_snapshots, processing_times, workflow_config
-from bcl2fastq_pipeline.config import PipelineConfig
+from bcl2fastq_pipeline import (
+    analysis_snapshots,
+    processing_times,
+    project_corrections,
+    project_scheduling,
+    undetermined_fastqs,
+    workflow_config,
+)
+from bcl2fastq_pipeline.config import PipelineConfig, ProjectConfig
 from bcl2fastq_pipeline.workflow_config import select_workflow
 
 log = logging.getLogger(__name__)
@@ -115,9 +122,17 @@ def file_md5(path: Path) -> str:
 
 
 def get_read_geometry(run_dir):
-    with (run_dir / "Stats" / "Stats.json").open() as stats_file:
-        stats_json = json.load(stats_file)
-    lane_info = stats_json["ReadInfosForLanes"][0].get("ReadInfos", None)
+    stats = run_dir / "Stats" / "Stats.json"
+    if not stats.exists() and not stats.is_symlink() and (run_dir / "RunInfo.xml").is_file():
+        geometry = workflow_config.find_read_geometry([run_dir])
+        lane_info = [
+            {"Number": number, "NumCycles": cycles, "IsIndexedRead": False}
+            for number, cycles in enumerate(geometry, start=1)
+        ]
+    else:
+        with stats.open() as stats_file:
+            stats_json = json.load(stats_file)
+        lane_info = stats_json["ReadInfosForLanes"][0].get("ReadInfos", None)
     if not lane_info:
         return "Read geometry could not be automatically determined."
     R1 = None
@@ -218,7 +233,11 @@ def md5sum_worker(cfg, *, force=False, store=None):
     jobs = []
     for project in sorted(get_project_names(get_project_dirs(cfg))):
         manifest = cfg.output_path / f"md5sum_{project}_fastq.txt"
-        fastqs = sorted((cfg.output_path / project).rglob("*.fastq.gz"))
+        fastqs = sorted(
+            path
+            for path in (cfg.output_path / project).rglob("*.fastq.gz")
+            if not undetermined_fastqs.is_undetermined(path)
+        )
         relative_paths = [path.relative_to(cfg.output_path) for path in fastqs]
         if not force and _complete_fastq_manifest(manifest, relative_paths):
             continue
@@ -253,6 +272,15 @@ def md5sum_archive(archive_path: Path):
 def md5sum_archive_worker(cfg):
     output_path = Path(cfg.output_path)
     archives = list(output_path.glob("*.7za"))
+    if getattr(getattr(cfg, "run", None), "selected_projects", None) is not None:
+        archives = [
+            p
+            for p in archives
+            if any(
+                p.name.startswith((f"{project}_", f"QC_{project}_"))
+                for project in cfg.run.selected_projects
+            )
+        ]
 
     with mp.Pool() as pool:
         pool.map(md5sum_archive, archives)
@@ -299,12 +327,17 @@ def _run_archive_command(cmd, cfg, project, kind):
         raise
 
 
-def archive_worker(cfg):
+def archive_worker(cfg, *, projects=None):
     project_dirs = get_project_dirs(cfg)
     pnames = get_project_names(project_dirs)
+    if projects is not None:
+        pnames &= set(projects)
     run_date = str(cfg.run.run_id).split("_")[0]
 
-    for p in pnames:
+    for p in project_scheduling.project_order(cfg, pnames):
+        project_scheduling.record_start(cfg, "archiving", p)
+        project_config = workflow_config.delivery_project_config(cfg, p)
+        sensitive = project_config.sensitive if project_config else cfg.run.sensitive
         # ------------------------------------------------------------------ #
         # Archive FASTQ
         # ------------------------------------------------------------------ #
@@ -313,23 +346,46 @@ def archive_worker(cfg):
         if archive_fastq.exists():
             archive_fastq.unlink()
 
-        pw = generate_password(cfg, p) if cfg.run.sensitive else None
+        pw = generate_password(cfg, p) if sensitive else None
         report_dir = cfg.output_path / "Reports"
         archive_inputs = [cfg.output_path / p, cfg.output_path / "Stats"]
-        archive_inputs.extend(sorted(cfg.output_path.glob("sequencer_stats_*.html")))
+        archive_inputs.extend(
+            path
+            for path in sorted(cfg.output_path.glob("sequencer_stats_*.html"))
+            if not project_config or project_corrections.belongs_to_project(path.name, [p])
+        )
         if report_dir.exists():
             archive_inputs.append(report_dir)
-        archive_inputs.extend(sorted(cfg.output_path.glob("Undetermined*.fastq.gz")))
+        archive_inputs.extend(
+            path
+            for path in sorted(cfg.output_path.glob("Undetermined*.fastq.gz"))
+            if not undetermined_fastqs.is_undetermined(path)
+        )
         archive_inputs.extend(
             [
                 cfg.output_path / f"{p}_samplesheet.tsv",
-                cfg.output_path / "SampleSheet.csv",
-                cfg.output_path / "Sample-Submission-Form.xlsx",
+                project_config.sample_sheet
+                if project_config
+                else cfg.output_path / "SampleSheet.csv",
+                project_config.submission_form
+                if project_config
+                else cfg.output_path / "Sample-Submission-Form.xlsx",
                 cfg.output_path / f"md5sum_{p}_fastq.txt",
             ]
         )
+        # A project delivery retains the exact combined conversion inputs and row
+        # mappings that contributed its FASTQs, including source hashes.
+        if project_config:
+            from bcl2fastq_pipeline import demultiplexing  # noqa: PLC0415
 
-        if cfg.run.libprep and "10X Genomics" in cfg.run.libprep:
+            demux_provenance = demultiplexing.delivery_provenance(cfg, p)
+            if demux_provenance:
+                # 7-Zip flattens absolute input paths to their basename. Keep
+                # this relative path so it cannot collide with the FASTQ folder.
+                archive_inputs.append(demux_provenance.relative_to(cfg.output_path))
+
+        libprep = project_config.libprep if project_config else cfg.run.libprep
+        if libprep and "10X Genomics" in libprep:
             extra = cfg.output_path / cfg.run.run_id.split("_")[-1][1:]
             try:
                 extra.lstat()
@@ -343,7 +399,13 @@ def archive_worker(cfg):
         cmd = ["7za", "a"]
         if pw:
             cmd.append(f"-p{pw}")
-        cmd.extend([str(archive_fastq), *(str(path) for path in archive_inputs)])
+        cmd.extend(
+            [
+                str(archive_fastq),
+                *undetermined_fastqs.archive_exclusions(),
+                *(str(path) for path in archive_inputs),
+            ]
+        )
 
         log.info(f"[archive_worker] Zipping {archive_fastq}")
         _run_archive_command(cmd, cfg, p, "fastq")
@@ -356,15 +418,20 @@ def archive_worker(cfg):
         if qc_archive.exists():
             qc_archive.unlink()
 
-        pw = generate_password(cfg, f"QC_{p}") if cfg.run.sensitive else None
-        tmp_dir = Path(os.environ["TMPDIR"])
-        qc_dir = tmp_dir / f"{p}_{run_date}" / "data" / "tmp" / cfg.run.pipeline / "bfq"
+        pw = generate_password(cfg, f"QC_{p}") if sensitive else None
+        qc_dir = (
+            workflow_config.project_workdir(cfg, p)
+            / "data"
+            / "tmp"
+            / workflow_config.project_workflow(cfg, p)
+            / "bfq"
+        )
 
         # Native 7-Zip follows symlinks by default; -snl would store the links themselves.
         cmd = ["7za", "a"]
         if pw:
             cmd.append(f"-p{pw}")
-        cmd.extend([str(qc_archive), str(qc_dir)])
+        cmd.extend([str(qc_archive), *undetermined_fastqs.archive_exclusions(), str(qc_dir)])
 
         log.info(f"[archive_worker] Archiving QC output → {qc_archive}\n")
         _run_archive_command(cmd, cfg, p, "qc")
@@ -388,12 +455,21 @@ def get_project_dirs(cfg):
     """
     fastq_paths = list(cfg.output_path.glob("*/*.fastq.gz"))
     fastq_paths += list(cfg.output_path.glob("*/*/*.fastq.gz"))
-    return to_dirs(fastq_paths)
+    dirs = to_dirs(fastq_paths)
+    if getattr(getattr(cfg, "run", None), "selected_projects", None) is not None:
+        dirs = {d for d in dirs if get_project_names([d]) & cfg.run.selected_projects}
+    if getattr(getattr(cfg, "run", None), "batch_projects", None) is not None:
+        dirs = {d for d in dirs if get_project_names([d]) & cfg.run.batch_projects}
+    return dirs
 
 
-def post_workflow(project_id, base_dir, pipeline):
+def post_workflow(project_id, base_dir, pipeline, *, analysis_dir=None):
     run_date = str(base_dir.name).split("_")[0]
-    analysis_dir = Path(os.environ["TMPDIR"]) / f"{project_id}_{run_date}"
+    analysis_dir = (
+        Path(analysis_dir)
+        if analysis_dir
+        else Path(os.environ["TMPDIR"]) / f"{project_id}_{run_date}"
+    )
     bfq_dir = analysis_dir / "data" / "tmp" / pipeline / "bfq"
     odir = base_dir / f"QC_{project_id}" / "bfq"
     odir.mkdir(parents=True, exist_ok=True)
@@ -442,14 +518,31 @@ def snakemake_command(*, resume=False, target="multiqc_report", cores=32):
 
 
 def full_align(cfg, *, resume=None):
-    selection = None if resume else select_workflow(cfg)
+    workflow_config.prepare_projects(cfg)
+    selection = None
+    if not resume and not cfg.run.project_configs:
+        selection = select_workflow(cfg)
     project_names = get_project_names(get_project_dirs(cfg))
-    run_date = str(cfg.output_path.name).split("_")[0]
+    if getattr(cfg.run, "project_lifecycle", None) is not None:
+        cfg.run.project_lifecycle.plan_analysis(project_names)
+    run_date = str(cfg.run.run_id).split("_")[0]
     workdirs = {}
-    if resume and set(project_names) != set(resume["projects"]):
+    if resume and (
+        not set(project_names).issubset(resume["projects"])
+        or (cfg.run.batch_projects is None and set(project_names) != set(resume["projects"]))
+    ):
         raise RuntimeError("Resume projects differ from available FASTQs; inspect and requeue")
-    for p in sorted(project_names):
-        analysis_dir = analysis_snapshots.workdir_path(cfg.run.run_id, p)
+    for p in project_scheduling.project_order(cfg, project_names):
+        lifecycle = getattr(cfg.run, "project_lifecycle", None)
+        if lifecycle is not None and not lifecycle.claim(p, "analysis"):
+            continue
+        project_scheduling.record_start(cfg, "analysis", p)
+        if not resume and cfg.run.project_configs:
+            selection = select_workflow(cfg, p)
+        pipeline = resume["projects"][p]["workflow"] if resume else selection.workflow
+        cfg.run.project_workflows[p] = pipeline
+        cfg.run.pipeline = pipeline
+        analysis_dir = workflow_config.project_workdir(cfg, p)
         if resume:
             entry = resume["projects"][p]
             analysis_dir = Path(entry["identity"]["path"])
@@ -494,9 +587,61 @@ def full_align(cfg, *, resume=None):
                 selection.config.sha256,
                 "--libprep-entry",
                 selection.entry,
-                "--expected-read-geometry",
-                *(str(n) for n in selection.read_geometry),
             ]
+            project_config = getattr(cfg.run, "project_configs", {}).get(p)
+            if project_config is None and getattr(cfg.run, "input_selection", None) is not None:
+                project_config = ProjectConfig(
+                    p,
+                    cfg.run.sample_sheet,
+                    cfg.run.sample_submission_form,
+                    dict(cfg.run.custom),
+                    tuple(selection.read_geometry),
+                    selection,
+                    pipeline,
+                )
+                cfg.run.project_configs[p] = project_config
+            if project_config:
+                retained_inputs = analysis_dir / "inputs"
+                retained_inputs.mkdir(exist_ok=True)
+                for original in (project_config.sample_sheet, project_config.submission_form):
+                    shutil.copy2(original, retained_inputs / original.name)
+                (retained_inputs / "project.json").write_text(
+                    json.dumps(
+                        {
+                            "project": p,
+                            "sample_sheet": project_config.sample_sheet.name,
+                            "submission_form": project_config.submission_form.name,
+                            "custom": project_config.custom,
+                            "scheduling": (
+                                cfg.run.project_schedule["projects"][p]
+                                if cfg.run.project_schedule
+                                else None
+                            ),
+                            "libprep_selection": selection.diagnostics(),
+                            "inputs": {
+                                original.name: hashlib.sha256(original.read_bytes()).hexdigest()
+                                for original in (
+                                    project_config.sample_sheet,
+                                    project_config.submission_form,
+                                )
+                            },
+                        },
+                        indent=2,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                cmd.extend(
+                    [
+                        "--sample-sheet",
+                        str(project_config.sample_sheet),
+                        "--sample-submission-form",
+                        str(project_config.submission_form),
+                        "--effective-read-geometry",
+                        *(str(n) for n in selection.read_geometry),
+                    ]
+                )
+            cmd.extend(["--expected-read-geometry", *(str(n) for n in selection.read_geometry)])
             if (analysis_dir / "data/raw/fastq").exists():
                 cmd.append("--skip-create-fastq-dir")
             subprocess.check_call(cmd, cwd=analysis_dir)
@@ -505,6 +650,9 @@ def full_align(cfg, *, resume=None):
                 shutil.copy2(discovery_summary, cfg.output_path / f"configmaker-analysis-{p}.json")
 
         # run snakemake pipeline
+        lifecycle = getattr(cfg.run, "project_lifecycle", None)
+        if lifecycle is not None:
+            lifecycle.start_analysis(p, workdirs[p], pipeline)
         cmd = snakemake_command(resume=bool(resume))
         snakemake_log = cfg.static.paths.log_dir / f"{cfg.run.run_id}_{p}_snakemake.log"
         run_logged_command(cmd, cwd=analysis_dir, log_path=snakemake_log)
@@ -525,16 +673,16 @@ def full_align(cfg, *, resume=None):
             discovery = analysis_dir / "configmaker.analysis-summary.json"
             if discovery.is_file():
                 shutil.copy2(discovery, cfg.output_path / f"configmaker-analysis-{p}.json")
-            post_workflow(p, cfg.output_path, cfg.run.pipeline)
+            post_workflow(p, cfg.output_path, pipeline, analysis_dir=analysis_dir)
 
         # copy report
         shutil.copy2(
-            analysis_dir / "data" / "tmp" / cfg.run.pipeline / "bfq" / f"multiqc_{p}.html",
+            analysis_dir / "data" / "tmp" / pipeline / "bfq" / f"multiqc_{p}.html",
             cfg.output_path / f"multiqc_{p}_{run_date}.html",
         )
 
         # if additional html reports exists (single cell), copy
-        extra_html = (analysis_dir / "data" / "tmp" / cfg.run.pipeline / "bfq" / "summaries").glob(
+        extra_html = (analysis_dir / "data" / "tmp" / pipeline / "bfq" / "summaries").glob(
             "all_samples*.html"
         )
         extra_html = list(extra_html)
@@ -551,9 +699,12 @@ def full_align(cfg, *, resume=None):
 
         # copy mqc_config
         shutil.copy2(
-            analysis_dir / "data" / "tmp" / cfg.run.pipeline / "bfq" / ".multiqc_config.yaml",
+            analysis_dir / "data" / "tmp" / pipeline / "bfq" / ".multiqc_config.yaml",
             cfg.output_path / f".multiqc_config_{p}.yaml",
         )
+        cfg.run.project_workdirs[p] = analysis_dir
+        if lifecycle is not None:
+            lifecycle.complete_analysis(p)
 
     return workdirs
 
@@ -610,6 +761,11 @@ def postMakeSteps():
 
 def finalize(*, store=None):
     cfg = PipelineConfig.get()
+    if (
+        getattr(cfg.run, "project_lifecycle", None) is not None
+        and cfg.run.project_lifecycle.analysis_committed
+    ):
+        return cfg.run.project_lifecycle.finalize()
     with (
         processing_times.measure(store, cfg.run.run_id, "archiving")
         if store is not None

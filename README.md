@@ -31,6 +31,11 @@ Static configuration is loaded once when BFQ starts. Restart the process after
 changing `/config/bcl2fastq.ini`. Sending `SIGHUP` only wakes a sleeping process
 so that it scans again immediately.
 
+Flowcells can also use independent project-specific input pairs and workflows.
+See [project-paired inputs](docs/project-inputs.md) for filename matching,
+validation and combined conversion, and [selected-project corrections](docs/project-corrections.md)
+for `fm rerun --project` staging, publication and recovery.
+
 ## Installation
 
 BFQ requires Python 3.11 or newer. The complete pipeline additionally depends
@@ -394,6 +399,23 @@ and attempts its email **before FASTQ MD5 generation and analysis**. Processing
 continues normally: this report has no QC threshold, pass/fail gate, pause,
 index correction or sample-exclusion policy. Review and intervention are manual.
 
+BFQ attempts each project's Analysis complete notification after its workflow and
+required project reports have committed, before the next project's analysis
+starts. Within each admitted batch, all eligible analyses finish before that
+batch's archiving starts. Later releases join the next batch. During delivery,
+each project commits its archives, checksums, retained snapshot and publication,
+then attempts its finalized notification before the next project is archived.
+The flowcell stays incomplete until its outstanding projects finish. See
+[project scheduling and progress](docs/project-scheduling.md) for priority,
+scoped corrections and recovery. [Persistent project holds](docs/project-holds.md)
+let released projects reach delivery while other projects wait after shared
+demultiplexing. Release queues only the remaining stages and preserves completed
+projects and their delivered notifications.
+An optional `[CustomOptions]` setting `InitialHold,true` seeds a project's first
+hold before batch admission. Missing or blank values default to false, preserving
+existing SampleSheets. Release is an explicit `fm release` operation; later input
+edits and reruns do not override persistent manager decisions.
+
 | Notification | Recipients | Contents |
 | --- | --- | --- |
 | `sequencing` — Demultiplexing complete — sequencing QC | `finished_to` | Flowcell/projects/user, instrument and read geometry; yield, lane density/PF/PhiX/R1/R2 Q30 where available; assigned reads, undetermined fraction, planned and zero-read samples, and available top unknown indexes. Includes disk availability and the sequencing MultiQC attachment. |
@@ -403,7 +425,7 @@ index correction or sample-exclusion policy. Review and intervention are manual.
 Absent metrics say unavailable; a sample omitted from statistics is not assumed
 to have zero reads. Counts describe read clusters/assignments in sequencing QC;
 fastp counts individual reads, including both mates. Optional fastp summaries are
-snapshotted at reporting from the matching analysis workdir so notification
+snapshotted at each project's analysis boundary from its matching workdir so notification
 retries do not need that workdir. Full per-sample details remain in MultiQC.
 
 The sequencing report uses a BFQ-owned configuration and run XML, InterOp,
@@ -485,6 +507,46 @@ See [processing-time semantics and server checks](docs/processing-time-integrati
 
 See [early sequencing QC verification](docs/early-sequencing-qc-integration-tests.md)
 for the server checks required before merge.
+
+### Undetermined FASTQ retention
+
+After successful conversion, early sequencing QC and project FASTQ checksums,
+BFQ commits demultiplexing completion and removes recognized demultiplexer-generated
+Undetermined FASTQs before scientific analysis. This applies to BCL Convert,
+bcl2fastq and supported mkfastq backends, including nested output/staging trees,
+lane-split reads, index reads and ATAC R3 reads. The reserved converter filename
+is `Undetermined_S0[_Lnnn]_<R1|R2|R3|I1|I2>_nnn.fastq.gz` (each `nnn` is three
+digits). BFQ preserves that name during renaming; it does not infer unassigned
+reads from an `Undetermined` prefix or remove similarly named samples.
+
+InterOp, conversion statistics/reports, unknown-index summaries, logs and
+sequencing-QC products remain available. Counts and percentages describe the
+conversion and do not depend on the remaining FASTQs. If report generation fails,
+its source statistics remain available for `retry-sequencing-qc`. Cleanup does
+not depend on successful report generation or email delivery and introduces no
+QC threshold, retention option or per-run confirmation. Failed conversion
+attempts keep their diagnostic FASTQs under the existing failure/retry policy.
+
+Cleanup only unlinks files/links below the managed run output, including mkfastq
+staging there. Directory symlinks are not traversed, and external link targets
+are preserved. Operational logs list removed paths, count and regular-file byte
+total (logical sizes, excluding symlink targets). Missing files and repeated
+cleanup are normal. A genuine unlink failure stops at the **analysis** boundary;
+fix permissions/storage, then preview `fm rerun RUN_ID --from analysis --dry-run`
+and queue `fm rerun RUN_ID --from analysis`. The same restart handles interrupted
+cleanup: remaining files are retried without repeating completed conversion,
+early QC or sent sequencing mail. Existing state and the execution lease govern
+this recovery; no additional completion marker is created.
+
+New delivery archives exclude these FASTQs, including recursively through the
+optional mkfastq directory and directory aliases. Existing completed archives
+are not rewritten just to apply this policy. Undetermined reads are excluded
+from sample checksums, restored-FASTQ validation and delivered-FASTQ restoration
+requirements, including recognized paths in older cleanup records. Project
+FASTQs and valid project manifests remain authoritative. This automatic policy
+is separate from operator-initiated `clean-fastqs` for delivered project reads.
+See [Undetermined retention integration checks](docs/undetermined-fastqs-integration-tests.md)
+for the actual-layout checks required before merge.
 
 ### Completion notifications and recovery
 
@@ -692,6 +754,8 @@ SensitiveData,False
 | `User` | Operationally expected | Operator or submitter shown in completion reporting. |
 | `Rerun` | No | Parsed as a boolean, but automatic rerun detection is currently disabled. Use `flowcell-manager rerun` for an explicit rerun. |
 | `SensitiveData` | No | When true, FASTQ and QC 7-Zip archives receive generated passwords written to `encryption.<name>` files in the flowcell output. |
+| `Priority` | No | Non-negative decimal scheduling priority, default `1.0`; frozen per attempt. See [project scheduling](docs/project-scheduling.md). |
+| `InitialHold` | No | Initial project eligibility: missing/blank means false; explicit `true`/`false` ignore case and surrounding whitespace. Other values fail preflight. Seeded once; release remains manual. See [project holds](docs/project-holds.md#initial-samplesheet-eligibility). |
 
 `Rerun` and `SensitiveData` treat `true`, `1`, and `yes` as true, ignoring
 letter case. Other custom keys are preserved in the run snapshot for downstream
@@ -819,43 +883,56 @@ flowcell-manager archive RUN_ID
 flowcell-manager list-processed
 ```
 
-### Find flowcells by project or run ID
+### Find projects on flowcells
 
-Use native search to find structured records instead of filtering the printed
-list with `grep`:
+`fm list` and `fm search` show one project on one flowcell per row. A project
+occurring on several flowcells has several rows. Search uses case-insensitive
+literal substrings of project names and run IDs; characters such as `.` and `[`
+have no special meaning. A project match returns only matching projects; a run-ID
+match returns that run's project rows, subject to the filters. Quote queries
+containing shell metacharacters or spaces.
 
 ```console
-fm search GCF-2026-043
-fm search 260925_NB501038_0281_AHL2T7AFXC
-fm search HL2T7AFXC
-fm search GCF-2026 --status failed
-fm search GCF-2026 --stage analysis
-fm status 260925_NB501038_0281_AHL2T7AFXC
+fm list
+fm search GCF-2099-001
+fm search 990101_SYNTHETIC_0001_TEST
+fm search SYNTHETIC
+fm search GCF-2099 --status failed
+fm search GCF-2099 --stage analysis
 ```
 
-Search matches case-insensitive literal substrings of project names and run IDs;
-characters such as `.` and `[` have no special meaning. Quote queries containing
-shell metacharacters or spaces. Each matching run appears once, with all its
-associated projects, in the same columns and run-ID order as `list`. Completed
-and archived runs are included even when their output directories no longer exist.
+The table separates current project `status`, `stage`, `analysis` and `delivery`
+from explicitly labelled `parent_status` and `parent_stage`. A completed project
+remains completed when another project fails. `last_delivery` and its generation
+identify a recorded earlier success, separately from the current analysis
+generation: a correction can be pending or failed while its prior successful
+delivery remains recorded. These are state records, not a fresh check that
+archives still exist. Priority and its source come from frozen scheduling records,
+never a fresh read of an editable SampleSheet. Missing historical detail displays
+`unavailable`; unidentified queued/discovered projects display `<unidentified>`.
+See [project listing](docs/project-listing.md) for all columns and exact mappings.
+`eligibility` and `waiting_reason` show requested/applied project holds separately
+from processing outcomes. Use `fm hold RUN --project GCF-2099-002 --reason TEXT`
+and the matching `fm release` command; both support repeatable projects and
+read-only `--dry-run`. `--status held` finds held unfinished work.
 
-JSON state is authoritative over compatibility inventory for the same run ID,
-including its projects, status and stage. Filtering a state-backed run out cannot
-bring back its historical inventory row. Legacy-only entries for the same run ID
-are grouped across path spellings; their projects are combined and the first
-lexically sorted recorded path is displayed.
+Rows sort by run ID, then project. Completed and archived history stays visible
+when outputs are missing. JSON state is authoritative for the entire normalized
+run ID **before filtering**: excluded rows cannot reappear through stale inventory.
+Inventory-only duplicates collapse by project/run across path spellings.
 
-`--status` and `--stage` work exactly as for `list`: exact values filter the
-current status/stage, and `legacy` selects inventory-only runs. Legacy runs have
-stage `legacy` and status `completed` or `archived`. Both filters may be combined;
-unknown filter values produce no matches, as before.
+`--status` and `--stage` filter the **project** values in both commands. Shared
+preflight/conversion uses stage `demultiplexing`. The `legacy` status selector
+selects inventory-only rows; their stage is `legacy`, with status `completed` or
+`archived`. Unknown filter values produce no matches.
 
 A successful search exits **0**, including an empty result, which prints
 `No matching flowcells.` Empty or whitespace-only queries and other invalid
-arguments exit **2**; state errors exit **1**. `flowcell-manager search` behaves
-identically. `list` and `list-processed` remain available.
+arguments exit **2**; state errors exit **1**. `flowcell-manager` and `fm` use the
+same entry point. `list-processed` retains the compatibility inventory format.
+Listing/search do not recover state, refresh inputs, queue work or send mail.
 
-After rebuilding the image, follow the short
+After rebuilding the image, follow the
 [server smoke checks](docs/flowcell-search-integration-tests.md).
 
 ### Changes to a run
@@ -979,7 +1056,8 @@ For 10X libraries, finalization includes the extra flowcell-named mkfastq
 directory when present. Restored FASTQ layouts may omit that directory; BFQ
 logs its absence and archives the remaining inputs. Required project FASTQs,
 Stats, sample metadata and FASTQ manifests remain required, and every nonzero
-archiver exit still fails finalization.
+archiver exit still fails finalization. Recursive exclusions prevent recognized
+Undetermined FASTQs in that directory from entering new delivery archives.
 
 Archive command output is saved under `logDir` as
 `<run-id>_<project>_archive_fastq.log` and `<run-id>_<project>_archive_qc.log`.
@@ -1056,10 +1134,12 @@ harmless.
 
 Analysis, reporting and finalization reruns are refused while any previously
 selected FASTQ is missing or a restored regular file differs from its recorded
-size. Restore all selected FASTQs (including Undetermined reads) from the retained
+size. Restore selected project/sample FASTQs from the retained
 delivery archives to their original paths before queueing those reruns. This is
 an existence/size check, not integrity verification. **Keep the archives until
 restoration succeeds**: those reruns invalidate delivery archives when queued.
+Recognized demultiplexer-generated Undetermined FASTQs are exempt from restoration,
+including paths recorded by older versions; new delivery archives exclude them.
 Alternatively, rerun from demultiplexing to regenerate reads from instrument data;
 a successful demultiplexing stage clears the old restoration requirement.
 
@@ -1103,7 +1183,8 @@ The demultiplexer name and image tag (or digest) are recorded in the flowcell st
 
 Each run is written below `<outputDir>/<run-id>`. Important products include:
 
-- Demultiplexed project FASTQs and `Undetermined` FASTQs.
+- Demultiplexed project FASTQs; successful runs discard recognized `Undetermined`
+  FASTQs before analysis, retaining their conversion statistics and QC reports.
 - `Stats`, `InterOp`, `RunInfo.xml`, and `RunParameters.xml`.
 - Per-project sample information, MultiQC reports, archives, and archive MD5s.
 - `configmaker-analysis-<project>.json` records the samples actually discovered

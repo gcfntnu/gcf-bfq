@@ -236,7 +236,9 @@ class Scenario:
         elif command[:2] == ["7za", "a"]:
             target = Path(command[2])
             assert target.parent == self.output
-            assert all(Path(value).exists() for value in command[3:])
+            assert all(
+                Path(value).exists() for value in command[3:] if not value.startswith("-xr!")
+            )
             record(self.root, "7za", argv=command)
             target.write_text(LABEL + "\n" + json.dumps(command[3:]) + "\n")
         else:
@@ -279,6 +281,13 @@ class Scenario:
             (path.parent / f"md5sum_{path.stem}_archive.txt").write_text(
                 f"{afterFastq.file_md5(path)}  {path.name}\n"
             )
+
+    def archive_checksum(self, path):
+        """Hash one completed project archive without launching an external process."""
+        record(self.root, "archive-md5sum-process")
+        (path.parent / f"md5sum_{path.stem}_archive.txt").write_text(
+            f"{afterFastq.file_md5(path)}  {path.name}\n"
+        )
 
 
 def make_scenario(root, monkeypatch):
@@ -357,6 +366,7 @@ def make_scenario(root, monkeypatch):
     monkeypatch.setattr(afterFastq, "run_logged_command", scenario.logged_command)
     monkeypatch.setattr(afterFastq, "multiqc_stats", scenario.sequencing_report)
     monkeypatch.setattr(afterFastq, "md5sum_archive_worker", scenario.archive_checksums)
+    monkeypatch.setattr(afterFastq, "md5sum_archive", scenario.archive_checksum)
     monkeypatch.setattr(smtplib, "SMTP", smtp_double(root))
     monkeypatch.setattr(smtplib, "SMTP_SSL", smtp_double(root))
     return scenario

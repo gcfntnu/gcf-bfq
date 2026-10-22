@@ -4,6 +4,13 @@ Issue: #122. These checks validate notification recovery without requiring a
 failed scientific workflow. No production data changes or real email were used
 in automated tests. Use an approved test run/recipient on the server.
 
+Issue #160 adds per-project analysis and finalization commit boundaries. New
+intents include a project and generation; completion of another project or a
+later flowcell-stage failure cannot revoke their successful producing outcome.
+Existing combined intents retain their stage-based rules. See
+[project scheduling and progress](project-scheduling.md) for the project timing,
+immutable report copies, partial delivery recovery and additional server checks.
+
 ## Server checks
 
 1. Build/install the issue branch and verify:

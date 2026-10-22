@@ -12,7 +12,7 @@ import math
 
 from html import escape
 
-from bcl2fastq_pipeline import analysis_snapshots
+from bcl2fastq_pipeline import analysis_snapshots, workflow_config
 
 
 def _count(value):
@@ -73,12 +73,12 @@ def _fastp(cfg, project):
         "q30_reports_used": 0,
         "warnings": [],
     }
-    pipeline = getattr(cfg.run, "pipeline", None)
+    pipeline = workflow_config.project_workflow(cfg, project)
     if not isinstance(pipeline, str) or not pipeline or "/" in pipeline or pipeline in {".", ".."}:
         result["warnings"].append("fastp summary unavailable: workflow is not recorded.")
         return result
     try:
-        workdir = analysis_snapshots.workdir_path(cfg.run.run_id, project)
+        workdir = workflow_config.project_workdir(cfg, project)
         marker = json.loads((workdir / analysis_snapshots.MARKER).read_text())
         if marker.get("run_id") != cfg.run.run_id or marker.get("project") != project:
             raise ValueError("Workdir belongs to another run")

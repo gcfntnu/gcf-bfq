@@ -14,6 +14,7 @@ from bcl2fastq_pipeline.state import (
     apply_cleanup,
     cleanup_plan,
     new_state,
+    validate_restart_boundary,
     validate_restored_fastqs,
     validate_state,
 )
@@ -171,6 +172,26 @@ def test_illegal_transitions_are_refused(tmp_path):
     store.begin_attempt(RUN_ID)
     with pytest.raises(StateConflictError, match="not queued"):
         store.start_stage(RUN_ID, "analysis")
+
+
+@pytest.mark.parametrize("boundary", ["reporting", "finalization"])
+def test_delivery_only_correction_failure_can_retry_delivery(tmp_path, boundary):
+    state = new_state(
+        "990101_TEST_0001_SYNTHETIC",
+        tmp_path / "source",
+        tmp_path / "output",
+        origin="new",
+        start_stage="demultiplexing",
+    )
+    for stage in state["stages"].values():
+        stage["status"] = "completed"
+    state["status"] = "failed"
+    state["restart_request"] = {"project_correction_id": "test-correction"}
+    state["project_corrections"] = [
+        {"id": "test-correction", "status": "rolled_back", "from_stage": boundary}
+    ]
+
+    validate_restart_boundary(state, boundary)
 
 
 def test_failure_records_signature_report_and_attempt(tmp_path):

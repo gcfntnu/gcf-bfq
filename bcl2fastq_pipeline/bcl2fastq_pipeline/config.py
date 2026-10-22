@@ -98,6 +98,31 @@ class StaticConfig:
 
 
 @dataclass
+class ProjectConfig:
+    """One authoritative input pair and its independent execution settings."""
+
+    project_id: str
+    sample_sheet: Path
+    submission_form: Path
+    custom: dict[str, str] = field(default_factory=dict)
+    effective_read_geometry: tuple[int, ...] = ()
+    workflow_selection: LibprepSelection | None = None
+    pipeline: str | None = None
+
+    @property
+    def libprep(self):
+        return self.custom.get("Libprep")
+
+    @property
+    def organism(self):
+        return self.custom.get("Organism")
+
+    @property
+    def sensitive(self):
+        return self.custom.get("SensitiveData", "").strip().lower() in ("true", "1", "yes")
+
+
+@dataclass
 class RunContext:
     """
     Mutable configuration that describes the currently processed flowcell.
@@ -136,6 +161,16 @@ class RunContext:
     rerun: bool = False
     sensitive: bool = False
     custom: dict[str, str] = field(default_factory=dict)
+    input_selection: object | None = None
+    project_configs: dict[str, ProjectConfig] = field(default_factory=dict)
+    project_workflows: dict[str, str] = field(default_factory=dict)
+    project_workdirs: dict[str, Path] = field(default_factory=dict)
+    selected_projects: set[str] | None = None
+    output_override: Path | None = None
+    demultiplexing_plan: object | None = None
+    project_schedule: dict | None = None
+    project_lifecycle: object | None = None
+    batch_projects: set[str] | None = None
 
     def __repr__(self):
         return f"<RunContext run_id={self.run_id!r} pipeline={self.pipeline!r} user={self.user!r}>"
@@ -221,6 +256,16 @@ class RunContext:
         self.pipeline = None
         self.libprep_config = None
         self.workflow_selection = None
+        self.input_selection = None
+        self.project_configs.clear()
+        self.project_workflows.clear()
+        self.project_workdirs.clear()
+        self.selected_projects = None
+        self.output_override = None
+        self.demultiplexing_plan = None
+        self.project_schedule = None
+        self.batch_projects = None
+        self.project_lifecycle = None
         self.custom.clear()
 
 
@@ -308,7 +353,7 @@ class PipelineConfig:
     def output_path(self) -> Path | None:
         if not self.run.run_id:
             return None
-        return self.static.paths.output_dir / self.run.run_id
+        return self.run.output_override or self.static.paths.output_dir / self.run.run_id
 
     def to_file(self, out_path: Path) -> None:
         """
@@ -361,6 +406,19 @@ class PipelineConfig:
             "user": self.run.user,
             "rerun": self.run.rerun,
             "custom": self.run.custom or {},
+            "project_schedule": self.run.project_schedule,
+            "projects": {
+                project: {
+                    "sample_sheet": str(context.sample_sheet),
+                    "submission_form": str(context.submission_form),
+                    "libprep": context.libprep,
+                    "organism": context.organism,
+                    "custom": context.custom,
+                    "effective_read_geometry": list(context.effective_read_geometry),
+                    "workflow": self.run.project_workflows.get(project, context.pipeline),
+                }
+                for project, context in sorted(self.run.project_configs.items())
+            },
         }
 
         cfg_dict = {"static": static_dict, "run": run_fields}
