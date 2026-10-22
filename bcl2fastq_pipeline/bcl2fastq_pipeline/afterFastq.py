@@ -518,7 +518,8 @@ def snakemake_command(*, resume=False, target="multiqc_report", cores=32):
 
 
 def full_align(cfg, *, resume=None):
-    workflow_config.prepare_projects(cfg)
+    if not resume:
+        workflow_config.prepare_analysis_projects(cfg)
     selection = None
     if not resume and not cfg.run.project_configs:
         selection = select_workflow(cfg)

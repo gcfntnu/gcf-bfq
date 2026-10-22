@@ -61,10 +61,13 @@ leases still protect the edit; `--force` does not bypass them.
 
 Compatible projects use one combined pass by default. Differing supported
 per-sample settings are represented in the derived v2 SampleSheet. When global
-settings or legacy executables cannot share a pass, assign explicit
+BCL Convert settings cannot share a pass, assign explicit
 `DemultiplexingPass` labels in the affected project sheets. The planner fails
 before processing when settings in the same pass disagree. Whole-flowcell
-collision and identity validation still applies across passes.
+collision and identity validation still applies across passes. Mixed legacy/direct
+backend plans fail before execution because their shared assay/index collision
+contract is unverified; use a supported modern BCL Convert profile or retain the
+standalone historical route.
 
 Separate passes retain reports under `Reports/passes/<label>/`. Project FASTQs are
 published without overwriting another pass's output. Early QC combines assigned
@@ -85,6 +88,8 @@ identity, profile bytes/hash, effective settings, selected backend, command and
 software/image identity. Each project receives its own delivery provenance;
 downstream reruns retain its original conversion identity. Source inputs remain
 curated and authoritative; derived sheets do not replace them.
+Analysis uses the effective biological read lengths from that retained conversion,
+including explicit cycle crops; later metadata edits cannot change retained FASTQs.
 
 ## Verification
 

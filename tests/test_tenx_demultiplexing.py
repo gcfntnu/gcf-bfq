@@ -16,7 +16,13 @@ from configmaker.indexes import normalize_indexes
 from test_project_execution import PROJECTS, pair
 from test_state_integration import configured_bfq
 
-from bcl2fastq_pipeline import demultiplexing, index_sequences, makeFastq, tenx_demultiplexing
+from bcl2fastq_pipeline import (
+    demultiplexing,
+    index_sequences,
+    makeFastq,
+    tenx_demultiplexing,
+    workflow_config,
+)
 
 GEX = "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3"
 MULTIOME = "10X Genomics Chromium Single Cell Multiome Gene Expression"
@@ -301,3 +307,38 @@ def test_unverified_converter_version_fails_before_execution(profiles, tmp_path,
     ):
         makeFastq.bcl2fq()
     convert.assert_not_called()
+
+
+def test_mixed_legacy_pass_cannot_bypass_whole_flowcell_validation(profiles, tmp_path):
+    first = tenx_pair(tmp_path, custom="Demultiplexer,mkfastq\nDemultiplexingPass,legacy\n")
+    second = pair(tmp_path, PROJECTS[1], index="CCCCCCCCCC")
+    with pytest.raises(demultiplexing.DemultiplexingPlanError, match="collision contract"):
+        demultiplexing.plan(
+            SimpleNamespace(pairs=(first, second)), run_info=physical(tmp_path / "RunInfo.xml")
+        )
+
+
+@pytest.mark.parametrize("multi_pair", [False, True])
+def test_analysis_geometry_follows_retained_conversion_after_source_edit(
+    profiles, tmp_path, multi_pair
+):
+    cfg, source, output = configured_bfq(tmp_path)
+    input_pair = tenx_pair(output, settings="OverrideCycles,Y28;I8N2;N10;Y80N10\n")
+    physical(output / "RunInfo.xml")
+    cfg.run.input_selection = SimpleNamespace(
+        pairs=(input_pair,) if multi_pair else (),
+        sample_sheet=input_pair.sample_sheet,
+        submission_form=input_pair.submission_form,
+    )
+    demultiplexing.prepare(cfg)
+    demultiplexing.record(cfg, status="completed")
+    demultiplexing.delivery_provenance(cfg, input_pair.project_id, refresh=True)
+    # A metadata correction cannot change the read lengths of retained FASTQs.
+    input_pair.sample_sheet.write_text(input_pair.sample_sheet.read_text().replace("Y80N10", "Y90"))
+    context = workflow_config.prepare_analysis_projects(cfg)[input_pair.project_id]
+    assert context.effective_read_geometry == (28, 80)
+    assert context.sample_sheet == input_pair.sample_sheet
+    retained = output / "provenance/project-demultiplexing" / input_pair.project_id
+    (retained / "SampleSheet.project.csv").write_text("corrupted retained sheet")
+    with pytest.raises(demultiplexing.DemultiplexingPlanError, match="hash differs"):
+        workflow_config.prepare_analysis_projects(cfg)

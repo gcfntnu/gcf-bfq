@@ -393,6 +393,12 @@ def plan(selection, *, run_info=None, force_bcl2fastq=False):
         plans.append(item)
     if len(plans) == 1:
         return plans[0]
+    if any(item["tool"] != "bcl-convert" for item in plans):
+        raise DemultiplexingPlanError(
+            "Mixed legacy/direct-converter passes lack a verified shared assay/index collision contract. "
+            "Use BCL Convert for supported modern projects or retain the historical run on its standalone mkfastq route. "
+            "Separate BCL Convert passes remain supported for conflicting global settings."
+        )
     return {
         "schema_version": 1,
         "tool": "multiple",
