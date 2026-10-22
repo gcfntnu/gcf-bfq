@@ -150,6 +150,27 @@ def test_equivalent_explicit_and_implicit_output_defaults_combine(profiles, tmp_
     assert result["global_settings"]["NoLaneSplitting"] == "true"
 
 
+def test_mixed_single_and_dual_indexes_leave_unused_mismatch_blank(profiles, tmp_path):
+    single = tenx_pair(tmp_path)
+    dual = tenx_pair(
+        tmp_path,
+        project=PROJECTS[1],
+        index="SI-TT-A1",
+        kit=MULTIOME,
+        custom="Index2Orientation,forward\n",
+    )
+    result = demultiplexing.plan(
+        SimpleNamespace(pairs=(single, dual)), run_info=physical(tmp_path / "RunInfo.xml")
+    )
+    lines = result["sample_sheet_content"].splitlines()
+    data = lines[lines.index("[BCLConvert_Data]") + 1 :]
+    rows = list(csv.DictReader(data))
+    assert len(rows) == 5
+    assert all(row["BarcodeMismatchesIndex2"] == "" for row in rows if not row["index2"])
+    assert [row["BarcodeMismatchesIndex2"] for row in rows if row["index2"]] == ["1"]
+    assert {row["OverrideCycles"] for row in rows} == {"Y28;I8N2;N10;Y90", "Y28;I10;I10;Y90"}
+
+
 @pytest.mark.parametrize(
     "orientation,expected", [("forward", "AGTGTTACCT"), ("reverse-complement", "AGGTAACACT")]
 )

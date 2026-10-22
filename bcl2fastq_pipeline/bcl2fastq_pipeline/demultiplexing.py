@@ -285,7 +285,9 @@ def _combined_plan(selection, *, run_info=None, force_bcl2fastq=False):
             if key.startswith("BarcodeMismatchesIndex"):
                 index = "index" if key.endswith("1") else "index2"
                 if not row.get(index) or row.get(index, "").casefold() == "na":
-                    value = "0"
+                    # BCL Convert 4.2.4 rejects even zero when this row's
+                    # OverrideCycles masks the corresponding index entirely.
+                    value = ""
             effective[key] = value
         writer.writerow([effective.get(key, "") for key in columns])
         mappings.append(

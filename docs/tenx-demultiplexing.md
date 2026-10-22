@@ -68,8 +68,8 @@ per-sample settings are represented in the derived v2 SampleSheet. When global
 BCL Convert settings cannot share a pass, assign explicit
 `DemultiplexingPass` labels in the affected project sheets. The planner fails
 before processing when settings in the same pass disagree. Whole-flowcell
-collision and identity validation still applies across passes. Mixed legacy/direct
-backend plans fail before execution because their shared assay/index collision
+collision and identity validation still applies across passes. Independent multiple-pass
+plans containing a legacy backend fail before execution because their shared assay/index collision
 contract is unverified; use a supported modern BCL Convert profile or retain the
 standalone historical route.
 
