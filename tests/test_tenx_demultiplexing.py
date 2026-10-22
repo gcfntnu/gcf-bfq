@@ -116,10 +116,23 @@ def test_single_named_index_preserves_all_oligos_and_one_library(profiles, tmp_p
     parsed = list(csv.reader(io.StringIO(result["sample_sheet_content"])))
     header = parsed[parsed.index(["[BCLConvert_Data]"]) + 1]
     assert "TrimUMI" not in result["global_settings"]
-    assert "index2" not in header
+    assert "index2" in header
+    assert all(not row["effective_parameters"]["index2"] for row in result["rows"])
     assert "BarcodeMismatchesIndex2" not in header
     assert source.sample_sheet.read_bytes() == before
     assert result["sources"][0]["profile"]["sha256"]
+
+
+def test_physical_single_index_run_does_not_add_an_i5_column(profiles, tmp_path):
+    source = tenx_pair(tmp_path)
+    result = demultiplexing.plan(
+        SimpleNamespace(pairs=(source,)),
+        run_info=physical(tmp_path / "RunInfo.xml", cycles=(28, 8, 56)),
+    )
+    parsed = list(csv.reader(io.StringIO(result["sample_sheet_content"])))
+    header = parsed[parsed.index(["[BCLConvert_Data]"]) + 1]
+    assert "index2" not in header
+    assert "BarcodeMismatchesIndex2" not in header
 
 
 @pytest.mark.parametrize(

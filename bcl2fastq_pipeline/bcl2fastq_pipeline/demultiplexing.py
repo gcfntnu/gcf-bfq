@@ -255,6 +255,15 @@ def _combined_plan(selection, *, run_info=None, force_bcl2fastq=False):
         # BFQ names reads by Sample_ID; keep the optional name in source provenance.
         and not (version_two and key == "Sample_Name")
     ]
+    physical_mask = _physical_mask(run_info)
+    if (
+        physical_mask
+        and sum(read.startswith("I") for read in physical_mask.split(";")) == 2
+        and "index2" not in columns
+    ):
+        # 4.2.4 requires this column for physical dual-index runs, including
+        # separate single-index passes that mask every i5 cycle with N.
+        columns.append("index2")
     columns += sorted(per_sample)
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, lineterminator="\n")
