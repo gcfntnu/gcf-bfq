@@ -100,6 +100,18 @@ def configure(custom, settings, rows, run_info):
     except (OSError, ET.ParseError, ValueError, KeyError) as error:
         raise ProfileError(f"Invalid physical 10x read structure: {error}") from error
     effective = dict(settings)
+    if effective.get("FastqCompressionFormat", "gzip").lower() != "gzip":
+        raise ProfileError(
+            "10x consumers require gzip FASTQs; remove FastqCompressionFormat or set it to gzip"
+        )
+    if "FastqCompressionFormat" in effective:
+        effective["FastqCompressionFormat"] = "gzip"
+    if effective.get("NoLaneSplitting", "1").lower() not in {"1", "true"}:
+        raise ProfileError(
+            "NoLaneSplitting conflicts with BFQ's --no-lane-splitting true command; remove it or set it to 1"
+        )
+    if "NoLaneSplitting" in effective:
+        effective["NoLaneSplitting"] = "1"
     if "TrimUMI" in effective:
         raise ProfileError(
             "Remove TrimUMI from 10x settings: barcode/UMI cycles are retained as biological Y cycles; BCL Convert 4.2.4 rejects TrimUMI when no U cycles are defined"

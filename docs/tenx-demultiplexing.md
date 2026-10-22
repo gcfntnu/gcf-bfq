@@ -50,6 +50,8 @@ cell barcode/UMI cycles. Existing adapter trimming is rejected; it is never
 silently enabled on barcode reads. Explicit cycle masks, mismatch allowances and
 trimming/read-retention settings are checked against the selected profile.
 See the matrix for exact minima and BCL Convert 4.2.4 settings.
+Direct 10x output uses gzip FASTQs and BFQ's fixed lane-merge command. Conflicting
+`FastqCompressionFormat` or `NoLaneSplitting` settings fail during preflight.
 
 `fm rerun RUN --toggle-index1` and `--toggle-index2` continue to be deliberate,
 source-relative sequence corrections. For symbolic inputs, shared tools first

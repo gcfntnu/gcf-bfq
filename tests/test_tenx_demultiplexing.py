@@ -164,6 +164,8 @@ def test_dual_symbolic_sequence_orientation_is_explicit_and_used_once(
         ("orientation", "Index2Orientation"),
         ("trim", "trimming"),
         ("trim-umi", "Remove TrimUMI"),
+        ("compression", "gzip FASTQs"),
+        ("lane-splitting", "NoLaneSplitting conflicts"),
         ("short", "barcode/UMI"),
         ("cycles", "index allocation"),
         ("atac", "retains legacy"),
@@ -189,6 +191,11 @@ def test_unsafe_profiles_fail_before_execution(profiles, tmp_path, change, match
     elif change == "trim-umi":
         source.sample_sheet.write_text(
             source.sample_sheet.read_text().replace("[Settings]\n", "[Settings]\nTrimUMI,0\n")
+        )
+    elif change in {"compression", "lane-splitting"}:
+        setting = "FastqCompressionFormat,ora" if change == "compression" else "NoLaneSplitting,0"
+        source.sample_sheet.write_text(
+            source.sample_sheet.read_text().replace("[Settings]\n", f"[Settings]\n{setting}\n")
         )
     elif change == "short":
         cycles = (26, 10, 10, 90)
