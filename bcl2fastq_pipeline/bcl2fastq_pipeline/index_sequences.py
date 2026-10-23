@@ -9,6 +9,7 @@ content, delimiters, quoting, the BOM, and each existing line ending exactly.
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 
 from bcl2fastq_pipeline.state import StateError
@@ -41,6 +42,15 @@ class _Cell:
 class _Sheet:
     columns: dict[str, int]
     rows: list[list[_Cell]]
+
+
+def _expanded(content):
+    from configmaker.indexes import IndexNormalizationError, expand_samplesheet  # noqa: PLC0415
+
+    try:
+        return expand_samplesheet(content)
+    except (IndexNormalizationError, UnicodeError) as error:
+        raise IndexSequenceError(f"Cannot expand UTF-8 SampleSheet: {error}") from error
 
 
 def _records(content: bytes) -> list[list[_Cell]]:
@@ -191,6 +201,7 @@ def transform(content: bytes, indexes: tuple[str, ...]) -> TransformResult:
     selected = tuple(dict.fromkeys(indexes))
     if not selected or any(index not in INDEX_COLUMNS for index in selected):
         raise IndexSequenceError("Select index1, index2, or both for reverse-complementing")
+    content = _expanded(content)
     sheet = _read_sheet(content)
     replacements = []
     counts = {}
@@ -251,7 +262,7 @@ def _result(status: str, detail: str) -> dict[str, str]:
     return {"status": status, "detail": detail}
 
 
-def _compare_index(current: _Sheet, source: _Sheet, index: str) -> dict[str, str]:
+def _compare_index(current: _Sheet, source: _Sheet, index: str) -> dict[str, str]:  # noqa: PLR0911
     column = INDEX_COLUMNS[index]
     if column not in current.columns:
         return _result("not_present", f"{column} is absent from the effective SampleSheet")
@@ -268,9 +279,40 @@ def _compare_index(current: _Sheet, source: _Sheet, index: str) -> dict[str, str
     except IndexSequenceError as error:
         return _result("unavailable", str(error))
     if len(set(current_keys)) != len(current_keys) or len(set(source_keys)) != len(source_keys):
+        if (len(set(current_keys)) == len(current_keys)) != (
+            len(set(source_keys)) == len(source_keys)
+        ):
+            return _result(
+                "ambiguous",
+                "Duplicate sample/lane keys prevent an unambiguous comparison with the source",
+            )
+        current_groups, source_groups = defaultdict(Counter), defaultdict(Counter)
+        for key, cell in zip(current_keys, current_cells, strict=True):
+            current_groups[key][cell.value.upper()] += 1
+        for key, cell in zip(source_keys, source_cells, strict=True):
+            source_groups[key][cell.value.upper()] += 1
+        if set(current_groups) != set(source_groups):
+            return _result("modified", "Sample/lane entries differ from the source SampleSheet")
+        evidence = set()
+        for key, originals in source_groups.items():
+            reversed_values = Counter(
+                {reverse_complement(value): count for value, count in originals.items()}
+            )
+            current_values = current_groups[key]
+            if current_values == originals == reversed_values:
+                continue
+            if current_values == originals:
+                evidence.add("original")
+            elif current_values == reversed_values:
+                evidence.add("reversed")
+            else:
+                return _result("modified", "Expanded index assignments differ from the source")
+        if len(evidence) == 1:
+            status = evidence.pop()
+            return _result(status, f"Expanded assignments are {status} relative to source")
         return _result(
-            "ambiguous",
-            "Duplicate sample/lane keys prevent an unambiguous comparison with the source",
+            "mixed" if evidence else "ambiguous",
+            "Expanded assignments have mixed or indistinguishable orientations",
         )
     if set(current_keys) != set(source_keys):
         return _result("modified", "Sample/lane entries differ from the source SampleSheet")
@@ -323,8 +365,8 @@ def orientation(content: bytes, source_content: bytes) -> dict[str, dict[str, st
     data produces a status, never an exception that would prevent a valid edit.
     """
     try:
-        current = _read_sheet(content)
-        source = _read_sheet(source_content)
+        current = _read_sheet(_expanded(content))
+        source = _read_sheet(_expanded(source_content))
     except IndexSequenceError as error:
         return {index: _result("unavailable", str(error)) for index in INDEX_COLUMNS}
     return {index: _compare_index(current, source, index) for index in INDEX_COLUMNS}

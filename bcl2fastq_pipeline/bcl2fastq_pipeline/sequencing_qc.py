@@ -554,6 +554,49 @@ def _configuration(result):
     }
 
 
+def _planned_sources(cfg, output, tool, warnings):
+    from bcl2fastq_pipeline.demultiplexing import pass_plans  # noqa: PLC0415
+
+    plan = getattr(cfg.run, "demultiplexing_plan", None)
+    if not plan or plan.get("passes", 1) == 1:
+        module, source = _find_source(output, tool)
+        return module, [source], _sheet_samples(cfg.run.sample_sheet, warnings)
+    samples, sources = {}, []
+    for item in pass_plans(plan):
+        samples.update(_sheet_samples(item["derived_sample_sheet"], warnings))
+        _module, source = _find_source(Path(item["output_directory"]), item["tool"])
+        sources.append(source)
+    warnings.append(
+        "Separate conversion passes: assigned libraries are combined once; per-pass unknown indexes and native reports remain in Reports/passes. Combined Undetermined counts are unavailable."
+    )
+    return "custom_content", sources, samples
+
+
+def _parse_sources(sources, samples):
+    lanes, unknown = {}, None
+    for source in sources:
+        parser = (
+            _csv_demux
+            if source.suffix == ".csv"
+            else _json_demux
+            if source.suffix == ".json"
+            else _xml_demux
+        )
+        current, current_unknown = parser(source, samples)
+        if not current:
+            raise ValueError("No lane assignment statistics found")
+        for lane, metrics in current.items():
+            if lane in lanes and metrics["total_reads"] != lanes[lane]["total_reads"]:
+                raise ValueError("Separate passes disagree on physical lane cluster totals")
+            lanes[lane] = metrics
+        unknown = current_unknown
+    if len(sources) > 1:
+        for metrics in lanes.values():
+            metrics["undetermined_reads"] = None
+        unknown = None
+    return lanes, unknown
+
+
 def generate(cfg, tool=None):
     """Generate one report, returning durable JSON-safe notification context.
 
@@ -565,8 +608,8 @@ def generate(cfg, tool=None):
     inputs = report_dir / "inputs"
     inputs.mkdir(parents=True, exist_ok=True)
     warnings = []
-    samples = _sheet_samples(cfg.run.sample_sheet, warnings)
-    module, source = _find_source(output, tool)
+    module, sources, samples = _planned_sources(cfg, output, tool, warnings)
+    source = sources[0]
     geometry = _run_metadata(cfg, inputs, warnings)
     # Avoid duplicate native/legacy inputs and ensure the BCL Convert module sees
     # RunInfo.xml in exactly the same directory as Demultiplex_Stats.csv.
@@ -588,16 +631,7 @@ def generate(cfg, tool=None):
         ):
             shutil.copy2(candidate, target)
     try:
-        parser = (
-            _csv_demux
-            if source.suffix == ".csv"
-            else _json_demux
-            if source.suffix == ".json"
-            else _xml_demux
-        )
-        lanes, unknown = parser(source, samples)
-        if not lanes:
-            raise ValueError("No lane assignment statistics found")
+        lanes, unknown = _parse_sources(sources, samples)
     except (OSError, ValueError, KeyError, TypeError, ET.ParseError) as error:
         raise RuntimeError(f"Unable to read demultiplexer statistics {source}: {error}") from error
     for sample in samples.values():
@@ -652,6 +686,7 @@ def generate(cfg, tool=None):
         "read_geometry": geometry,
         "demultiplexer": module,
         "stats_source": str(source),
+        "stats_sources": [str(item) for item in sources],
         "samples": sorted(
             samples.values(), key=lambda sample: (sample["project"], sample["sample_id"])
         ),

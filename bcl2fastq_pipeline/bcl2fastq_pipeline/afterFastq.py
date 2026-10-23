@@ -375,7 +375,7 @@ def archive_worker(cfg, *, projects=None):
         )
         # A project delivery retains the exact combined conversion inputs and row
         # mappings that contributed its FASTQs, including source hashes.
-        if project_config:
+        if project_config or getattr(cfg.run, "demultiplexing_plan", None):
             from bcl2fastq_pipeline import demultiplexing  # noqa: PLC0415
 
             demux_provenance = demultiplexing.delivery_provenance(cfg, p)
@@ -518,7 +518,8 @@ def snakemake_command(*, resume=False, target="multiqc_report", cores=32):
 
 
 def full_align(cfg, *, resume=None):
-    workflow_config.prepare_projects(cfg)
+    if not resume:
+        workflow_config.prepare_analysis_projects(cfg)
     selection = None
     if not resume and not cfg.run.project_configs:
         selection = select_workflow(cfg)

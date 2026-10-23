@@ -155,3 +155,8 @@ Use the relevant existing guide to specify the remaining manual integration:
 Real BCL conversion, container bindings, scientific workflow outputs, actual
 MultiQC compatibility, SMTP delivery and deployed mounts need the relevant server
 checks. Tests that replace these operations prove BFQ's surrounding logic only.
+
+The [10x conversion contract](tenx-demultiplexing.md) adds independent workflow-owned
+backend profiles, shared tools index expansion, explicit separate passes and
+conversion provenance. Its [shared workflow matrix](https://github.com/gcfntnu/gcf-workflows/blob/bfq-dev/docs/tenx-demultiplexing.md)
+records actual integration and retained legacy limitations.

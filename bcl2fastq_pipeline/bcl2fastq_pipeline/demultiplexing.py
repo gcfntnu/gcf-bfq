@@ -8,10 +8,13 @@ import csv
 import hashlib
 import io
 import json
+import re
 import xml.etree.ElementTree as ET
 
 from pathlib import Path
+from types import SimpleNamespace
 
+from bcl2fastq_pipeline import tenx_demultiplexing
 from bcl2fastq_pipeline.config import parse_custom_options
 
 PER_SAMPLE_SETTINGS = {
@@ -49,6 +52,9 @@ ANNOTATION_COLUMNS = {
 }
 CANONICAL = {key.casefold(): key for key in GLOBAL_SETTINGS | DATA_COLUMNS}
 DEFAULTS = {
+    "FastqCompressionFormat": "gzip",
+    # BFQ explicitly selects this in the command, independently of converter defaults.
+    "NoLaneSplitting": "true",
     "BarcodeMismatchesIndex1": "1",
     "BarcodeMismatchesIndex2": "1",
     "AdapterRead1": "na",
@@ -139,7 +145,7 @@ def _physical_mask(run_info):
     )
 
 
-def plan(selection, *, run_info=None, force_bcl2fastq=False):
+def _combined_plan(selection, *, run_info=None, force_bcl2fastq=False):
     """Return one combined pass, or explain why the effective settings conflict."""
     pairs = sorted(selection.pairs, key=lambda pair: pair.project_id)
     if not pairs:
@@ -155,12 +161,30 @@ def plan(selection, *, run_info=None, force_bcl2fastq=False):
     all_rows = []
     for pair in pairs:
         custom, _ = parse_custom_options(Path(pair.sample_sheet))
-        if "10X Genomics" in custom.get("Libprep", ""):
-            raise DemultiplexingPlanError(
-                f"{pair.project_id}: multi-pair mkfastq/10x conversion is not supported by the "
-                "combined BCL Convert planner. Use a supported explicit backend plan (BFQ #156)."
-            )
         settings, rows = _sheet(pair.sample_sheet)
+        if getattr(pair, "legacy_sheet", False):
+            rows = [
+                (number, row)
+                for number, row in rows
+                if row.get("Sample_Project") == pair.project_id
+            ]
+        try:
+            profile, settings, rows = tenx_demultiplexing.configure(
+                custom, settings, rows, run_info
+            )
+        except tenx_demultiplexing.ProfileError as error:
+            raise DemultiplexingPlanError(str(error)) from error
+        if profile["backend"] != "bcl-convert":
+            if len({str(member.sample_sheet) for member in pairs}) > 1:
+                raise DemultiplexingPlanError(
+                    "Legacy backends require an explicit separate DemultiplexingPass per project"
+                )
+            legacy = _legacy_plan(pair, custom, profile)
+            legacy["projects"] = sorted(member.project_id for member in pairs)
+            legacy["sources"] = [
+                {**legacy["sources"][0], "project": member.project_id} for member in pairs
+            ]
+            return legacy
         unsupported = set(settings) - GLOBAL_SETTINGS
         if unsupported and not force_bcl2fastq:
             raise DemultiplexingPlanError(
@@ -177,6 +201,7 @@ def plan(selection, *, run_info=None, force_bcl2fastq=False):
                 "submission_form_sha256": _sha256(pair.submission_form),
                 "custom": custom,
                 "settings": settings,
+                "profile": profile,
             }
         )
         for number, row in rows:
@@ -211,15 +236,34 @@ def plan(selection, *, run_info=None, force_bcl2fastq=False):
         raise DemultiplexingPlanError(
             "FORCE_BCL2FASTQ cannot represent per-sample conversion settings; use BCL Convert >=4.1."
         )
+    for index, mismatch in (
+        ("index", "BarcodeMismatchesIndex1"),
+        ("index2", "BarcodeMismatchesIndex2"),
+    ):
+        if not any(row.get(index) for *_source, row in all_rows):
+            per_sample.discard(mismatch)
+            globals_.pop(mismatch, None)
     version_two = bool(per_sample) and not force_bcl2fastq
     columns = [
         key
         for key in ("Lane", "Sample_ID", "Sample_Name", "Sample_Project", "index", "index2")
-        if any(key in row for *_source, row in all_rows)
+        if any(
+            key in row and (key not in {"index", "index2"} or row[key])
+            for *_source, row in all_rows
+        )
         # v2 rejects Sample_Name unless name-based output is explicitly enabled.
         # BFQ names reads by Sample_ID; keep the optional name in source provenance.
         and not (version_two and key == "Sample_Name")
     ]
+    physical_mask = _physical_mask(run_info)
+    if (
+        physical_mask
+        and sum(read.startswith("I") for read in physical_mask.split(";")) == 2
+        and "index2" not in columns
+    ):
+        # 4.2.4 requires this column for physical dual-index runs, including
+        # separate single-index passes that mask every i5 cycle with N.
+        columns.append("index2")
     columns += sorted(per_sample)
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, lineterminator="\n")
@@ -250,7 +294,9 @@ def plan(selection, *, run_info=None, force_bcl2fastq=False):
             if key.startswith("BarcodeMismatchesIndex"):
                 index = "index" if key.endswith("1") else "index2"
                 if not row.get(index) or row.get(index, "").casefold() == "na":
-                    value = "na"
+                    # BCL Convert 4.2.4 rejects even zero when this row's
+                    # OverrideCycles masks the corresponding index entirely.
+                    value = ""
             effective[key] = value
         writer.writerow([effective.get(key, "") for key in columns])
         mappings.append(
@@ -260,7 +306,10 @@ def plan(selection, *, run_info=None, force_bcl2fastq=False):
                 "source": source,
                 "source_row": source_row,
                 "sample_id": row.get("Sample_ID"),
-                "effective_parameters": effective,
+                "effective_parameters": {
+                    key: value for key, value in effective.items() if not key.startswith("_")
+                },
+                "index_provenance": row.get("_index_provenance"),
             }
         )
     content = buffer.getvalue()
@@ -279,6 +328,111 @@ def plan(selection, *, run_info=None, force_bcl2fastq=False):
     }
 
 
+def conversion_pairs(selection):
+    if getattr(selection, "pairs", ()):
+        return selection.pairs
+    if not getattr(selection, "sample_sheet", None):
+        return ()
+    _settings, rows = _sheet(selection.sample_sheet)
+    projects = sorted({row.get("Sample_Project") for _number, row in rows} - {None, ""})
+    return tuple(
+        SimpleNamespace(
+            project_id=project,
+            sample_sheet=selection.sample_sheet,
+            submission_form=selection.submission_form,
+            legacy_sheet=True,
+        )
+        for project in projects
+    )
+
+
+def needs_plan(selection):
+    if getattr(selection, "pairs", ()):
+        return True
+    custom, _ = parse_custom_options(Path(selection.sample_sheet))
+    return "10X Genomics" in custom.get("Libprep", "") or bool(custom.get("Demultiplexer"))
+
+
+def _legacy_plan(pair, custom, profile):
+    content = Path(pair.sample_sheet).read_text(encoding="utf-8-sig")
+    return {
+        "schema_version": 1,
+        "tool": profile.get("legacy_tool", profile["backend"]),
+        "backend": profile["backend"],
+        "passes": 1,
+        "sample_sheet_version": 1,
+        "projects": [pair.project_id],
+        "rows": [],
+        "global_settings": {},
+        "per_sample_settings": [],
+        "sources": [
+            {
+                "project": pair.project_id,
+                "sample_sheet": str(pair.sample_sheet),
+                "sample_sheet_sha256": _sha256(pair.sample_sheet),
+                "submission_form": str(pair.submission_form),
+                "submission_form_sha256": _sha256(pair.submission_form),
+                "custom": custom,
+                "profile": profile,
+                "settings": _sheet(pair.sample_sheet)[0],
+            }
+        ],
+        "sample_sheet_content": content,
+        "sample_sheet_sha256": hashlib.sha256(content.encode()).hexdigest(),
+    }
+
+
+def plan(selection, *, run_info=None, force_bcl2fastq=False):
+    """Combine compatible projects; separate passes require explicit source labels."""
+    pairs = conversion_pairs(selection)
+    if not pairs:
+        return None
+    if not getattr(selection, "pairs", ()):
+        custom, _ = parse_custom_options(Path(selection.sample_sheet))
+        if "10X Genomics" in custom.get("Libprep", ""):
+            # Historical single-sheet 10x routing ignored this ordinary-run
+            # override. The explicit workflow-owned profile still owns routing.
+            force_bcl2fastq = False
+    grouped = {}
+    for pair in pairs:
+        custom, _ = parse_custom_options(Path(pair.sample_sheet))
+        label = custom.get("DemultiplexingPass", "combined")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", label):
+            raise DemultiplexingPlanError(
+                "DemultiplexingPass must be an alphanumeric label with optional dash/underscore"
+            )
+        grouped.setdefault(label, []).append(pair)
+    plans = []
+    for label, members in sorted(grouped.items()):
+        item = _combined_plan(
+            SimpleNamespace(pairs=members), run_info=run_info, force_bcl2fastq=force_bcl2fastq
+        )
+        item["pass_id"] = label
+        if run_info:
+            item["run_info"] = {"path": str(run_info), "sha256": _sha256(run_info)}
+        plans.append(item)
+    if len(plans) == 1:
+        return plans[0]
+    if any(item["tool"] != "bcl-convert" for item in plans):
+        raise DemultiplexingPlanError(
+            "Mixed legacy/direct-converter passes lack a verified shared assay/index collision contract. "
+            "Use BCL Convert for supported modern projects or retain the historical run on its standalone mkfastq route. "
+            "Separate BCL Convert passes remain supported for conflicting global settings."
+        )
+    return {
+        "schema_version": 1,
+        "tool": "multiple",
+        "passes": len(plans),
+        "pass_plans": plans,
+        "projects": sorted(p.project_id for p in pairs),
+        "sources": [source for item in plans for source in item["sources"]],
+    }
+
+
+def pass_plans(result):
+    return result.get("pass_plans", [result])
+
+
 def prepare(cfg):
     """Freeze the derived sheet and its provenance inside this attempt's output."""
     import os  # noqa: PLC0415
@@ -293,27 +447,41 @@ def prepare(cfg):
     )
     destination = cfg.output_path / "provenance" / "demultiplexing"
     destination.mkdir(parents=True, exist_ok=True)
-    sheet = destination / "SampleSheet.combined.csv"
-    sheet.write_text(result["sample_sheet_content"], encoding="utf-8")
-    for pair in selection.pairs:
+    for item in pass_plans(result):
+        sheet = destination / f"SampleSheet.{item['pass_id']}.csv"
+        sheet.write_text(item["sample_sheet_content"], encoding="utf-8")
+        item["derived_sample_sheet"] = str(sheet)
+    for pair in conversion_pairs(selection):
         source = destination / "sources" / pair.project_id
         source.mkdir(parents=True, exist_ok=True)
-        (source / Path(pair.sample_sheet).name).write_bytes(Path(pair.sample_sheet).read_bytes())
-    result["derived_sample_sheet"] = str(sheet)
+        for path in (Path(pair.sample_sheet), Path(pair.submission_form)):
+            (source / path.name).write_bytes(path.read_bytes())
+    for item in pass_plans(result):
+        for source in item["sources"]:
+            profile = source.get("profile", {})
+            if profile.get("source"):
+                content = Path(profile["source"]).read_bytes()
+                if hashlib.sha256(content).hexdigest() != profile["sha256"]:
+                    raise DemultiplexingPlanError(
+                        "Demultiplexing profile changed while freezing conversion inputs"
+                    )
+                (destination / "demultiplexing.config").write_bytes(content)
+    sheet = Path(pass_plans(result)[0]["derived_sample_sheet"])
     cfg.run.demultiplexing_plan = result
     cfg.run.sample_sheet = sheet
     record(cfg)
     return sheet
 
 
-def record(cfg, *, version=None, command=None, status="prepared"):
+def record(cfg, *, version=None, command=None, status="prepared", item=None, image=None):  # noqa: PLR0913
     result = cfg.run.demultiplexing_plan
-    result.update({"status": status})
+    target = item if item is not None else result
+    target.update({"status": status})
     if version is not None:
-        result["tool_version"] = version
-        result["tool_image"] = version
+        target["tool_version"] = version
+        target["tool_image"] = image or version
     if command is not None:
-        result["command"] = command
+        target["command"] = command
     destination = cfg.output_path / "provenance" / "demultiplexing" / "plan.json"
     destination.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -355,6 +523,7 @@ def delivery_provenance(cfg, project, *, refresh=False):
     if not source.is_file():
         return None
     result = json.loads(source.read_text())
+    result = next((item for item in pass_plans(result) if project in item["projects"]), result)
     if project not in result["projects"]:
         raise DemultiplexingPlanError(
             f"Project {project} is absent from conversion provenance {source}"

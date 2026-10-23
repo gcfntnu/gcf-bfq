@@ -77,6 +77,43 @@ def prepare_projects(cfg):
     return cfg.run.project_configs
 
 
+def prepare_analysis_projects(cfg):
+    """Bind 10x consumers to the conversion retained with their actual FASTQs."""
+    from configmaker.project_pairs import derive_project_geometry  # noqa: PLC0415
+
+    from bcl2fastq_pipeline import demultiplexing  # noqa: PLC0415
+
+    projects = prepare_projects(cfg)
+    selection = getattr(cfg.run, "input_selection", None)
+    if selection is None:
+        return projects
+    for pair in demultiplexing.conversion_pairs(selection):
+        retained = demultiplexing.delivery_provenance(cfg, pair.project_id)
+        if retained is None:
+            continue
+        data = json.loads((retained / "plan.json").read_text())
+        if data.get("tool") != "bcl-convert" or not any(
+            source.get("profile") for source in data["sources"]
+        ):
+            continue
+        geometry = tuple(
+            derive_project_geometry(
+                retained / "SampleSheet.project.csv", run_info=physical_run_info(cfg)
+            )
+        )
+        context = projects.get(pair.project_id)
+        if context is None:
+            custom, _ = parse_custom_options(pair.sample_sheet)
+            context = ProjectConfig(
+                pair.project_id, Path(pair.sample_sheet), Path(pair.submission_form), custom
+            )
+            projects[pair.project_id] = context
+        if context.effective_read_geometry != geometry:
+            context.effective_read_geometry = geometry
+            context.workflow_selection = None
+    return projects
+
+
 def project_workflow(cfg, project):
     """Use the completed/selected workflow belonging to this project."""
     return getattr(cfg.run, "project_workflows", {}).get(project) or getattr(
