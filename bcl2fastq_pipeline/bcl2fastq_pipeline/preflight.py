@@ -167,6 +167,14 @@ def select_run_inputs(source_path, output_path, *, refresh=False, projects=None)
     """
     source = Path(source_path)
     output = Path(output_path)
+    geometry = next(
+        (
+            directory / "RunInfo.xml"
+            for directory in (output, source)
+            if (directory / "RunInfo.xml").is_file()
+        ),
+        None,
+    )
     source_files = _input_files(source)
     output_files = _input_files(output)
     if (
@@ -195,14 +203,6 @@ def select_run_inputs(source_path, output_path, *, refresh=False, projects=None)
             effective.extend(path for path in curated or original if _project_key(path) is None)
             chosen.append(tuple(effective))
         selection = _project_selection(*chosen)
-        geometry = next(
-            (
-                directory / "RunInfo.xml"
-                for directory in (output, source)
-                if (directory / "RunInfo.xml").is_file()
-            ),
-            None,
-        )
         return replace(selection, run_info=geometry)
     chosen = []
     for canonical, pattern, sheet in (
@@ -215,7 +215,7 @@ def select_run_inputs(source_path, output_path, *, refresh=False, projects=None)
         if path is None:
             path = _candidate(source, canonical, pattern, sheet=sheet)
         chosen.append(path if path is not None else source / canonical)
-    return InputSelection(*chosen)
+    return InputSelection(*chosen, run_info=geometry)
 
 
 def copy_run_inputs(selection: InputSelection, output_path) -> InputSelection:
@@ -297,7 +297,22 @@ def copy_run_inputs(selection: InputSelection, output_path) -> InputSelection:
             finally:
                 temporary.unlink(missing_ok=True)
         destinations.append(destination)
-    return InputSelection(*destinations)
+    copied_info = None
+    physical_info = selection.run_info
+    if physical_info is None:
+        candidate = selection.sample_sheet.parent / "RunInfo.xml"
+        if candidate.is_file():
+            physical_info = candidate
+    if physical_info is not None:
+        copied_info = output / "RunInfo.xml"
+        if physical_info != copied_info:
+            temporary = output / f".RunInfo.xml.{os.getpid()}.tmp"
+            try:
+                shutil.copy2(physical_info, temporary)
+                os.replace(temporary, copied_info)
+            finally:
+                temporary.unlink(missing_ok=True)
+    return InputSelection(*destinations, run_info=copied_info)
 
 
 def validate_selection(
@@ -307,17 +322,47 @@ def validate_selection(
     # flowcell-manager's entry point removes its executable directory from sys.path
     # before domain imports, avoiding a neighbouring configmaker.py script shadowing
     # the package. Metadata-independent commands (including help) stay lightweight.
+    from configmaker.project_pairs import validate_project_pairs  # noqa: PLC0415
     from configmaker.validation import validate_inputs  # noqa: PLC0415
 
-    if selection.multi_pair:
-        from configmaker.project_pairs import validate_project_pairs  # noqa: PLC0415
+    from bcl2fastq_pipeline import demultiplexing  # noqa: PLC0415
 
-        from bcl2fastq_pipeline.demultiplexing import (  # noqa: PLC0415
-            DemultiplexingPlanError,
-            plan,
+    run_info = run_info or getattr(selection, "run_info", None)
+    if run_info is None and (Path(selection.sample_sheet).parent / "RunInfo.xml").is_file():
+        run_info = Path(selection.sample_sheet).parent / "RunInfo.xml"
+    planned = None
+    error = None
+    try:
+        use_plan = selection.multi_pair or demultiplexing.needs_plan(selection)
+        if use_plan:
+            planned = demultiplexing.plan(
+                selection,
+                run_info=run_info,
+                force_bcl2fastq=bool(os.environ.get("FORCE_BCL2FASTQ")),
+            )
+    except (demultiplexing.DemultiplexingPlanError, OSError) as failure:
+        error = failure
+    if planned:
+        settings = {}
+        skipped = []
+        for item in demultiplexing.pass_plans(planned):
+            for source in item["sources"]:
+                key = source["project"] if selection.multi_pair else "legacy"
+                settings[key] = source["settings"]
+                if item["tool"] != "bcl-convert":
+                    skipped.append(key)
+        result = validate_project_pairs(
+            selection.sample_sheets if selection.multi_pair else [selection.sample_sheet],
+            selection.submission_forms if selection.multi_pair else [selection.submission_form],
+            run_info=run_info,
+            mismatch_policy=mismatch_policy,
+            libprep_config=libprep_config,
+            effective_settings=settings,
+            allow_separate_passes=True,
+            validate_legacy=True,
+            skip_conversion_projects=skipped,
         )
-
-        run_info = run_info or selection.run_info
+    elif selection.multi_pair:
         result = validate_project_pairs(
             selection.sample_sheets,
             selection.submission_forms,
@@ -325,22 +370,24 @@ def validate_selection(
             mismatch_policy=mismatch_policy,
             libprep_config=libprep_config,
         )
-        for duplicate in selection.ignored_duplicates:
-            if duplicate not in result.duplicates:
-                result.duplicates.append(duplicate)
-        if result.ok:
-            try:
-                plan(
-                    selection,
-                    run_info=run_info,
-                    force_bcl2fastq=bool(os.environ.get("FORCE_BCL2FASTQ")),
-                )
-            except DemultiplexingPlanError as error:
-                result.add("error", "demux.unsupported_plan", str(error))
-        return initial_holds.add_preflight_plan(
-            selection, project_scheduling.add_preflight_plan(selection, result)
-        )
-    result = validate_inputs([selection.sample_sheet], [selection.submission_form])
+    else:
+        result = validate_inputs([selection.sample_sheet], [selection.submission_form])
+    for duplicate in selection.ignored_duplicates:
+        if hasattr(result, "duplicates") and duplicate not in result.duplicates:
+            result.duplicates.append(duplicate)
+    if planned:
+        result.summary["demultiplexing"] = {
+            "passes": planned["passes"],
+            "plans": [
+                {
+                    key: item[key]
+                    for key in ("pass_id", "tool", "projects", "sources", "global_settings", "rows")
+                }
+                for item in demultiplexing.pass_plans(planned)
+            ],
+        }
+    if error:
+        result.add("error", "demux.unsupported_plan", str(error))
     return initial_holds.add_preflight_plan(
         selection, project_scheduling.add_preflight_plan(selection, result)
     )
@@ -358,14 +405,10 @@ def require_valid_inputs(  # noqa: PLR0913
 
         if AUTHORITATIVE_CONFIG.is_file():
             libprep_config = AUTHORITATIVE_CONFIG
-    result = (
-        validate_selection(
-            selection,
-            run_info=run_info if run_info.exists() else None,
-            libprep_config=libprep_config,
-        )
-        if selection.multi_pair
-        else validate_selection(selection)
+    result = validate_selection(
+        selection,
+        run_info=run_info if run_info.exists() else None,
+        libprep_config=libprep_config,
     )
     print(selection.describe())
     print(result.render_text())
@@ -453,9 +496,11 @@ def run_preflight(cfg, store, stage):
         run_info = None
     # Preserve legacy callers and validator test doubles, while multi-pair mode
     # additionally validates physical run geometry across all projects.
+    from bcl2fastq_pipeline.demultiplexing import needs_plan  # noqa: PLC0415
+
     result = (
         validate_selection(selection, run_info=run_info)
-        if selection.multi_pair
+        if selection.multi_pair or needs_plan(selection)
         else validate_selection(selection)
     )
     report_path = cfg.static.paths.report_dir / f"{cfg.run.run_id}.input-preflight.json"

@@ -36,6 +36,9 @@ class ToolSpec:
 
 
 TOOLS = {
+    "cellranger-mkfastq": ToolSpec("cellranger-mkfastq", "cellranger"),
+    "cellranger-atac-mkfastq": ToolSpec("cellranger-atac-mkfastq", "cellranger-atac"),
+    "spaceranger-mkfastq": ToolSpec("spaceranger-mkfastq", "spaceranger"),
     "bcl-convert": ToolSpec("bcl-convert", "bcl-convert"),
     "bcl2fastq": ToolSpec("bcl2fastq", "bcl2fastq"),
     "cellranger": ToolSpec("cellranger", "cellranger"),

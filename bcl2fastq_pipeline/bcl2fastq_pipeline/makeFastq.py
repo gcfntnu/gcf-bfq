@@ -11,16 +11,10 @@ import subprocess
 
 from bcl2fastq_pipeline import demultiplexing
 from bcl2fastq_pipeline.config import PipelineConfig
-from bcl2fastq_pipeline.containers import image_version
+from bcl2fastq_pipeline.containers import image_version, resolve_image
 from bcl2fastq_pipeline.undetermined_fastqs import is_undetermined
 
 log = logging.getLogger(__name__)
-
-MKFASTQ_10X = {
-    "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit": "spaceranger",
-    "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1": "cellranger-atac",
-    "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3": "cellranger",
-}
 
 DEMULTIPLEX_LOG_TAIL_LINES = 50
 
@@ -84,6 +78,127 @@ def rename_fastqs():
         shutil.move(str(source), str(destination))
 
 
+def _pass_command(cfg, item, output):
+    tool = item["tool"]
+    sheet = item["derived_sample_sheet"]
+    if tool.endswith("-mkfastq"):
+        return [
+            "bfq-container",
+            tool,
+            "mkfastq",
+            f"--output-dir={output}",
+            f"--sample-sheet={sheet}",
+            f"--run={cfg.run.flowcell_path}",
+            *shlex.split(cfg.static.commands["cellranger_mkfastq_options"]),
+        ]
+    if tool == "bcl2fastq":
+        return [
+            "bcl2fastq",
+            *shlex.split(cfg.static.commands["bcl2fastq_options"]),
+            "--sample-sheet",
+            sheet,
+            "-o",
+            str(output),
+            "-R",
+            str(cfg.run.flowcell_path),
+        ]
+    command = [
+        "bcl-convert",
+        "--force",
+        "--bcl-input-directory",
+        str(cfg.run.flowcell_path),
+        "--output-directory",
+        str(output),
+        "--sample-sheet",
+        sheet,
+        "--bcl-sampleproject-subdirectories",
+        "true",
+        "--no-lane-splitting",
+        "true",
+    ]
+    if item["sample_sheet_version"] == 1:
+        command.extend(["--output-legacy-stats", "true"])
+    return command
+
+
+def _planned_conversion(cfg):
+    """Execute the frozen passes without retry/fallback or shared-setting leakage."""
+    result = cfg.run.demultiplexing_plan
+    items = demultiplexing.pass_plans(result)
+    (cfg.output_path / "InterOp").mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        cfg.run.flowcell_path / "InterOp", cfg.output_path / "InterOp", dirs_exist_ok=True
+    )
+    identities = []
+    for item in items:
+        tool = item["tool"]
+        version = image_version(tool)
+        for source in item["sources"]:
+            allowed = source.get("profile", {}).get("bcl_convert_versions")
+            if tool == "bcl-convert" and allowed and version not in allowed:
+                raise demultiplexing.DemultiplexingPlanError(
+                    f"Profile requires BCL Convert {allowed}; selected image reports {version}. Validate a coordinated profile before changing versions."
+                )
+        output = (
+            cfg.output_path
+            if len(items) == 1
+            else cfg.output_path / "Reports" / "passes" / item["pass_id"]
+        )
+        output.mkdir(parents=True, exist_ok=True)
+        command = _pass_command(cfg, item, output)
+        # Ordinary projects keep their established version-only record. The 10x
+        # matrix binds both command and full workflow-owned image reference.
+        image = (
+            resolve_image(tool)
+            if any("name" in source.get("profile", {}) for source in item["sources"])
+            else None
+        )
+        log_path = cfg.static.paths.log_dir / (
+            f"{cfg.run.run_id}.log"
+            if len(items) == 1
+            else f"{cfg.run.run_id}.{item['pass_id']}.log"
+        )
+        item["output_directory"] = str(output)
+        demultiplexing.record(
+            cfg, item=item, version=version, image=image, command=command, status="running"
+        )
+        try:
+            with log_path.open("w") as handle:
+                subprocess.check_call(command, stdout=handle, stderr=subprocess.STDOUT, cwd=output)
+        except subprocess.CalledProcessError as error:
+            demultiplexing.record(cfg, item=item, status="failed")
+            if len(items) > 1:
+                demultiplexing.record(cfg, status="failed")
+            raise demultiplexing_error(error, log_path) from error
+        if len(items) > 1:
+            for project in item["projects"]:
+                source = output / project
+                target = cfg.output_path / project
+                if target.exists():
+                    raise RuntimeError(f"Separate-pass publication would overwrite {target}")
+                if not source.is_dir():
+                    raise RuntimeError(
+                        f"Conversion did not create expected project directory {source}"
+                    )
+                shutil.move(str(source), str(target))
+        demultiplexing.record(cfg, item=item, status="completed")
+        identities.append(f"{tool}:{version}")
+    legacy_stats = cfg.output_path / "Reports" / "legacy" / "Stats"
+    stats = cfg.output_path / "Stats"
+    if legacy_stats.is_dir() and not stats.exists():
+        stats.symlink_to(legacy_stats, target_is_directory=True)
+    else:
+        stats.mkdir(exist_ok=True)
+    demultiplexing.record(cfg, status="completed")
+    for project in result["projects"]:
+        demultiplexing.delivery_provenance(cfg, project, refresh=True)
+    if len(items) == 1:
+        tool = items[0]["tool"]
+        name = tool.removesuffix("-mkfastq") + " mkfastq" if tool.endswith("-mkfastq") else tool
+        return [name, items[0]["tool_version"]]
+    return ["multiple conversion passes", "; ".join(identities)]
+
+
 def bcl2fq():
     """
     takes things from /dont_touch_this/solexa_runs/XXX/Data/Intensities/BaseCalls
@@ -92,8 +207,19 @@ def bcl2fq():
 
     cfg = PipelineConfig.get()
     multi_pair = bool(getattr(getattr(cfg.run, "input_selection", None), "pairs", ()))
-    if multi_pair:
+    selection = getattr(cfg.run, "input_selection", None)
+    if selection is None and "10X Genomics" in (cfg.run.libprep or ""):
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        selection = SimpleNamespace(
+            sample_sheet=cfg.run.sample_sheet,
+            submission_form=cfg.output_path / "Sample-Submission-Form.xlsx",
+            pairs=(),
+        )
+        cfg.run.input_selection = selection
+    if multi_pair or (selection and demultiplexing.needs_plan(selection)):
         demultiplexing.prepare(cfg)
+        return _planned_conversion(cfg)
     # Make the output directories
     (cfg.output_path / "InterOp").mkdir(parents=True, exist_ok=True)
     shutil.copytree(
@@ -101,20 +227,7 @@ def bcl2fq():
     )
     force_bcl2fastq = os.environ.get("FORCE_BCL2FASTQ", None)
 
-    if "10X Genomics" in (cfg.run.libprep or "") and not multi_pair:
-        cellranger_cmd = MKFASTQ_10X[cfg.run.libprep]
-        cellranger_options = cfg.static.commands["cellranger_mkfastq_options"]
-        cmd = [cellranger_cmd, "mkfastq"]
-        cmd.extend(
-            [
-                f"--output-dir={cfg.output_path}",
-                f"--sample-sheet={cfg.run.sample_sheet}",
-                f"--run={cfg.run.flowcell_path}",
-            ]
-        )
-        cmd.extend(shlex.split(cellranger_options))
-        bcl_done = [f"{cellranger_cmd} mkfastq", image_version(cellranger_cmd)]
-    elif force_bcl2fastq:
+    if force_bcl2fastq:
         bcl2fastq_opts = cfg.static.commands["bcl2fastq_options"]
         cmd = ["bcl2fastq", *shlex.split(bcl2fastq_opts)]
         cmd.extend(

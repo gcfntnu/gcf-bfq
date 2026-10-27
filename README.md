@@ -750,7 +750,10 @@ SensitiveData,False
 
 | Key | Required | Meaning |
 | --- | --- | --- |
-| `Libprep` | Yes | Library-preparation name. It selects the workflow through `/opt/gcf-workflows/libprep.config` and selects supported 10x demultiplexing commands. |
+| `Libprep` | Yes | Library-preparation name. It selects analysis through `/opt/gcf-workflows/libprep.config`; the separate conversion profile validates the assay's demultiplexing requirements. |
+| `Demultiplexer` | No | For 10x, explicitly select `bcl-convert` or pinned legacy `mkfastq`; otherwise use the workflow-owned conversion profile's default. See [10x conversion](docs/tenx-demultiplexing.md). |
+| `Index2Orientation` | For named dual 10x indexes | Select `forward` or `reverse-complement` from the instrument/reagent documentation. Explicit nucleotide sequences are used as written. |
+| `DemultiplexingPass` | For conflicting global conversion settings | Assign explicit pass labels per project when settings cannot share one BCL Convert invocation. Compatible projects combine by default. |
 | `User` | Operationally expected | Operator or submitter shown in completion reporting. |
 | `Rerun` | No | Parsed as a boolean, but automatic rerun detection is currently disabled. Use `flowcell-manager rerun` for an explicit rerun. |
 | `SensitiveData` | No | When true, FASTQ and QC 7-Zip archives receive generated passwords written to `encryption.<name>` files in the flowcell output. |
@@ -767,8 +770,10 @@ execution, including uncommitted edits, and copies those bytes into each project
 workflow tree. Configmaker verifies the snapshot hash, selected entry and read
 geometry before generating the Snakefile.
 
-Lookup is case-insensitive and uses actual non-index read lengths from
-`Stats/Stats.json`: one read selects SE, two select PE. The matching suffixed kit
+Lookup is case-insensitive and uses the validated effective biological read lengths
+from retained conversion provenance when a structured plan exists, otherwise the
+non-index read lengths from `Stats/Stats.json`: one read selects SE, two select PE.
+Physical run geometry is retained separately. The matching suffixed kit
 entry takes precedence over an unsuffixed entry. Explicit SE/PE suffixes must
 agree with the read geometry. Missing/malformed configuration and unknown kits
 raise actionable errors; there is no `UNKNOWN` or implicit default fallback.
@@ -1265,3 +1270,7 @@ deployment configuration.
 For a version supporting Illumina bcl2fastq v1, see the historical
 [`bcl2fastqV1`](https://github.com/maxplanck-ie/bcl2fastq_pipeline/tree/bcl2fastqV1)
 branch of the upstream project.
+
+For direct 10x BCL Convert profiles, named index sequences and pinned historical
+mkfastq reruns, see [10x conversion](docs/tenx-demultiplexing.md) and the linked
+cross-repository compatibility matrix.

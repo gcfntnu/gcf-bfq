@@ -7,12 +7,13 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+import yaml
 
 from bcl2fastq_pipeline.state import FlowcellStateStore, apply_cleanup, cleanup_plan, new_state
 from configmaker.libprep import LibprepConfig
 from test_state_integration import RUN_ID, configured_bfq, write_inputs
 
-from bcl2fastq_pipeline import afterFastq, makeFastq, sequencing_qc
+from bcl2fastq_pipeline import afterFastq, makeFastq, sequencing_qc, tenx_demultiplexing
 
 
 @pytest.fixture(autouse=True)
@@ -21,6 +22,9 @@ def configured_container_versions(monkeypatch):
         "bcl-convert": "4.2.4",
         "bcl2fastq": "2.20.0",
         "cellranger": "10.1.0",
+        "cellranger-mkfastq": "7.2.0",
+        "cellranger-atac-mkfastq": "2.0.0",
+        "spaceranger-mkfastq": "1.3.0",
         "cellranger-atac": "2.2.0",
         "spaceranger": "4.0.1",
     }
@@ -197,17 +201,17 @@ def test_force_bcl2fastq_ignores_legacy_executable_setting(tmp_path, monkeypatch
         (
             "10X Genomics Chromium Single Cell 3p GEM Library & Gel Bead Kit v3",
             "cellranger",
-            "10.1.0",
+            "7.2.0",
         ),
         (
             "10X Genomics Chromium Next GEM Single Cell ATAC Library & Gel Bead Kit v1.1",
             "cellranger-atac",
-            "2.2.0",
+            "2.0.0",
         ),
         (
             "10X Genomics Visium Spatial Gene Expression Slide & Reagents Kit",
             "spaceranger",
-            "4.0.1",
+            "1.3.0",
         ),
     ],
 )
@@ -229,7 +233,7 @@ def test_10x_demultiplexing_ignores_legacy_executable_settings(
             run_id=flowcell_path.name,
         ),
         static=SimpleNamespace(
-            paths=SimpleNamespace(log_dir=log_dir),
+            paths=SimpleNamespace(log_dir=log_dir, output_dir=output_path.parent),
             commands={
                 "cellranger_mkfastq": "/legacy/custom/cellranger mkfastq",
                 "cellranger_atac_mkfastq": "/legacy/custom/cellranger-atac mkfastq",
@@ -238,6 +242,30 @@ def test_10x_demultiplexing_ignores_legacy_executable_settings(
             },
         ),
     )
+    cfg.run.sample_sheet.write_text(
+        f"[CustomOptions]\nLibprep,{libprep}\nDemultiplexer,mkfastq\n"
+        "[Data]\nSample_ID,Sample_Project,index\nlibrary-A,GCF-2099-001,SI-GA-A1\n"
+    )
+    (output_path / "Sample-Submission-Form.xlsx").write_bytes(b"mocked metadata")
+    profiles = tmp_path / "demultiplexing.config"
+    profiles.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "bcl_convert_versions": ["4.2.4"],
+                "profiles": {
+                    "legacy": {
+                        "kits": [libprep],
+                        "assay": "legacy",
+                        "default_backend": "mkfastq",
+                        "legacy_tool": executable + "-mkfastq",
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(tenx_demultiplexing, "AUTHORITATIVE_PROFILES", profiles)
+    monkeypatch.setattr(makeFastq, "resolve_image", lambda tool: f"example/{executable}:{version}")
     check_call = Mock()
     monkeypatch.setattr(makeFastq.PipelineConfig, "get", Mock(return_value=cfg))
     monkeypatch.setattr(makeFastq.subprocess, "check_call", check_call)
@@ -245,7 +273,7 @@ def test_10x_demultiplexing_ignores_legacy_executable_settings(
     assert makeFastq.bcl2fq() == [f"{executable} mkfastq", version]
 
     command = check_call.call_args.args[0]
-    assert command[:2] == [executable, "mkfastq"]
+    assert command[:3] == ["bfq-container", executable + "-mkfastq", "mkfastq"]
     assert all(not argument.startswith("/legacy/") for argument in command)
 
 
