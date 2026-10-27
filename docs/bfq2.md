@@ -328,8 +328,6 @@ The operational changes build on several less visible modernizations:
   pipeline failures more explicitly. InterOp output parsing was updated for
   current tool behavior. These changes reduce failures caused by quoting, paths,
   or obsolete assumptions and improve the error information operators receive.
-- Obsolete QIAseq helper scripts and primer files were removed. This was cleanup
-  of unused bundled material, not a new replacement analysis workflow.
 - Configuration, state transitions, input validation, notification recovery, and
   cleanup gained automated regression coverage. Ruff checks and CI were added
   and made non-mutating. Real instrument/runtime/SMTP integration remains a
