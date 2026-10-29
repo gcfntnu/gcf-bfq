@@ -1262,10 +1262,14 @@ The integration pass should verify at least:
 - standard bcl-convert, forced bcl2fastq, supported 10x demultiplexers, and every
   configured downstream workflow complete successfully from a clean start.
 
-Run the full supported-workflow matrix as an overnight integration test before
-production deployment. These checks intentionally are not simulated by the unit
-test suite because they depend on server mounts, real external tools, and
-deployment configuration.
+Agree the required workflow and conversion coverage before a release. A routine
+fixture profile can use representative cases, with additional maintained cases
+selected when affected; do not silently reduce an explicitly requested full
+matrix. See [operational integration fixtures](docs/integration-fixtures.md) for
+starting stages, isolation, empty selections, runtime reduction and acceptance.
+Site-specific catalogues, launchers and configuration belong in the operator's
+private operations repository. These checks depend on real external tools and
+deployment configuration and are not established by the local test suite.
 
 For a version supporting Illumina bcl2fastq v1, see the historical
 [`bcl2fastqV1`](https://github.com/maxplanck-ie/bcl2fastq_pipeline/tree/bcl2fastqV1)
