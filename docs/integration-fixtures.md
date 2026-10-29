@@ -23,7 +23,7 @@ routine subset does not establish coverage of every maintained case.
 | Input | Start | What it establishes |
 | --- | --- | --- |
 | Raw instrument data with valid run/project metadata | `demultiplexing` | Conversion, downstream analysis, reporting and finalization |
-| Restored paired FASTQs with valid SampleSheet/workbook inputs | `analysis` | Analysis and downstream behavior; no conversion validation |
+| Restored FASTQs with valid SampleSheet/workbook inputs | `analysis` | Analysis and downstream behavior; no conversion validation |
 
 Use the supported initializer after materializing inputs into an isolated test
 installation. These examples use a placeholder run ID; substitute the selected
