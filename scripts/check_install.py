@@ -15,7 +15,7 @@ def check_multiqc_wrapper(prefix):
     """Exercise the installed wrapper without a reporting engine or container."""
     candidate = (
         "gcfntnu/gcf-multiqc@sha256:"
-        "8c53227c570280641c51738a8e7308ae11cddd00a1e0cd1092e5cef7d92cc9e9"
+        "f3a9873d88241e47f3bd38c0b68ae5b64c746b1d77b63a3182e00bbe3ffcf7b0"
     )
     with tempfile.TemporaryDirectory(prefix="multiqc-wrapper-", dir=Path.cwd()) as directory:
         root = Path(directory)
