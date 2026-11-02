@@ -9,11 +9,11 @@ Image packaging and the coordinated source revisions are tracked in
 [gcf-docker #1](https://github.com/gcfntnu/gcf-docker/pull/1).
 This checkpoint prepares reviewable source changes; it does not approve deployment.
 
-The published candidate tag is `gcfntnu/gcf-multiqc:1.35-gcf0.1.0-rc3`. Its immutable
+The published candidate tag is `gcfntnu/gcf-multiqc:1.35-gcf0.1.0-rc4`. Its immutable
 reference, selected by the companion workflow change, is:
 
 ```text
-gcfntnu/gcf-multiqc@sha256:f3a9873d88241e47f3bd38c0b68ae5b64c746b1d77b63a3182e00bbe3ffcf7b0
+gcfntnu/gcf-multiqc@sha256:2c356684c03d24c11e63be5724d4f107c253eccd8be98c236952bd3df5435878
 ```
 
 ## Configuration and compatibility
