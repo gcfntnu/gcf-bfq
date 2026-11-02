@@ -7,7 +7,11 @@ The candidate replaces the old MultiQC fork with upstream MultiQC and the
 [GCF extension](https://github.com/gcfntnu/gcf-multiqc/pull/1).
 Image packaging and the coordinated source revisions are tracked in
 [gcf-docker #1](https://github.com/gcfntnu/gcf-docker/pull/1).
-This checkpoint prepares reviewable source changes; it does not approve deployment.
+The rc4 candidate passed a fresh seven-fixture test deployment on the server,
+including scientific/operational acceptance and all eight project plus seven
+sequencing content checks. [The acceptance record](https://github.com/gcfntnu/gcf-docker/blob/multiqc/upstream-plugin-candidate/gcf-multiqc/VALIDATION-RC4.md)
+identifies the tested artifact and coverage bounds. Production promotion and
+deployment remain separate review steps.
 
 The published candidate tag is `gcfntnu/gcf-multiqc:1.35-gcf0.1.0-rc4`. Its immutable
 reference, selected by the companion workflow change, is:
