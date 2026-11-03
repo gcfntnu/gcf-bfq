@@ -176,6 +176,8 @@ def test_convert_report_without_analysis_or_fastqs(cfg, report_commands):
     assert (inputs / "RunInfo.xml").is_file()
     assert (inputs / "Demultiplex_Stats.csv").is_file()
     config = yaml.safe_load((inputs.parent / "multiqc_config.yaml").read_text())
+    assert config["module_order"] == ["custom_content", "interop", "bclconvert"]
+    assert command[-7:-1] == ["-m", "custom_content", "-m", "interop", "-m", "bclconvert"]
     assert config["megaqc_upload"] is False
     assert config["megaqc_access_token"] is None
     assert "--no-megaqc-upload" in command
@@ -204,6 +206,65 @@ def test_bcl2fastq_and_10x_layouts(cfg, report_commands, tool, nested):
     assert result["unknown_indexes"][0]["reads"] == 20
     assert result["zero_read_sample_count"] == 1
     assert report_commands[-1][-2] == "bcl2fastq"
+    config = yaml.safe_load(
+        (cfg.output_path / qc.REPORT_DIRECTORY / "multiqc_config.yaml").read_text()
+    )
+    assert config["module_order"] == ["custom_content", "interop", "bcl2fastq"]
+    assert report_commands[-1][-7:-1] == [
+        "-m",
+        "custom_content",
+        "-m",
+        "interop",
+        "-m",
+        "bcl2fastq",
+    ]
+
+
+def test_separate_pass_report_selects_custom_content_only_once(cfg, report_commands):
+    plans = []
+    for project, sheet_samples, assigned in (("P1", ["s1"], 10), ("P2", ["s2", "s3"], 0)):
+        output = cfg.output_path / "Reports" / "passes" / project
+        reports = output / "Reports"
+        reports.mkdir(parents=True)
+        sheet = output / "SampleSheet.csv"
+        sheet.write_text(
+            "[Data]\nSample_ID,Sample_Project,Lane\n"
+            + "".join(f"{sample},{project},1\n" for sample in sheet_samples)
+        )
+        (reports / "Demultiplex_Stats.csv").write_text(
+            "Lane,SampleID,Sample_Project,# Reads\n"
+            f"1,{sheet_samples[0]},{project},{assigned}\n1,Undetermined,,{100 - assigned}\n"
+        )
+        plans.append(
+            {
+                "derived_sample_sheet": str(sheet),
+                "output_directory": str(output),
+                "tool": "bcl-convert",
+            }
+        )
+    cfg.run.demultiplexing_plan = {"passes": 2, "pass_plans": plans}
+
+    result = qc.generate(cfg)
+
+    command = report_commands[-1]
+    inputs = Path(command[-1])
+    config = yaml.safe_load((inputs.parent / "multiqc_config.yaml").read_text())
+    assert config["module_order"] == ["custom_content", "interop"]
+    selected = [command[index + 1] for index, value in enumerate(command) if value == "-m"]
+    assert selected == ["custom_content", "interop"]
+    assert result["demultiplexer"] == "custom_content"
+    assert result["total_reads"] == 100
+    assert result["undetermined_reads"] is None
+    assert result["unknown_indexes"] is None
+    assert result["zero_read_sample_count"] == 1
+    assert result["unavailable_sample_count"] == 1
+    assert "Separate conversion passes" in result["summary_text"]
+    assert not (inputs / "Demultiplex_Stats.csv").exists()
+    assert (inputs / "bfq_sequencing_summary_mqc.yaml").is_file()
+    assignments = config["custom_data"]["bfq_sample_assignment"]["data"]
+    assert assignments["P1 / s1"]["assigned_reads"] == 10
+    assert assignments["P2 / s2"]["assigned_reads"] == 0
+    assert assignments["P2 / s3"]["assigned_reads"] == "Unavailable"
 
 
 @pytest.mark.parametrize("tool", ["bcl-convert", "bcl2fastq", "cellranger mkfastq"])

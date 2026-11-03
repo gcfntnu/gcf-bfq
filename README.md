@@ -701,9 +701,14 @@ the installed BFQ version in new run/attempt metadata. Use `bfq --version` or
 
 BFQ selects the executable internally and runs it through an Apptainer wrapper.
 Image references come from the checked-out `gcf-workflows/docker.config`.
+
 Standard runs use `bcl-convert`; `FORCE_BCL2FASTQ` selects `bcl2fastq`. The 10x
 wrapper is selected by an exact `Libprep` match in `makeFastq.py`. Legacy INI
 executable entries are accepted as extra configuration values but ignored.
+
+The [MultiQC adoption and evaluation guide](docs/multiqc-adoption.md) covers the
+upstream-plus-extension candidate, retained-workdir and project image overrides,
+local checks, later build/evaluation steps and rollback.
 
 ## Per-flowcell input
 
@@ -1262,10 +1267,14 @@ The integration pass should verify at least:
 - standard bcl-convert, forced bcl2fastq, supported 10x demultiplexers, and every
   configured downstream workflow complete successfully from a clean start.
 
-Run the full supported-workflow matrix as an overnight integration test before
-production deployment. These checks intentionally are not simulated by the unit
-test suite because they depend on server mounts, real external tools, and
-deployment configuration.
+Agree the required workflow and conversion coverage before a release. A routine
+fixture profile can use representative cases, with additional maintained cases
+selected when affected; do not silently reduce an explicitly requested full
+matrix. See [operational integration fixtures](docs/integration-fixtures.md) for
+starting stages, isolation, empty selections, runtime reduction and acceptance.
+Site-specific catalogues, launchers and configuration belong in the operator's
+private operations repository. These checks depend on real external tools and
+deployment configuration and are not established by the local test suite.
 
 For a version supporting Illumina bcl2fastq v1, see the historical
 [`bcl2fastqV1`](https://github.com/maxplanck-ie/bcl2fastq_pipeline/tree/bcl2fastqV1)

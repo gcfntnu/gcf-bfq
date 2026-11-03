@@ -28,7 +28,7 @@ delivery failures remain separate from processing failures.
 | Analysis retention | `analysis_snapshots.py` | Retain the actual successful analysis workdir, stage/commit/recover publication, preserve the previous successful archive. `tests/test_analysis_snapshots.py`, `tests/test_snapshot_integration.py`. |
 | QC and notifications | `sequencing_qc.py`, `sequencing_delivery.py`, `analysis_qc.py`, `notifications.py`, `notification_delivery.py`, `misc.py` | Early sequencing report, analysis summary, durable delivery/retry, production error reporting. `tests/test_sequencing_qc.py`, `tests/test_analysis_qc.py`, `tests/test_notification_mail.py`, `tests/test_error_reporting.py`. |
 | Timing | `processing_times.py` | Successful processing measurements and accumulated reporting. `tests/test_processing_times.py`, `tests/test_processing_time_integration.py`. |
-| External command wrappers | `containers.py` | Resolve images from workflow-owned `docker.config` and execute via Apptainer/Singularity. `tests/test_containers.py`. |
+| External command wrappers | `containers.py` | Resolve images from workflow-owned `docker.config` and execute via Apptainer/Singularity. `tests/test_containers.py`; `scripts/check_install.py` verifies installed MultiQC forwarding with fake Apptainer. [Adoption handoff](multiqc-adoption.md). |
 | Packaging and entry points | Root `pyproject.toml`, `entrypoint.py`, `version.py` | Distribution metadata and installed commands; avoid neighboring-script import shadowing. `tests/test_packaging.py`, `tests/test_versions.py`. |
 
 FASTQ checksums belong to demultiplexing. Early sequencing QC/email happens after

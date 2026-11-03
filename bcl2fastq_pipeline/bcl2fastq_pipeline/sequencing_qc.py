@@ -550,7 +550,9 @@ def _configuration(result):
                 "data": data,
             },
         },
-        "module_order": ["custom_content", "interop", result["demultiplexer"]],
+        # Separate conversion passes use custom content without a native module.
+        # Repeating it makes modern MultiQC render the owned sections twice.
+        "module_order": list(dict.fromkeys(["custom_content", "interop", result["demultiplexer"]])),
     }
 
 
@@ -716,9 +718,8 @@ def generate(cfg, tool=None):
         )
     )
     config_path = report_dir / "multiqc_config.yaml"
-    config_path.write_text(
-        yaml.safe_dump(_configuration(result), sort_keys=False, allow_unicode=True)
-    )
+    report_config = _configuration(result)
+    config_path.write_text(yaml.safe_dump(report_config, sort_keys=False, allow_unicode=True))
     report_path = Path(result["report_path"])
     report_path.unlink(missing_ok=True)
     generated_report = report_dir / filename
@@ -735,12 +736,7 @@ def generate(cfg, tool=None):
         str(report_dir),
         "--filename",
         filename,
-        "-m",
-        "custom_content",
-        "-m",
-        "interop",
-        "-m",
-        module,
+        *[argument for name in report_config["module_order"] for argument in ("-m", name)],
         str(inputs),
     ]
     try:
