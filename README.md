@@ -701,9 +701,14 @@ the installed BFQ version in new run/attempt metadata. Use `bfq --version` or
 
 BFQ selects the executable internally and runs it through an Apptainer wrapper.
 Image references come from the checked-out `gcf-workflows/docker.config`.
+
 Standard runs use `bcl-convert`; `FORCE_BCL2FASTQ` selects `bcl2fastq`. The 10x
 wrapper is selected by an exact `Libprep` match in `makeFastq.py`. Legacy INI
 executable entries are accepted as extra configuration values but ignored.
+
+The [MultiQC adoption and evaluation guide](docs/multiqc-adoption.md) covers the
+upstream-plus-extension candidate, retained-workdir and project image overrides,
+local checks, later build/evaluation steps and rollback.
 
 ## Per-flowcell input
 

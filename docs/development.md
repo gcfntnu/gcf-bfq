@@ -93,7 +93,13 @@ Installed-command smoke invokes `bfq`, `fm` and `flowcell-manager` with `--versi
 and `--help` using absolute venv executables from a temporary directory outside
 the checkout. It checks the shared manager entry point and, for wheel installs,
 that BFQ/manager/configmaker imports come from that clean environment. It never
-runs bare `bfq` or container wrapper `--help` commands, which can launch work.
+runs bare `bfq` or an unmocked container wrapper, which can launch work.
+The installed `multiqc` command is exercised with a fake Apptainer subprocess
+that verifies the inherited SMTP guard. This covers workflow-owned image
+selection (including the pinned replacement candidate), argument boundaries,
+streams and failure propagation in both editable and wheel installs. It does
+not install MultiQC or execute containers. See the
+[MultiQC adoption handoff](multiqc-adoption.md) for the later report evaluation.
 
 Tests named `*_integration.py` in today's suite already test multiple Python
 components with temporary data; they remain included in `fast`. The dedicated
