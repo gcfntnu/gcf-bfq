@@ -82,11 +82,33 @@ def test_unsupported_backend_is_actionable(tmp_path):
         demultiplexing.plan(SimpleNamespace(pairs=(first, second)))
 
 
-def test_conversion_uses_derived_sheet_and_retains_its_exact_inputs(tmp_path, monkeypatch):
+@pytest.mark.parametrize("version_two", [False, True])
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        (None, ["--no-lane-splitting", "true"]),
+        ("", []),
+        ("--no-lane-splitting false", ["--no-lane-splitting", "false"]),
+        (
+            "--bcl-num-conversion-threads 8 --tiles 'tile with spaces;not-a-command'",
+            ["--bcl-num-conversion-threads", "8", "--tiles", "tile with spaces;not-a-command"],
+        ),
+    ],
+)
+def test_conversion_uses_derived_sheet_and_retains_its_exact_inputs(
+    tmp_path, monkeypatch, version_two, options, expected
+):
     cfg, source, output = configured_bfq(tmp_path)
     (source / "InterOp").mkdir()
-    cfg.run.input_selection = SimpleNamespace(pairs=tuple(pair(output, p) for p in PROJECTS))
+    cfg.run.input_selection = SimpleNamespace(
+        pairs=(
+            pair(output, PROJECTS[0], settings="AdapterRead1,ACGT\n" if version_two else ""),
+            pair(output, PROJECTS[1]),
+        )
+    )
     cfg.run.libprep = None
+    if options is not None:
+        cfg.static.commands["bcl-convert_options"] = options
     calls = []
     monkeypatch.setattr(makeFastq, "image_version", lambda _tool: "4.2.4")
     monkeypatch.setattr(makeFastq.subprocess, "check_call", lambda cmd, **kw: calls.append(cmd))
@@ -96,6 +118,11 @@ def test_conversion_uses_derived_sheet_and_retains_its_exact_inputs(tmp_path, mo
     data = json.loads((provenance / "plan.json").read_text())
     assert data["status"] == "completed"
     assert data["tool_version"] == "4.2.4"
+    assert data["sample_sheet_version"] == (2 if version_two else 1)
+    assert data["command"] == calls[0]
+    start = calls[0].index("--bcl-sampleproject-subdirectories") + 2
+    legacy_stats = [] if version_two else ["--output-legacy-stats", "true"]
+    assert calls[0][start:] == [*expected, *legacy_stats]
     for p in cfg.run.input_selection.pairs:
         assert (
             provenance / "sources" / p.project_id / p.sample_sheet.name

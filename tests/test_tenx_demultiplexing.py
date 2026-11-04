@@ -321,6 +321,9 @@ def test_separate_pass_publication_and_qc_do_not_double_count(profiles, tmp_path
     from bcl2fastq_pipeline import sequencing_qc  # noqa: PLC0415
 
     cfg, source, output = configured_bfq(tmp_path)
+    cfg.static.commands["bcl-convert_options"] = (
+        "--no-lane-splitting true --bcl-num-conversion-threads 8"
+    )
     (source / "InterOp").mkdir()
     physical(source / "RunInfo.xml")
     first = tenx_pair(output, custom="DemultiplexingPass,tenx\n")
@@ -350,6 +353,10 @@ def test_separate_pass_publication_and_qc_do_not_double_count(profiles, tmp_path
     monkeypatch.setattr(makeFastq.subprocess, "check_call", convert)
     assert makeFastq.bcl2fq()[0] == "multiple conversion passes"
     assert len(commands) == 2
+    for command in commands:
+        assert command[command.index("--bcl-num-conversion-threads") + 1] == "8"
+        assert command.count("--no-lane-splitting") == 1
+        assert command[command.index("--no-lane-splitting") + 1] == "true"
     for project in PROJECTS:
         assert (output / project / f"sample-{project}_S1_R1_001.fastq.gz").is_file()
         manifest = json.loads(
