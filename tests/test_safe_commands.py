@@ -37,7 +37,24 @@ def test_configured_commands_are_split_without_losing_quoted_values():
     ) == ["/opt/tools/multiqc", "--title", "Project with spaces", "--force"]
 
 
-def test_bcl_convert_keeps_dynamic_paths_as_single_arguments(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        (None, ["--no-lane-splitting", "true"]),
+        ("", []),
+        (
+            "--no-lane-splitting false --bcl-num-conversion-threads 8",
+            ["--no-lane-splitting", "false", "--bcl-num-conversion-threads", "8"],
+        ),
+        (
+            "--tiles 'tile with spaces;not-a-command'",
+            ["--tiles", "tile with spaces;not-a-command"],
+        ),
+    ],
+)
+def test_bcl_convert_keeps_dynamic_paths_as_single_arguments(
+    tmp_path, monkeypatch, options, expected
+):
     flowcell_path = tmp_path / "flowcell with spaces;not-a-command"
     (flowcell_path / "InterOp").mkdir(parents=True)
     output_path = tmp_path / "output with spaces;not-a-command"
@@ -57,7 +74,7 @@ def test_bcl_convert_keeps_dynamic_paths_as_single_arguments(tmp_path, monkeypat
         ),
         static=SimpleNamespace(
             paths=SimpleNamespace(log_dir=log_dir),
-            commands={},
+            commands={} if options is None else {"bcl-convert_options": options},
         ),
     )
     check_call = Mock()
@@ -71,6 +88,8 @@ def test_bcl_convert_keeps_dynamic_paths_as_single_arguments(tmp_path, monkeypat
     assert command[command.index("--bcl-input-directory") + 1] == str(flowcell_path)
     assert command[command.index("--output-directory") + 1] == str(output_path)
     assert command[command.index("--sample-sheet") + 1] == str(sample_sheet)
+    start = command.index("--bcl-sampleproject-subdirectories") + 2
+    assert command[start:] == [*expected, "--output-legacy-stats", "true"]
     assert "shell" not in check_call.call_args.kwargs
 
 
@@ -180,6 +199,7 @@ def test_force_bcl2fastq_ignores_legacy_executable_setting(tmp_path, monkeypatch
             commands={
                 "bcl2fastq": "/legacy/custom/bcl2fastq",
                 "bcl2fastq_options": "--no-lane-splitting -p 8",
+                "bcl-convert_options": "--bcl-num-conversion-threads 99",
             },
         ),
     )
@@ -193,6 +213,7 @@ def test_force_bcl2fastq_ignores_legacy_executable_setting(tmp_path, monkeypatch
     command = check_call.call_args.args[0]
     assert command[:4] == ["bcl2fastq", "--no-lane-splitting", "-p", "8"]
     assert "/legacy/custom/bcl2fastq" not in command
+    assert "--bcl-num-conversion-threads" not in command
 
 
 @pytest.mark.parametrize(
