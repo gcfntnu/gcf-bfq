@@ -113,8 +113,7 @@ def _pass_command(cfg, item, output):
         sheet,
         "--bcl-sampleproject-subdirectories",
         "true",
-        "--no-lane-splitting",
-        "true",
+        *shlex.split(cfg.static.commands.get("bcl-convert_options", "--no-lane-splitting true")),
     ]
     if item["sample_sheet_version"] == 1:
         command.extend(["--output-legacy-stats", "true"])
@@ -255,8 +254,9 @@ def bcl2fq():
             str(cfg.run.sample_sheet),
             "--bcl-sampleproject-subdirectories",
             "true",
-            "--no-lane-splitting",
-            "true",
+            *shlex.split(
+                cfg.static.commands.get("bcl-convert_options", "--no-lane-splitting true")
+            ),
         ]
         if not multi_pair or cfg.run.demultiplexing_plan["sample_sheet_version"] == 1:
             # 4.2.4 aborts when legacy stats are requested for a v2 sheet.

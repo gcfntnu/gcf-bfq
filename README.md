@@ -317,6 +317,7 @@ error_to = pipeline-errors@example.org, sequencing-oncall@example.org
 [Commands]
 multiqc_options = -f -q --interactive
 bcl2fastq_options = --no-lane-splitting -p 32 -r 12 -w 12 -l WARNING
+bcl-convert_options = --no-lane-splitting true
 cellranger_mkfastq_options = --qc --jobmode=local --localcores=32 --localmem=55
 ```
 
@@ -697,10 +698,35 @@ the installed BFQ version in new run/attempt metadata. Use `bfq --version` or
 | --- | --- | --- |
 | `multiqc_options` | Always | Options passed to the sequencer-level MultiQC invocation. |
 | `bcl2fastq_options` | With `FORCE_BCL2FASTQ` | Options passed to legacy bcl2fastq. |
+| `bcl-convert_options` | Optional | Options passed to BCL Convert in ordinary runs and every planned conversion pass. Defaults to `--no-lane-splitting true` when absent. |
 | `cellranger_mkfastq_options` | Any supported 10x run | Shared local execution options for the 10x mkfastq commands. |
 
 BFQ selects the executable internally and runs it through an Apptainer wrapper.
 Image references come from the checked-out `gcf-workflows/docker.config`.
+
+`bcl-convert_options` replaces the default option string; a blank value passes no
+additional options. Values use shell-style quoting to preserve argument boundaries,
+but BFQ does not execute them through a shell. For example:
+
+```ini
+[Commands]
+bcl-convert_options = --no-lane-splitting false --bcl-num-conversion-threads 16
+```
+
+BFQ still supplies the selected input directory, output directory, SampleSheet,
+`--force`, and `--bcl-sampleproject-subdirectories true`. It adds
+`--output-legacy-stats true` only for conversion paths that support legacy stats.
+Do not duplicate these BFQ-managed arguments in the option string. The setting
+does not affect bcl2fastq or mkfastq, and direct shell calls to the `bcl-convert`
+wrapper use the arguments supplied on that command line.
+
+Restart the BFQ process after changing the INI; a wake-up signal does not reload
+static configuration. Options must agree with the selected SampleSheet settings
+and workflow-owned conversion profile; validated 10x profiles require
+`NoLaneSplitting=true`. BCL Convert 4.2.4 rejects `--no-lane-splitting true` when
+the SampleSheet includes `Lane`. Keep required lane assignments and select a
+compatible conversion mode. Enabling lane splitting also changes FASTQ names;
+verify renaming and downstream discovery before using that mode in production.
 
 Standard runs use `bcl-convert`; `FORCE_BCL2FASTQ` selects `bcl2fastq`. The 10x
 wrapper is selected by an exact `Libprep` match in `makeFastq.py`. Legacy INI

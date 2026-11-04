@@ -132,8 +132,10 @@ def test_shipped_configs_contain_only_runtime_options(relative_path):
     assert set(commands) == {
         "multiqc_options",
         "bcl2fastq_options",
+        "bcl-convert_options",
         "cellranger_mkfastq_options",
     }
+    assert commands["bcl-convert_options"] == "--no-lane-splitting true"
 
 
 def test_base_image_enables_writable_container_overlays():

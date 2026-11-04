@@ -50,6 +50,7 @@ pipeline = 0.3.1
 
 [Commands]
 multiqc = /usr/bin/multiqc
+bcl-convert_options = --no-lane-splitting false --bcl-num-conversion-threads 8
 """.strip(),
     )
 
@@ -61,7 +62,10 @@ multiqc = /usr/bin/multiqc
     assert config.static.system == {"sleeptime": "1"}
     assert config.static.email == {"finishedto": "sequencing@example.org"}
     assert config.static.version == {"pipeline": "0.3.1"}
-    assert config.static.commands == {"multiqc": "/usr/bin/multiqc"}
+    assert config.static.commands == {
+        "multiqc": "/usr/bin/multiqc",
+        "bcl-convert_options": "--no-lane-splitting false --bcl-num-conversion-threads 8",
+    }
 
 
 def test_load_uses_defaults_for_optional_paths_and_sections(tmp_path):
