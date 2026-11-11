@@ -795,6 +795,16 @@ SensitiveData,False
 letter case. Other custom keys are preserved in the run snapshot for downstream
 or future use but are not interpreted by BFQ itself.
 
+The retired cleaner options `RemoveHumanReads`, `SingleCell`, `TrimAdapter`,
+`Rerun`, `ReverseComplementIndexP5` and `ReverseComplementIndexP7` are optional
+in `[CustomOptions]`. Their absence does not block parsing/preflight; present
+values remain in the custom metadata. Cleaner reverse-complement flags do not
+request manager index corrections or imply `Index2Orientation`. The existing
+`Rerun` compatibility boolean remains readable without enabling automatic reruns.
+This metadata contract does not change similarly named conversion settings in
+`[Settings]` or `[BCLConvert_Settings]`. Priority/InitialHold retain the defaults
+and scheduling/eligibility semantics documented above.
+
 `/opt/gcf-workflows/libprep.config` is authoritative. `BFQ_LIBPREP_CONFIG` is
 retired and ignored with a warning. BFQ captures the exact file bytes once per
 execution, including uncommitted edits, and copies those bytes into each project's
