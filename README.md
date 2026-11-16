@@ -423,12 +423,15 @@ edits and reruns do not override persistent manager decisions.
 | Notification | Recipients | Contents |
 | --- | --- | --- |
 | `sequencing` — Demultiplexing complete — sequencing QC | `finished_to` | Flowcell/projects/user, instrument and read geometry; yield, lane density/PF/PhiX/R1/R2 Q30 where available; assigned reads, undetermined fraction, planned and zero-read samples, and available top unknown indexes. Includes disk availability and the sequencing MultiQC attachment. |
-| `processed` — Analysis complete — QC summary | `finished_to` | Project/FASTQ sample counts and planned samples without FASTQs; original submission counts, sample groups and validation findings. Optional fastp input/retained reads, retention and base-weighted after-filter Q30, with explicit report coverage. Attaches project MultiQC and existing single-cell summaries. |
+| `processed` — Analysis complete — QC summary | `finished_to` | Project/FASTQ sample counts and planned samples without FASTQs; original submission counts, sample groups and validation findings. Optional fastp/cutadapt input/retained reads, retention, retained bases and base-weighted after-filter Q30 where available, with report coverage and tool sources. Attaches project MultiQC and existing single-cell summaries. |
 | `finalized` | `error_to` | Existing archive/checksum completion notification and timing. |
 
 Absent metrics say unavailable; a sample omitted from statistics is not assumed
 to have zero reads. Counts describe read clusters/assignments in sequencing QC;
-fastp counts individual reads, including both mates. Optional fastp summaries are
+filtering totals count individual reads, including both mates (cutadapt pair counts
+are converted). Cutadapt does not report Q30: cutadapt-only projects show it as
+unavailable, and mixed projects show Q30 coverage from fastp reports only.
+Optional [filtering summaries](docs/analysis-qc.md) are
 snapshotted at each project's analysis boundary from its matching workdir so notification
 retries do not need that workdir. Full per-sample details remain in MultiQC.
 

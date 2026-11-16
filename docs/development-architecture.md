@@ -146,6 +146,7 @@ Use the relevant existing guide to specify the remaining manual integration:
 | Analysis email size and attachment omission | [Report email size policy and server checks](report-email-size.md) |
 | Index corrections and conversion | [Index orientation checks](index-orientation-integration-tests.md) |
 | Early QC and notifications | [Early sequencing QC checks](early-sequencing-qc-integration-tests.md) |
+| Analysis filtering metrics and cutadapt reports | [Analysis QC contract and server checks](analysis-qc.md) |
 | Snapshot lifecycle | [Analysis snapshot checks](analysis-snapshot-integration-tests.md) |
 | FASTQ removal/archive prerequisites | [Cleanup checks](clean-fastqs-integration-tests.md) |
 | Project listing, search and CLI inventory | [Row/filter contract](project-listing.md), [search checks](flowcell-search-integration-tests.md) |

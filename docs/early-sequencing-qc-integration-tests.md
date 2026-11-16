@@ -11,13 +11,15 @@ and instrument verification belongs on the integration servers.
    disk availability, sequencing MultiQC attachment. Explicitly says analysis is
    separate and there is no automatic QC decision.
 2. **Analysis complete — QC summary**: discovered and missing FASTQ samples,
-   original submission/sample-group information, optional fastp reads retained and
-   after-filter Q30 with report coverage. Project MultiQC/single-cell attachments;
+   original submission/sample-group information, optional fastp/cutadapt reads retained,
+   retained bases and after-filter Q30 where available, with report coverage and tool
+   sources. Project MultiQC/single-cell attachments;
    no duplicate sequencing attachment for runs with an early notification.
 3. Existing finalization mail after archive preparation/checksums.
 
-Metrics that do not exist for a workflow are explicitly unavailable. fastp
-retention is a read-count ratio; after-filter Q30 is weighted by retained bases.
+Metrics that do not exist for a workflow are explicitly unavailable. Filtering
+retention is a read-count ratio; after-filter Q30 is weighted by retained bases
+only from reports with valid Q30. Cutadapt reports no Q30.
 The input/output totals include both mates, not read pairs. Neither email grades
 samples as passing or failing QC.
 
@@ -38,10 +40,13 @@ bcl-convert input staging must put RunInfo.xml beside the CSV. A Stats symlink t
 Reports/legacy/Stats is supported. The report should not import project analysis
 modules or configuration. Check branding/module layout manually in the browser.
 
-Check fastp summaries against `data/tmp/<workflow>/bfq/logs/**/*.fastp.json` in the
-original marked workdir. Workflows without those reports must show unavailable,
+Check filtering summaries against `data/tmp/<workflow>/bfq/logs/**/*.fastp.json`
+and `*.cutadapt.json` in the original marked workdir. Workflows without either
+report must show unavailable,
 not zero or an invented universal filtering count. MultiQC remains authoritative
 for full workflow-specific metrics.
+For the cutadapt-only smallRNA route and mixed report coverage, follow the
+[analysis QC checks](analysis-qc.md#server-integration-before-merge).
 
 ## Poor assignment and downstream failure
 

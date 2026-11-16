@@ -1,6 +1,7 @@
 """Completion mail composition and SMTP failure boundaries, without real delivery."""
 
 import json
+import shutil
 import smtplib
 
 from datetime import timedelta
@@ -14,7 +15,14 @@ import pytest
 from bcl2fastq_pipeline.config import RunContext
 from bcl2fastq_pipeline.state import DeliveryUncertainError
 
-from bcl2fastq_pipeline import afterFastq, email_attachments, misc, notifications
+from bcl2fastq_pipeline import (
+    afterFastq,
+    analysis_qc,
+    analysis_snapshots,
+    email_attachments,
+    misc,
+    notifications,
+)
 
 
 @pytest.fixture
@@ -489,6 +497,53 @@ def test_new_analysis_mail_keeps_metadata_and_only_analysis_attachments(
         "multiqc_GCF-2026-043_260918.html"
     ]
     forbidden.assert_not_called()
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_analysis_mail_replays_filtering_snapshot_without_workdir(
+    mail_cfg, processed, smtp, monkeypatch, legacy
+):
+    monkeypatch.setenv("TMPDIR", str(mail_cfg.output_path.parent / "work"))
+    project = processed["payload"]["projects"][0]
+    mail_cfg.run.pipeline = "smallrna"
+    workdir = analysis_snapshots.workdir_path(mail_cfg.run.run_id, project)
+    logs = workdir / "data/tmp/smallrna/bfq/logs/synthetic"
+    logs.mkdir(parents=True)
+    analysis_snapshots.identify_workdir(workdir, mail_cfg.run.run_id, project)
+    (logs / "synthetic.cutadapt.json").write_text(
+        json.dumps(
+            {
+                "input": {"paired": False},
+                "read_counts": {"input": 100, "output": 40},
+                "basepair_counts": {"output": 800},
+            }
+        )
+    )
+    snapshot = analysis_qc.collect(mail_cfg, [project])
+    if legacy:
+        # Old durable payloads have only fastp data and already-rendered bodies.
+        snapshot = {
+            "schema_version": 1,
+            "projects": [{"project": project, "fastp": {"retention_pct": 80}}],
+            "summary_text": "Saved fastp read retention: 80.00%",
+            "summary_html": "<strong>Saved fastp read retention: 80.00%</strong>",
+        }
+    processed["payload"]["email_version"] = 2
+    processed["payload"]["analysis_qc"] = snapshot
+    saved = json.loads(json.dumps(processed))
+    shutil.rmtree(workdir)
+    monkeypatch.setattr(analysis_qc, "collect", Mock(side_effect=AssertionError("QC recollected")))
+    notifications.send_notification(mail_cfg, saved)
+    message = smtp[1].send_message.call_args.args[0]
+    for kind in ("plain", "html"):
+        body = message.get_body(preferencelist=(kind,)).get_content()
+        if legacy:
+            assert "Saved fastp read retention: 80.00%" in body
+        else:
+            assert "cutadapt: 1/1" in body
+            assert "40.00%" in body
+            assert "Unavailable (0 reports)" in body
+            assert "cutadapt does not report Q30" in body
 
 
 def test_new_analysis_mail_escapes_user_and_retains_single_cell_report(mail_cfg, processed):
