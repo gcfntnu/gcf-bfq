@@ -146,6 +146,21 @@ def test_processed_mail_preserves_metrics_and_attachments(mail_cfg, processed, m
     assert attachments[0].get_payload(decode=True) == b"<html>Analysis</html>"
 
 
+@pytest.mark.parametrize("run_id", ["261101_UNREGISTERED_0001_TESTFLOWCELL", "malformed"])
+def test_unknown_historical_sequencer_does_not_block_notification_replay(
+    mail_cfg, processed, smtp, run_id
+):
+    for project in processed["payload"]["projects"]:
+        report = mail_cfg.output_path / f"multiqc_{project}_{run_id.split('_')[0]}.html"
+        report.write_text("<html>Historical analysis</html>")
+    for entry in (processed, entry_for(mail_cfg, "processed")):
+        entry["payload"]["run_id"] = run_id
+        message = notifications.build_message(mail_cfg, entry)
+        assert "Sequencer: Unknown" in message.get_body(preferencelist=("plain",)).get_content()
+        notifications.send_notification(mail_cfg, entry)
+    assert smtp[1].send_message.call_count == 2
+
+
 def test_processed_mail_attaches_existing_single_cell_summary(mail_cfg, processed):
     processed["payload"]["libprep"] = "10X Genomics Chromium Single Cell 3prime"
     summary = mail_cfg.output_path / "all_samples_web_summary_GCF-2026-043_260918.html"

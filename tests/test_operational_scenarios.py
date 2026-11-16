@@ -103,6 +103,29 @@ def test_synthetic_fixture_pairing_metadata_and_installed_validation(scenario):
         assert (scenario.output / relative).read_bytes() == (duplicate / relative).read_bytes()
 
 
+@pytest.mark.parametrize("run_id", ["260101_UNREGISTERED_0001_TESTFLOWCELL", "malformed"])
+def test_installed_commands_refuse_unresolved_instruments_without_mutation(scenario, run_id):
+    source = scenario.source.with_name(run_id)
+    output = scenario.output.with_name(run_id)
+    deterministic_inputs(source, "-instrument")
+    deterministic_inputs(output, "-curated")
+    paired_fastqs(output / PROJECT)
+    before = snapshot(source), snapshot(output), snapshot(scenario.cfg.static.paths.manager_dir)
+    for command in ("fm", "flowcell-manager"):
+        result = scenario.command(command, "validate", run_id, expected=1)
+        assert "run.sequencer" in result.stderr
+        assert run_id in result.stderr
+        scenario.command(
+            command, "initialize", run_id, "--from", "demultiplexing", "--force", expected=1
+        )
+    assert (
+        snapshot(source),
+        snapshot(output),
+        snapshot(scenario.cfg.static.paths.manager_dir),
+    ) == before
+    assert not scenario.store.exists(run_id)
+
+
 def test_invalid_preflight_blocks_initialization_rerun_and_execution(scenario):
     sheet = scenario.output / "SampleSheet.csv"
     original = sheet.read_text()

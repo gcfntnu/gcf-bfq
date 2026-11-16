@@ -12,6 +12,35 @@ ambiguous sample mappings, and samples lost during the customer/lab worksheet
 merge produce actionable errors. Informational findings and warnings alone do
 not block a run. Identifiers and input contents are never repaired automatically.
 
+BFQ also requires a known sequencing instrument before demultiplexing or analysis.
+It resolves the second underscore-separated field of the run ID through
+configmaker's `SEQUENCERS` registry in gcf-tools. A missing instrument field or
+unregistered instrument produces a `run.sequencer` preflight error naming the run
+and, when available, the instrument ID. Check the run identity and the installed
+gcf-tools mapping before retrying; a new instrument must be registered in
+gcf-tools. BFQ does not guess a model or continue with workflow defaults.
+
+This check applies to `validate`, initialization, processing reruns (including
+project corrections and `--resume`), and execution. `--force` does not bypass it.
+Rerun refusal preserves existing results, FASTQs, checksums and successful
+snapshots. Delivery-only reporting/finalization retries retain their existing
+behavior. Historical notification summaries display `Unknown` when lookup fails;
+notification replay does not require a currently registered instrument.
+
+The non-processing `get_sequencer()` lookup returns `""` and logs a warning for an
+unresolved instrument, matching configmaker's unknown-value convention. BFQ's
+processing guard rejects that condition before configmaker or Snakemake starts,
+so diagnostic prose is never passed as `--machine`. Known machine names are
+passed unchanged. Instrument mappings and scientific optical-duplicate settings
+remain owned by gcf-tools and gcf-workflows respectively.
+
+For the sequencer change in issue #178, local regression tests are the acceptance
+gate. Synthetic registry entries and input files exercise lookup, diagnostics,
+installed manager commands, processing refusal, rerun/resume preservation and
+notification composition. External processing and SMTP are mocked. This change
+does not require server integration: it changes deterministic lookup and control
+flow, with no change to scientific processing, containers or mail transport.
+
 ## Check inputs without changing a run
 
 ```sh

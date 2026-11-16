@@ -59,8 +59,11 @@ The installation provides these commands:
 subcommands, flags and exit behavior. Both are installed by normal package
 installation and BFQ image rebuilds; existing scripts can keep the long name.
 
-`flowcell-manager validate RUN_ID` checks the effective inputs without changing
-the run. See [input validation and correction](docs/input-preflight.md) and the
+`flowcell-manager validate RUN_ID` checks the effective inputs and instrument
+identity without changing the run. Demultiplexing and analysis require an
+instrument registered in configmaker's `SEQUENCERS`; missing or unregistered
+instrument IDs fail preflight before processing or rerun cleanup.
+See [input validation and correction](docs/input-preflight.md) and the
 [coordinated integration-test guide](docs/preflight-integration-tests.md).
 
 The legacy executable names `bfq.py` and `flowcell_manager.py` are not

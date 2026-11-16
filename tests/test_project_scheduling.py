@@ -13,6 +13,7 @@ import pytest
 import yaml
 
 from bcl2fastq_pipeline.state import FlowcellStateStore, StateConflictError, new_state
+from configmaker.configmaker import SEQUENCERS
 from flowcell_manager import flowcell_manager as manager
 from openpyxl import load_workbook
 from test_project_preflight import pair
@@ -82,7 +83,9 @@ def test_defaulted_priority_plan_is_read_only_and_preview_matches(tmp_path, caps
     source = tmp_path / "source"
     selection = paired_inputs(source, ["2", None, "", "0.5", "0", "1.00"])
     before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in source.iterdir()}
-    _selection, result = preflight.require_valid_inputs(source, tmp_path / "output")
+    _selection, result = preflight.require_valid_inputs(
+        source, tmp_path / "output", check_sequencer=False
+    )
     plan = result.summary["project_schedule"]
     assert plan["order"] == [PROJECTS[i] for i in (4, 3, 1, 2, 5, 0)]
     assert plan["projects"][PROJECTS[1]]["priority_source"] == "default"
@@ -151,6 +154,7 @@ def test_invalid_curated_priority_blocks_scoped_refresh_before_state_or_cleanup(
 
 
 def configure_execution(tmp_path, monkeypatch, priorities):
+    monkeypatch.setitem(SEQUENCERS, "SYNTHETIC", "NovaSeq 6000")
     cfg, source, output = configured_bfq(tmp_path, run_id=RUN)
     paired_inputs(source, priorities)
     geometry = '<RunInfo><Run><Reads><Read Number="1" NumCycles="75" IsIndexedRead="N"/><Read Number="2" NumCycles="8" IsIndexedRead="Y"/><Read Number="3" NumCycles="75" IsIndexedRead="N"/></Reads><FlowcellLayout LaneCount="1"/></Run></RunInfo>'

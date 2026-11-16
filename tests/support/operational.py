@@ -23,6 +23,7 @@ import yaml
 
 from bcl2fastq_pipeline.config import PipelineConfig
 from bcl2fastq_pipeline.state import FlowcellStateStore
+from configmaker.configmaker import SEQUENCERS
 
 from bcl2fastq_pipeline import afterFastq, cli, state, workflow_config
 
@@ -78,6 +79,7 @@ def configure(root):
     assert getattr(sys, "_bfq_external_guard", False), "Missing scenario subprocess guard"
     assert os.environ.get("BFQ_TEST_SCENARIOS") == "1", "Missing strict scenario mode"
     assert (root / "fixture-origin.txt").read_text().startswith("BFQ synthetic fixture v1")
+    SEQUENCERS["SYNTHETIC"] = "NovaSeq 6000"
     cfg = PipelineConfig.load(root / "config" / "bcl2fastq.ini")
     for path in vars(cfg.static.paths).values():
         assert path.resolve().is_relative_to(root), f"Scenario path escaped workspace: {path}"
@@ -294,6 +296,7 @@ def make_scenario(root, monkeypatch):
     """Build beneath one pytest-owned directory, without acquiring any remote data."""
     from support.fixtures import configured_bfq  # noqa: PLC0415
 
+    monkeypatch.setitem(SEQUENCERS, "SYNTHETIC", "NovaSeq 6000")
     executables = {name: Path(sys.executable).parent / name for name in ("fm", "flowcell-manager")}
     assert all(path.is_file() for path in executables.values()), "Run scripts/dev.py setup first"
     monkeypatch.setenv("BFQ_TEST_SCENARIOS", "1")

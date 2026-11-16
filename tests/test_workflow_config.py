@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from bcl2fastq_pipeline.state import FlowcellStateStore, new_state
-from configmaker.configmaker import add_workflow
+from configmaker.configmaker import SEQUENCERS, add_workflow
 from configmaker.libprep import LibprepConfigError
 from openpyxl import load_workbook
 from test_state_integration import (
@@ -122,6 +122,7 @@ def test_daemon_and_configmaker_share_snapshot_through_source_edits(  # noqa: PL
             return command[command.index(flag) + 1]
 
         assert Path(value("--libprep-config")).read_bytes() == CONTENT
+        assert value("--machine") == SEQUENCERS[RUN_ID.split("_")[1]]
         with monkeypatch.context() as context:
             context.chdir(cwd)
             config = add_workflow(

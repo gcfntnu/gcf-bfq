@@ -55,7 +55,9 @@ def test_effective_optional_value_and_read_only_preview(tmp_path, capsys, value,
     if value is not None:
         set_initial(selection.pairs[1].sample_sheet, value)
     before = fingerprint(directory.iterdir())
-    _selection, result = preflight.require_valid_inputs(directory, tmp_path / "output")
+    _selection, result = preflight.require_valid_inputs(
+        directory, tmp_path / "output", check_sequencer=False
+    )
     entries = result.summary["project_initial_holds"]
     assert entries[B]["held"] is held
     assert entries[B]["source"] == source
@@ -330,6 +332,8 @@ def test_installed_previews_status_and_history_agree(tmp_path, monkeypatch, name
     driver = """
 import runpy, sys
 from bcl2fastq_pipeline.config import PipelineConfig
+from configmaker.configmaker import SEQUENCERS
+SEQUENCERS["SYNTHETIC"] = "NovaSeq 6000"
 PipelineConfig.load(sys.argv[1])
 sys.argv = sys.argv[2:]
 runpy.run_path(sys.argv[0], run_name="__main__")
