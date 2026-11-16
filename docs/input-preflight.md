@@ -34,6 +34,13 @@ so diagnostic prose is never passed as `--machine`. Known machine names are
 passed unchanged. Instrument mappings and scientific optical-duplicate settings
 remain owned by gcf-tools and gcf-workflows respectively.
 
+For the sequencer change in issue #178, local regression tests are the acceptance
+gate. Synthetic registry entries and input files exercise lookup, diagnostics,
+installed manager commands, processing refusal, rerun/resume preservation and
+notification composition. External processing and SMTP are mocked. This change
+does not require server integration: it changes deterministic lookup and control
+flow, with no change to scientific processing, containers or mail transport.
+
 ## Check inputs without changing a run
 
 ```sh
@@ -148,14 +155,6 @@ route.
 8. Compare planned samples in the preflight report with configmaker's actual
    FASTQ-discovered analysis summary; missing FASTQs must not be reported as
    successfully analyzed merely because their inputs passed validation.
-9. On a disposable fixture with an unregistered synthetic instrument ID, verify
-   that `validate` and forced demultiplexing/analysis reruns fail before cleanup.
-   Execution must record `run.sequencer` in the failed stage's preflight report
-   without launching conversion, configmaker or Snakemake. Repeat with a missing
-   instrument field and confirm an actionable diagnostic. On a registered
-   fixture, verify the expected machine name in the generated configmaker config
-   and normal workflow startup. Use the test notification route to confirm that
-   historical messages with an unknown instrument still display `Unknown`.
 
 ## Explicit analysis resume
 
