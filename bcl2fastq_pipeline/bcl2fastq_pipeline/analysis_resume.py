@@ -188,7 +188,9 @@ def inspect(state, *, selection=None, result=None):
     """Read-only validation used before queueing and again under the execution lease."""
     output = Path(state["output_path"])
     if selection is None:
-        selection, result = preflight.require_valid_inputs(state["source_path"], output)
+        selection, result = preflight.require_valid_inputs(
+            state["source_path"], output, state=state
+        )
     if selection.multi_pair:
         if any(
             path.parent != output

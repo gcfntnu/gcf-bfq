@@ -424,7 +424,9 @@ def test_workflow_commands_keep_config_values_as_single_arguments(tmp_path, monk
     run_logged_command = Mock()
     monkeypatch.setattr(afterFastq, "get_project_names", Mock(return_value={project}))
     monkeypatch.setattr(afterFastq, "get_project_dirs", Mock(return_value=set()))
-    monkeypatch.setattr(afterFastq, "get_sequencer", Mock(return_value="Nova Seq;not-a-command"))
+    monkeypatch.setattr(
+        afterFastq, "require_sequencer", Mock(return_value="Nova Seq;not-a-command")
+    )
     monkeypatch.setattr(afterFastq.shutil, "copytree", Mock())
     monkeypatch.setattr(afterFastq.shutil, "copy2", Mock())
     monkeypatch.setattr(afterFastq.subprocess, "check_call", check_call)

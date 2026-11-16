@@ -22,7 +22,6 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path
 
-from configmaker.configmaker import SEQUENCERS
 from configmaker.validation import VALIDATOR_VERSION
 
 from bcl2fastq_pipeline import (
@@ -34,6 +33,7 @@ from bcl2fastq_pipeline import (
     workflow_config,
 )
 from bcl2fastq_pipeline.config import PipelineConfig, ProjectConfig
+from bcl2fastq_pipeline.sequencer import SequencerError, require_sequencer
 from bcl2fastq_pipeline.workflow_config import select_workflow
 
 log = logging.getLogger(__name__)
@@ -164,7 +164,12 @@ def to_dirs(files):
 
 
 def get_sequencer(run_id):
-    return SEQUENCERS.get(run_id.split("_")[1], "Sequencer could not be automatically determined.")
+    """Use configmaker's empty unknown value for non-processing consumers."""
+    try:
+        return require_sequencer(run_id)
+    except SequencerError as error:
+        log.warning("%s", error)
+        return ""
 
 
 def _md5_filename(path):
@@ -518,6 +523,7 @@ def snakemake_command(*, resume=False, target="multiqc_report", cores=32):
 
 
 def full_align(cfg, *, resume=None):
+    machine = require_sequencer(cfg.run.run_id)
     if not resume:
         workflow_config.prepare_analysis_projects(cfg)
     selection = None
@@ -568,7 +574,6 @@ def full_align(cfg, *, resume=None):
             # exact bytes captured for this execution, including uncommitted edits.
             selection.config.write(dst / "libprep.config")
 
-            machine = get_sequencer(cfg.run.run_id)
             # create config.yaml
             cmd = [
                 "/opt/conda/bin/python",

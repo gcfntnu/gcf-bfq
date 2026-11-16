@@ -12,6 +12,28 @@ ambiguous sample mappings, and samples lost during the customer/lab worksheet
 merge produce actionable errors. Informational findings and warnings alone do
 not block a run. Identifiers and input contents are never repaired automatically.
 
+BFQ also requires a known sequencing instrument before demultiplexing or analysis.
+It resolves the second underscore-separated field of the run ID through
+configmaker's `SEQUENCERS` registry in gcf-tools. A missing instrument field or
+unregistered instrument produces a `run.sequencer` preflight error naming the run
+and, when available, the instrument ID. Check the run identity and the installed
+gcf-tools mapping before retrying; a new instrument must be registered in
+gcf-tools. BFQ does not guess a model or continue with workflow defaults.
+
+This check applies to `validate`, initialization, processing reruns (including
+project corrections and `--resume`), and execution. `--force` does not bypass it.
+Rerun refusal preserves existing results, FASTQs, checksums and successful
+snapshots. Delivery-only reporting/finalization retries retain their existing
+behavior. Historical notification summaries display `Unknown` when lookup fails;
+notification replay does not require a currently registered instrument.
+
+The non-processing `get_sequencer()` lookup returns `""` and logs a warning for an
+unresolved instrument, matching configmaker's unknown-value convention. BFQ's
+processing guard rejects that condition before configmaker or Snakemake starts,
+so diagnostic prose is never passed as `--machine`. Known machine names are
+passed unchanged. Instrument mappings and scientific optical-duplicate settings
+remain owned by gcf-tools and gcf-workflows respectively.
+
 ## Check inputs without changing a run
 
 ```sh
@@ -126,6 +148,14 @@ route.
 8. Compare planned samples in the preflight report with configmaker's actual
    FASTQ-discovered analysis summary; missing FASTQs must not be reported as
    successfully analyzed merely because their inputs passed validation.
+9. On a disposable fixture with an unregistered synthetic instrument ID, verify
+   that `validate` and forced demultiplexing/analysis reruns fail before cleanup.
+   Execution must record `run.sequencer` in the failed stage's preflight report
+   without launching conversion, configmaker or Snakemake. Repeat with a missing
+   instrument field and confirm an actionable diagnostic. On a registered
+   fixture, verify the expected machine name in the generated configmaker config
+   and normal workflow startup. Use the test notification route to confirm that
+   historical messages with an unknown instrument still display `Unknown`.
 
 ## Explicit analysis resume
 

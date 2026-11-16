@@ -18,6 +18,7 @@ from unittest.mock import Mock
 import pytest
 
 from bcl2fastq_pipeline.state import FlowcellStateStore, StateConflictError, new_state
+from configmaker.configmaker import SEQUENCERS
 from flowcell_manager import flowcell_manager as manager
 from test_project_preflight import pair
 
@@ -53,6 +54,7 @@ def tree_identity(directory):
 
 @pytest.fixture
 def execution(tmp_path, monkeypatch):
+    monkeypatch.setitem(SEQUENCERS, "TEST", "NovaSeq 6000")
     cfg, source, output = configured_bfq(tmp_path, run_id=RUN)
     output.mkdir()
     geometry = (

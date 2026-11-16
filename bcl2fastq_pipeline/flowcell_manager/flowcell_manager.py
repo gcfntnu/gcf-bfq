@@ -368,7 +368,11 @@ def rerun_flowcell(**args):
             output_path,
             refresh=refresh_inputs,
             state=state,
-            **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
+            **(
+                {"show_schedule": False, "check_sequencer": False}
+                if from_stage in {"reporting", "finalization"}
+                else {}
+            ),
         )
         if indexes:
             _require_single_pair_index_toggle(selected)
@@ -399,7 +403,11 @@ def rerun_flowcell(**args):
                 output_path,
                 refresh=refresh_inputs,
                 state=state,
-                **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
+                **(
+                    {"show_schedule": False, "check_sequencer": False}
+                    if from_stage in {"reporting", "finalization"}
+                    else {}
+                ),
             )
         if correction is not None:
             _require_single_pair_index_toggle(selected)
@@ -457,7 +465,7 @@ def _retry_project_delivery(args, cfg, store, run_id, state, correction, from_st
     inputs = Path(correction["root"]) / "inputs"
     working = Path(correction["working"])
     selection, _result = preflight.require_valid_inputs(
-        inputs, inputs, show_schedule=False, state=state
+        inputs, inputs, show_schedule=False, state=state, check_sequencer=False
     )
     print(f"Retry staged project delivery: {run_id}\nRestart boundary: {from_stage}")
     print("Selected projects: " + ", ".join(selected))
@@ -475,7 +483,9 @@ def _retry_project_delivery(args, cfg, store, run_id, state, correction, from_st
             raise StateConflictError("Run changed while preparing delivery retry")
         project_corrections.recover(store, run_id)
         analysis_snapshots.recover(store, run_id)
-        preflight.require_valid_inputs(inputs, inputs, show_schedule=False, state=state)
+        preflight.require_valid_inputs(
+            inputs, inputs, show_schedule=False, state=state, check_sequencer=False
+        )
         store.set_preparing(
             run_id, from_stage, reason=args.get("reason"), refresh_inputs=False, projects=selected
         )
@@ -514,7 +524,11 @@ def _rerun_projects(args, cfg, store, run_id, state, legacy, from_stage, project
         refresh=refresh,
         projects=projects,
         state=state,
-        **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
+        **(
+            {"show_schedule": False, "check_sequencer": False}
+            if from_stage in {"reporting", "finalization"}
+            else {}
+        ),
     )
     print(f"Rerun: {run_id}\nRestart boundary: {from_stage}\nOutput directory: {output}")
     paths = project_corrections.print_plan(state, selection, projects, from_stage, refresh=refresh)
@@ -536,7 +550,11 @@ def _rerun_projects(args, cfg, store, run_id, state, legacy, from_stage, project
             refresh=refresh,
             projects=projects,
             state=state,
-            **({"show_schedule": False} if from_stage in {"reporting", "finalization"} else {}),
+            **(
+                {"show_schedule": False, "check_sequencer": False}
+                if from_stage in {"reporting", "finalization"}
+                else {}
+            ),
         )
         project_corrections.recover(store, run_id)
         index_corrections.recover(store, run_id)
@@ -1038,7 +1056,7 @@ def control_projects(**args):
     names = state["projects"]
     if not names:
         _selection, result = preflight.require_valid_inputs(
-            state["source_path"], state["output_path"]
+            state["source_path"], state["output_path"], state=state, check_sequencer=False
         )
         names = sorted(result.summary["project_schedule"]["projects"])
 

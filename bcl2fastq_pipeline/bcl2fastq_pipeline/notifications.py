@@ -191,7 +191,7 @@ def _legacy_processed_message(cfg, message, payload):
     summary.extend(
         (
             f"Flow cell: {run_id}",
-            f"Sequencer: {afterFastq.get_sequencer(run_id)}",
+            f"Sequencer: {afterFastq.get_sequencer(run_id) or 'Unknown'}",
             f"Read geometry: {afterFastq.get_read_geometry(saved_cfg.output_path)}",
             f"bcl2fastq_pipeline run time: {payload['run_time']}",
         )
@@ -271,7 +271,7 @@ def _run_summary(payload):
     lines.extend(
         (
             f"Flow cell: {payload['run_id']}",
-            f"Sequencer: {afterFastq.get_sequencer(payload['run_id'])}",
+            f"Sequencer: {afterFastq.get_sequencer(payload['run_id']) or 'Unknown'}",
         )
     )
     if payload.get("processing_timing") is None:

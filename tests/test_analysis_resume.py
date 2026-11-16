@@ -13,6 +13,7 @@ import pytest
 import yaml
 
 from bcl2fastq_pipeline.state import ExecutionLeaseError, FlowcellStateStore, StateConflictError
+from configmaker.configmaker import SEQUENCERS
 from openpyxl import load_workbook
 from support.fixtures import RUN_ID, completed_state, configured_bfq, write_fastq, write_inputs
 
@@ -168,6 +169,19 @@ def test_active_lease_not_bypassed_by_force(prepared):
     cfg, store, output, work = prepared
     with store.execution_lease(RUN_ID), pytest.raises((ExecutionLeaseError, StateConflictError)):
         queue()
+
+
+def test_unknown_sequencer_blocks_resume_without_mutating_workdir_or_state(prepared, monkeypatch):
+    _cfg, store, output, work = prepared
+    monkeypatch.delitem(SEQUENCERS, RUN_ID.split("_")[1])
+    before = bytes_and_times(work), bytes_and_times(output), store.state_path(RUN_ID).read_bytes()
+    with pytest.raises(preflight.PreflightValidationError, match="SEQUENCERS"):
+        queue()
+    assert (
+        bytes_and_times(work),
+        bytes_and_times(output),
+        store.state_path(RUN_ID).read_bytes(),
+    ) == before
 
 
 def test_held_resume_waits_and_release_keeps_repaired_workdir(prepared, monkeypatch):

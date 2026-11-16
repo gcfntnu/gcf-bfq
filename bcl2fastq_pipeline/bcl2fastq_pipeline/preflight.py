@@ -16,6 +16,7 @@ from pathlib import Path
 
 from bcl2fastq_pipeline import initial_holds, project_scheduling
 from bcl2fastq_pipeline.config import parse_custom_options
+from bcl2fastq_pipeline.sequencer import SequencerError, require_sequencer
 from bcl2fastq_pipeline.state import StateError, utcnow
 
 log = logging.getLogger(__name__)
@@ -393,8 +394,22 @@ def validate_selection(
     )
 
 
+def _validate_sequencer(result, run_id):
+    try:
+        require_sequencer(run_id)
+    except SequencerError as error:
+        result.add("error", "run.sequencer", str(error))
+
+
 def require_valid_inputs(  # noqa: PLR0913
-    source_path, output_path, *, refresh=False, projects=None, show_schedule=True, state=None
+    source_path,
+    output_path,
+    *,
+    refresh=False,
+    projects=None,
+    show_schedule=True,
+    state=None,
+    check_sequencer=True,
 ):
     """Read-only preparation guard before an operator command removes results."""
     selection = select_run_inputs(source_path, output_path, refresh=refresh, projects=projects)
@@ -410,6 +425,10 @@ def require_valid_inputs(  # noqa: PLR0913
         run_info=run_info if run_info.exists() else None,
         libprep_config=libprep_config,
     )
+    if check_sequencer:
+        # Staged project inputs live outside the run directory. State carries
+        # the canonical identity; input-directory names are not instrument IDs.
+        _validate_sequencer(result, state["run_id"] if state else Path(source_path).name)
     print(selection.describe())
     print(result.render_text())
     if not result.ok:
@@ -503,6 +522,7 @@ def run_preflight(cfg, store, stage):
         if selection.multi_pair or needs_plan(selection)
         else validate_selection(selection)
     )
+    _validate_sequencer(result, cfg.run.run_id)
     report_path = cfg.static.paths.report_dir / f"{cfg.run.run_id}.input-preflight.json"
     report = result.to_dict()
     report.update(checked_at=utcnow(), restart_boundary=stage, report_path=str(report_path))
