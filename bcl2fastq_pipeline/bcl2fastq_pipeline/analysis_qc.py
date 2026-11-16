@@ -1,6 +1,6 @@
 """Small, workflow-independent analysis QC snapshots for durable notifications.
 
-Sample discovery is a normal configmaker output. fastp is optional, so summaries
+Sample discovery is a normal configmaker output. Filtering reports are optional, so summaries
 always disclose report coverage and never treat an absent metric as zero. Capture
 these values before finalization; email retries must not require the workdir.
 """
@@ -45,9 +45,14 @@ def _fastp_counts(path):
     retained = _count(after["total_reads"])
     if retained > before:
         raise ValueError("Output reads exceed input reads")
-    bases = q30_bases = None
     try:
         bases = _count(after["total_bases"])
+    except (KeyError, ValueError, TypeError):
+        bases = None
+    q30_bases = None
+    try:
+        if bases is None:
+            raise ValueError("Missing base count")
         if "q30_bases" in after:
             q30_bases = _count(after["q30_bases"])
             if q30_bases > bases:
@@ -58,24 +63,102 @@ def _fastp_counts(path):
                 raise ValueError("Invalid Q30 rate")
             q30_bases = rate * bases
     except (KeyError, ValueError, TypeError, OverflowError):
-        bases = q30_bases = None
+        q30_bases = None
     return before, retained, bases, q30_bases
 
 
-def _fastp(cfg, project):
+def _cutadapt_counts(path):
+    data = json.loads(path.read_text())
+    before = _count(data["read_counts"]["input"])
+    retained = _count(data["read_counts"]["output"])
+    if retained > before:
+        raise ValueError("Output reads exceed input reads")
+    paired = data["input"]["paired"]
+    if type(paired) is not bool:
+        raise ValueError("Expected cutadapt input.paired boolean")
+    # Cutadapt counts pairs for PE; fastp and the BFQ overview count individual reads.
+    if paired:
+        before *= 2
+        retained *= 2
+    try:
+        bases = _count(data["basepair_counts"]["output"])
+    except (KeyError, ValueError, TypeError):
+        bases = None
+    return before, retained, bases, None
+
+
+def _summarize(reports):
+    """Aggregate counts, keeping base coverage separate from quality coverage."""
     result = {
-        "reports_found": 0,
+        "reports_found": len(reports),
         "reports_used": 0,
         "input_reads": None,
         "output_reads": None,
+        "output_bases": None,
+        "bases_reports_used": 0,
         "retention_pct": None,
         "q30_pct": None,
         "q30_reports_used": 0,
         "warnings": [],
     }
+    total_input = total_output = total_bases = quality_bases = q30_bases = 0
+    for counts in reports:
+        if counts is None:
+            continue
+        before, after, bases, q30 = counts
+        result["reports_used"] += 1
+        total_input += before
+        total_output += after
+        if bases is not None:
+            result["bases_reports_used"] += 1
+            total_bases += bases
+        if bases is not None and q30 is not None:
+            result["q30_reports_used"] += 1
+            quality_bases += bases
+            q30_bases += q30
+    if result["reports_used"]:
+        result["input_reads"] = total_input
+        result["output_reads"] = total_output
+        if total_input:
+            result["retention_pct"] = 100 * total_output / total_input
+    if result["bases_reports_used"]:
+        result["output_bases"] = total_bases
+    if quality_bases:
+        result["q30_pct"] = 100 * q30_bases / quality_bases
+    if not reports:
+        result["warnings"].append(
+            "Filtering summary unavailable: no filtering reports for this workflow."
+        )
+    elif result["reports_used"] != len(reports):
+        result["warnings"].append(
+            "Some filtering reports were invalid or ambiguous; totals cover usable reports only."
+        )
+    if result["bases_reports_used"] < result["reports_used"]:
+        result["warnings"].append(
+            "Retained bases cover only reports with valid output base counts."
+        )
+    return result
+
+
+def _report_paths(logs):
+    """Use delivery names for tool/sample identity, and real paths to deduplicate aliases."""
+    samples = {}
+    for tool in ("fastp", "cutadapt"):
+        suffix = f".{tool}.json"
+        for path in sorted(logs.rglob(f"*{suffix}")):
+            sample = path.name.removesuffix(suffix)
+            samples.setdefault(sample, set()).add((tool, path.resolve()))
+    paths = set().union(*samples.values())
+    ambiguous = set().union(*(entries for entries in samples.values() if len(entries) > 1))
+    return sorted(paths), ambiguous
+
+
+def _filtering(cfg, project):
+    result = _summarize([])
+    result["tools"] = {tool: _summarize([]) for tool in ("fastp", "cutadapt")}
     pipeline = workflow_config.project_workflow(cfg, project)
     if not isinstance(pipeline, str) or not pipeline or "/" in pipeline or pipeline in {".", ".."}:
-        result["warnings"].append("fastp summary unavailable: workflow is not recorded.")
+        result["warnings"] = ["Filtering summary unavailable: workflow is not recorded."]
         return result
     try:
         workdir = workflow_config.project_workdir(cfg, project)
@@ -83,46 +166,42 @@ def _fastp(cfg, project):
         if marker.get("run_id") != cfg.run.run_id or marker.get("project") != project:
             raise ValueError("Workdir belongs to another run")
     except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError):
-        result["warnings"].append(
-            "fastp summary unavailable: original analysis workdir cannot be verified."
-        )
+        result["warnings"] = [
+            "Filtering summary unavailable: original analysis workdir cannot be verified."
+        ]
         return result
     logs = workdir / "data" / "tmp" / pipeline / "bfq" / "logs"
-    # Workflow logs are commonly symlinks. Deduplicate aliases of one report.
     try:
-        paths = sorted({path.resolve() for path in logs.rglob("*.fastp.json")})
+        paths, ambiguous = _report_paths(logs)
     except (OSError, RuntimeError):
-        result["warnings"].append("fastp summary unavailable: report directory cannot be read.")
+        result["warnings"] = ["Filtering summary unavailable: report directory cannot be read."]
         return result
-    result["reports_found"] = len(paths)
-    total_input = total_output = total_bases = q30_bases = 0
-    for path in paths:
+    readers = {"fastp": _fastp_counts, "cutadapt": _cutadapt_counts}
+    reports = {tool: [] for tool in readers}
+    for tool, path in paths:
+        counts = None
         try:
-            before, after, bases, q30 = _fastp_counts(path)
+            if (tool, path) not in ambiguous:
+                counts = readers[tool](path)
         except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
-            continue
-        result["reports_used"] += 1
-        total_input += before
-        total_output += after
-        if bases is not None:
-            result["q30_reports_used"] += 1
-            total_bases += bases
-            q30_bases += q30
-    if result["reports_used"]:
-        result["input_reads"] = total_input
-        result["output_reads"] = total_output
-        if total_input:
-            result["retention_pct"] = 100 * total_output / total_input
-    if total_bases:
-        result["q30_pct"] = 100 * q30_bases / total_bases
-    if not paths:
-        result["warnings"].append("fastp summary unavailable: no fastp reports for this workflow.")
-    elif result["reports_used"] != len(paths):
+            pass
+        reports[tool].append(counts)
+    result = _summarize([counts for source in reports.values() for counts in source])
+    result["tools"] = {tool: _summarize(source) for tool, source in reports.items()}
+    fastp = result["tools"]["fastp"]
+    if fastp["q30_reports_used"] < fastp["reports_used"]:
+        warning = "Q30 covers only reports with valid after-filtering quality and base counts."
+        fastp["warnings"].append(warning)
+        result["warnings"].append(warning)
+    if result["tools"]["cutadapt"]["reports_used"]:
         result["warnings"].append(
-            "Some fastp reports could not be read; totals cover valid reports only."
+            "cutadapt does not report Q30; its reads are outside Q30 coverage."
         )
-    if result["q30_reports_used"] < result["reports_used"]:
-        result["warnings"].append("Q30 covers only reports with valid after-filtering base counts.")
+    if ambiguous:
+        result["warnings"].append(
+            "Multiple filtering reports name the same sample; those reports are excluded "
+            "to avoid counting a sample more than once."
+        )
     return result
 
 
@@ -139,31 +218,42 @@ def _render(projects):
         "Project",
         "FASTQ samples",
         "Planned samples without FASTQs",
-        "fastp reports used/found",
+        "Filtering reports used/found",
+        "Report sources (used/found)",
         "Input reads",
         "Retained reads",
         "Read retention",
+        "Retained bases",
         "After-filter Q30 bases",
     )
     rows = []
     notes = [
-        "FASTQ sample counts describe analysis initialization. fastp metrics are optional; "
+        "FASTQ sample counts describe analysis initialization. Filtering metrics are optional; "
         "read counts include both mates, not read pairs. Report coverage is shown explicitly "
-        "and is not a count of samples passing QC. Q30 is weighted by retained bases."
+        "and is not a count of samples passing QC. Q30 is weighted by retained bases "
+        "from reports with Q30 data only."
     ]
     for project in projects:
-        fastp = project["fastp"]
+        filtering = project["filtering"]
         missing = project["missing_sample_ids"]
         rows.append(
             (
                 project["project"],
                 _format_count(project["sample_count"]),
                 _format_count(len(missing) if missing is not None else None),
-                f"{fastp['reports_used']}/{fastp['reports_found']}",
-                _format_count(fastp["input_reads"]),
-                _format_count(fastp["output_reads"]),
-                _format_pct(fastp["retention_pct"]),
-                _format_pct(fastp["q30_pct"]) + f" ({fastp['q30_reports_used']} reports)",
+                f"{filtering['reports_used']}/{filtering['reports_found']}",
+                ", ".join(
+                    f"{tool}: {source['reports_used']}/{source['reports_found']}"
+                    for tool, source in filtering["tools"].items()
+                    if source["reports_found"]
+                )
+                or "Unavailable",
+                _format_count(filtering["input_reads"]),
+                _format_count(filtering["output_reads"]),
+                _format_pct(filtering["retention_pct"]),
+                _format_count(filtering["output_bases"])
+                + f" ({filtering['bases_reports_used']} reports)",
+                _format_pct(filtering["q30_pct"]) + f" ({filtering['q30_reports_used']} reports)",
             )
         )
         if missing:
@@ -172,7 +262,7 @@ def _render(projects):
             )
         if project["sample_count"] is None:
             notes.append(f"{project['project']}: FASTQ discovery summary unavailable.")
-        notes.extend(f"{project['project']}: {warning}" for warning in fastp["warnings"])
+        notes.extend(f"{project['project']}: {warning}" for warning in filtering["warnings"])
     html = "<strong>Analysis QC overview</strong><table><thead><tr>"
     html += "".join(f"<th>{escape(value)}</th>" for value in headings) + "</tr></thead><tbody>"
     html += "".join(
@@ -192,12 +282,15 @@ def collect(cfg, projects):
         if "/" in project or project in {".", ".."}:
             raise ValueError(f"Invalid analysis project: {project!r}")
         count, missing = _discovery(cfg.output_path, project)
+        filtering = _filtering(cfg, project)
         summaries.append(
             {
                 "project": project,
                 "sample_count": count,
                 "missing_sample_ids": missing,
-                "fastp": _fastp(cfg, project),
+                # Keep the schema-v1 fastp fields scoped to fastp for existing consumers.
+                "fastp": filtering["tools"]["fastp"],
+                "filtering": filtering,
             }
         )
     text, html = _render(summaries)

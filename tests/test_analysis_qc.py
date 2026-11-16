@@ -37,10 +37,20 @@ def analysis_cfg(tmp_path, monkeypatch):
     return cfg
 
 
-def report(cfg, name, before=100, after=80, bases=800, q30=720):  # noqa: PLR0913
-    logs = analysis_snapshots.workdir_path(cfg.run.run_id, PROJECT) / "data/tmp/metagenome/bfq/logs"
-    path = logs / name / f"{name}.fastp.json"
+def report_path(cfg, name, tool):
+    logs = (
+        analysis_snapshots.workdir_path(cfg.run.run_id, PROJECT)
+        / "data/tmp"
+        / cfg.run.pipeline
+        / "bfq/logs"
+    )
+    path = logs / name / f"{name}.{tool}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def report(cfg, name, before=100, after=80, bases=800, q30=720):  # noqa: PLR0913
+    path = report_path(cfg, name, "fastp")
     path.write_text(
         json.dumps(
             {
@@ -52,6 +62,27 @@ def report(cfg, name, before=100, after=80, bases=800, q30=720):  # noqa: PLR091
                         "q30_bases": q30,
                     },
                 }
+            }
+        )
+    )
+    return path
+
+
+def cutadapt_report(cfg, name, *, before=100, after=40, bases=800, paired=False):  # noqa: PLR0913
+    path = report_path(cfg, name, "cutadapt")
+    path.write_text(
+        json.dumps(
+            {
+                "tag": "Cutadapt report, merged from the passes in gcf_passes",
+                "schema_version": [0, 3],
+                "cutadapt_version": "5.2",
+                "input": {"path1": f"{name}.fastq", "path2": None, "paired": paired},
+                "read_counts": {"input": before, "output": after},
+                "basepair_counts": {"output": bases},
+                "gcf_passes": [
+                    {"pass": "adapter", "file": f"{name}.adapter.json"},
+                    {"pass": "filter", "file": f"{name}.filter.json"},
+                ],
             }
         )
     )
@@ -85,12 +116,12 @@ def test_snapshot_remains_available_after_workdir_removal(analysis_cfg):
     assert "80.00%" in snapshot["summary_html"]
 
 
-def test_no_fastp_workflow_explicitly_reports_unavailable(analysis_cfg):
+def test_no_filtering_reports_explicitly_reports_unavailable(analysis_cfg):
     snapshot = analysis_qc.collect(analysis_cfg, [PROJECT])
     fastp = snapshot["projects"][0]["fastp"]
     assert fastp["input_reads"] is None
     assert fastp["retention_pct"] is None
-    assert "no fastp reports for this workflow" in snapshot["summary_text"]
+    assert "no filtering reports for this workflow" in snapshot["summary_text"]
     assert "Unavailable" in snapshot["summary_html"]
 
 
@@ -132,7 +163,7 @@ def test_invalid_reports_and_missing_q30_keep_partial_coverage_explicit(analysis
     assert fastp["q30_reports_used"] == 1
     assert fastp["input_reads"] == 200
     assert fastp["q30_pct"] == 90
-    assert "totals cover valid reports only" in snapshot["summary_text"]
+    assert "totals cover usable reports only" in snapshot["summary_text"]
     assert "Q30 covers only reports" in snapshot["summary_text"]
 
 
@@ -171,7 +202,7 @@ def test_malformed_optional_fastp_object_does_not_block_reporting(analysis_cfg, 
     assert fastp["reports_found"] == 1
     assert fastp["reports_used"] == 0
     assert fastp["input_reads"] is None
-    assert "Some fastp reports could not be read" in snapshot["summary_text"]
+    assert "Some filtering reports were invalid or ambiguous" in snapshot["summary_text"]
 
 
 @pytest.mark.parametrize(
@@ -186,3 +217,167 @@ def test_workdir_resolution_failure_does_not_block_reporting(analysis_cfg, monke
     assert snapshot["projects"][0]["sample_count"] == 3
     assert snapshot["projects"][0]["fastp"]["input_reads"] is None
     assert "workdir cannot be verified" in snapshot["summary_text"]
+
+
+def test_cutadapt_only_smallrna_keeps_native_counts_and_unavailable_q30(analysis_cfg):
+    analysis_cfg.run.pipeline = "smallrna"
+    cutadapt_report(analysis_cfg, "sample1")
+    snapshot = analysis_qc.collect(analysis_cfg, [PROJECT])
+    filtering = snapshot["projects"][0]["filtering"]
+    assert filtering["input_reads"] == 100
+    assert filtering["output_reads"] == 40
+    assert filtering["retention_pct"] == 40
+    assert filtering["output_bases"] == 800
+    assert filtering["bases_reports_used"] == 1
+    assert filtering["q30_pct"] is None
+    assert filtering["q30_reports_used"] == 0
+    assert filtering["reports_found"] == filtering["reports_used"] == 1
+    assert snapshot["projects"][0]["fastp"]["input_reads"] is None
+    assert snapshot["projects"][0]["fastp"]["reports_found"] == 0
+    for body in (snapshot["summary_text"], snapshot["summary_html"]):
+        assert "Filtering reports used/found" in body
+        assert "cutadapt: 1/1" in body
+        assert "Unavailable (0 reports)" in body
+        assert "cutadapt does not report Q30" in body
+        assert "Q30 covers only reports" not in body
+        assert "fastp" not in body
+    assert json.loads(json.dumps(snapshot)) == snapshot
+
+
+def test_mixed_tools_combine_reads_but_only_fastp_bases_weight_q30(analysis_cfg):
+    report(analysis_cfg, "fastp1", before=100, after=80, bases=800, q30=720)
+    report(analysis_cfg, "fastp2", before=300, after=120, bases=2400, q30=1200)
+    cutadapt_report(analysis_cfg, "cutadapt1", before=600, after=300, bases=6000)
+    snapshot = analysis_qc.collect(analysis_cfg, [PROJECT])
+    filtering = snapshot["projects"][0]["filtering"]
+    assert filtering["input_reads"] == 1000
+    assert filtering["output_reads"] == 500
+    assert filtering["retention_pct"] == 50
+    assert filtering["output_bases"] == 9200
+    assert filtering["bases_reports_used"] == 3
+    assert filtering["q30_pct"] == 60
+    assert filtering["q30_reports_used"] == 2
+    assert filtering["reports_used"] == filtering["reports_found"] == 3
+    assert "fastp: 2/2, cutadapt: 1/1" in snapshot["summary_text"]
+    assert "Q30 covers only reports" not in snapshot["summary_text"]
+    assert "cutadapt does not report Q30" in snapshot["summary_text"]
+    # Schema-v1 consumers still see fastp-only totals, including its own coverage.
+    fastp = snapshot["projects"][0]["fastp"]
+    assert fastp["input_reads"] == 400
+    assert fastp["output_reads"] == 200
+    assert fastp["q30_pct"] == 60
+    assert fastp["reports_found"] == fastp["reports_used"] == 2
+
+
+@pytest.mark.parametrize("missing_field", ["q30_bases", "total_bases"])
+def test_mixed_tools_still_warn_about_incomplete_fastp_quality(analysis_cfg, missing_field):
+    report(analysis_cfg, "good")
+    partial = report(analysis_cfg, "partial")
+    data = json.loads(partial.read_text())
+    data["summary"]["after_filtering"].pop(missing_field)
+    partial.write_text(json.dumps(data))
+    cutadapt_report(analysis_cfg, "cutadapt1")
+    snapshot = analysis_qc.collect(analysis_cfg, [PROJECT])
+    filtering = snapshot["projects"][0]["filtering"]
+    assert filtering["reports_used"] == 3
+    assert filtering["q30_reports_used"] == 1
+    assert filtering["q30_pct"] == 90
+    for body in (snapshot["summary_text"], snapshot["summary_html"]):
+        assert "Q30 covers only reports" in body
+        assert "cutadapt does not report Q30" in body
+    assert any(
+        "Q30 covers only reports" in note for note in snapshot["projects"][0]["fastp"]["warnings"]
+    )
+    assert not filtering["tools"]["cutadapt"]["warnings"]
+
+
+def test_paired_cutadapt_counts_are_normalized_to_individual_reads(analysis_cfg):
+    report(analysis_cfg, "fastp1", before=100, after=80)
+    cutadapt_report(analysis_cfg, "paired", before=100, after=20, bases=4000, paired=True)
+    filtering = analysis_qc.collect(analysis_cfg, [PROJECT])["projects"][0]["filtering"]
+    assert filtering["input_reads"] == 300
+    assert filtering["output_reads"] == 120
+    assert filtering["retention_pct"] == 40
+    assert filtering["output_bases"] == 4800
+    assert filtering["tools"]["cutadapt"]["input_reads"] == 200
+
+
+@pytest.mark.parametrize("before, after", [(0, 0), (100, 0)])
+def test_cutadapt_zero_reads_remain_zero_and_q30_unavailable(analysis_cfg, before, after):
+    cutadapt_report(analysis_cfg, "empty", before=before, after=after, bases=0)
+    filtering = analysis_qc.collect(analysis_cfg, [PROJECT])["projects"][0]["filtering"]
+    assert filtering["input_reads"] == before
+    assert filtering["output_reads"] == filtering["output_bases"] == 0
+    assert filtering["retention_pct"] == (0 if before else None)
+    assert filtering["q30_pct"] is None
+    assert filtering["q30_reports_used"] == 0
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        "broken",
+        "[]",
+        "null",
+        "{}",
+        '{"read_counts":null}',
+        '{"read_counts":{"input":100,"output":101},"input":{"paired":false}}',
+        '{"read_counts":{"input":-1,"output":0},"input":{"paired":false}}',
+        '{"read_counts":{"input":100,"output":true},"input":{"paired":false}}',
+        '{"read_counts":{"input":100,"output":40}}',
+        '{"read_counts":{"input":100,"output":40},"input":{"paired":"false"}}',
+    ],
+)
+def test_invalid_cutadapt_reports_do_not_hide_valid_metrics(analysis_cfg, contents):
+    cutadapt_report(analysis_cfg, "good")
+    cutadapt_report(analysis_cfg, "bad").write_text(contents)
+    snapshot = analysis_qc.collect(analysis_cfg, [PROJECT])
+    filtering = snapshot["projects"][0]["filtering"]
+    assert filtering["reports_found"] == 2
+    assert filtering["reports_used"] == 1
+    assert filtering["input_reads"] == 100
+    assert filtering["output_reads"] == 40
+    assert "cutadapt: 1/2" in snapshot["summary_text"]
+    assert "totals cover usable reports only" in snapshot["summary_text"]
+
+
+@pytest.mark.parametrize("bases", [None, -1, True, "800"])
+def test_missing_cutadapt_bases_preserve_read_metrics(analysis_cfg, bases):
+    cutadapt_report(analysis_cfg, "sample1", bases=bases)
+    snapshot = analysis_qc.collect(analysis_cfg, [PROJECT])
+    filtering = snapshot["projects"][0]["filtering"]
+    assert filtering["reports_used"] == 1
+    assert filtering["output_reads"] == 40
+    assert filtering["output_bases"] is None
+    assert filtering["bases_reports_used"] == 0
+    assert filtering["q30_pct"] is None
+    assert "Retained bases cover only reports" in snapshot["summary_text"]
+
+
+def test_cutadapt_delivery_symlinks_are_parsed_by_delivery_name(analysis_cfg):
+    path = cutadapt_report(analysis_cfg, "sample1")
+    # The native target has no .cutadapt.json suffix, as in the workflow delivery rule.
+    target = path.parents[2] / "filter" / "sample1.json"
+    target.parent.mkdir()
+    path.rename(target)
+    path.symlink_to(target)
+    (path.parent / "alias.cutadapt.json").symlink_to(target)
+    provenance = path.parents[2] / "provenance/cutadapt"
+    provenance.mkdir(parents=True)
+    (provenance / "sample1.adapter.cutadapt.json").write_text(target.read_text())
+    filtering = analysis_qc.collect(analysis_cfg, [PROJECT])["projects"][0]["filtering"]
+    assert filtering["reports_found"] == filtering["reports_used"] == 1
+    assert filtering["input_reads"] == 100
+
+
+def test_two_tools_for_one_sample_are_excluded_instead_of_double_counted(analysis_cfg):
+    cutadapt_report(analysis_cfg, "ambiguous")
+    report(analysis_cfg, "ambiguous")
+    cutadapt_report(analysis_cfg, "good")
+    snapshot = analysis_qc.collect(analysis_cfg, [PROJECT])
+    filtering = snapshot["projects"][0]["filtering"]
+    assert filtering["reports_found"] == 3
+    assert filtering["reports_used"] == 1
+    assert filtering["input_reads"] == 100
+    assert filtering["output_reads"] == 40
+    assert "Multiple filtering reports name the same sample" in snapshot["summary_text"]
