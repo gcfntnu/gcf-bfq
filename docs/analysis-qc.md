@@ -30,6 +30,9 @@ Retention is total retained reads divided by total input reads. Q30 is weighted
 only by retained bases from reports with valid Q30; cutadapt bases never enter
 its denominator. A cutadapt-only project shows Q30 as `Unavailable (0 reports)`.
 Mixed projects show combined read/base totals and explicit partial Q30 coverage.
+The cutadapt-specific note explains its expected absence of Q30. The additional
+quality/base coverage warning appears only when usable fastp reports lack valid
+Q30 or its base-count denominator.
 Zero counts remain zero; retention for zero input and Q30 for zero covered bases
 are unavailable.
 

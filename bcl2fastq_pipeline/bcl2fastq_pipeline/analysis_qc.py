@@ -137,10 +137,6 @@ def _summarize(reports):
         result["warnings"].append(
             "Retained bases cover only reports with valid output base counts."
         )
-    if result["q30_reports_used"] < result["reports_used"]:
-        result["warnings"].append(
-            "Q30 covers only reports with valid after-filtering quality and base counts."
-        )
     return result
 
 
@@ -192,6 +188,11 @@ def _filtering(cfg, project):
         reports[tool].append(counts)
     result = _summarize([counts for source in reports.values() for counts in source])
     result["tools"] = {tool: _summarize(source) for tool, source in reports.items()}
+    fastp = result["tools"]["fastp"]
+    if fastp["q30_reports_used"] < fastp["reports_used"]:
+        warning = "Q30 covers only reports with valid after-filtering quality and base counts."
+        fastp["warnings"].append(warning)
+        result["warnings"].append(warning)
     if result["tools"]["cutadapt"]["reports_used"]:
         result["warnings"].append(
             "cutadapt does not report Q30; its reads are outside Q30 coverage."

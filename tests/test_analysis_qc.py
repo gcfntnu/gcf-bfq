@@ -239,6 +239,7 @@ def test_cutadapt_only_smallrna_keeps_native_counts_and_unavailable_q30(analysis
         assert "cutadapt: 1/1" in body
         assert "Unavailable (0 reports)" in body
         assert "cutadapt does not report Q30" in body
+        assert "Q30 covers only reports" not in body
         assert "fastp" not in body
     assert json.loads(json.dumps(snapshot)) == snapshot
 
@@ -258,13 +259,36 @@ def test_mixed_tools_combine_reads_but_only_fastp_bases_weight_q30(analysis_cfg)
     assert filtering["q30_reports_used"] == 2
     assert filtering["reports_used"] == filtering["reports_found"] == 3
     assert "fastp: 2/2, cutadapt: 1/1" in snapshot["summary_text"]
-    assert "Q30 covers only reports" in snapshot["summary_text"]
+    assert "Q30 covers only reports" not in snapshot["summary_text"]
+    assert "cutadapt does not report Q30" in snapshot["summary_text"]
     # Schema-v1 consumers still see fastp-only totals, including its own coverage.
     fastp = snapshot["projects"][0]["fastp"]
     assert fastp["input_reads"] == 400
     assert fastp["output_reads"] == 200
     assert fastp["q30_pct"] == 60
     assert fastp["reports_found"] == fastp["reports_used"] == 2
+
+
+@pytest.mark.parametrize("missing_field", ["q30_bases", "total_bases"])
+def test_mixed_tools_still_warn_about_incomplete_fastp_quality(analysis_cfg, missing_field):
+    report(analysis_cfg, "good")
+    partial = report(analysis_cfg, "partial")
+    data = json.loads(partial.read_text())
+    data["summary"]["after_filtering"].pop(missing_field)
+    partial.write_text(json.dumps(data))
+    cutadapt_report(analysis_cfg, "cutadapt1")
+    snapshot = analysis_qc.collect(analysis_cfg, [PROJECT])
+    filtering = snapshot["projects"][0]["filtering"]
+    assert filtering["reports_used"] == 3
+    assert filtering["q30_reports_used"] == 1
+    assert filtering["q30_pct"] == 90
+    for body in (snapshot["summary_text"], snapshot["summary_html"]):
+        assert "Q30 covers only reports" in body
+        assert "cutadapt does not report Q30" in body
+    assert any(
+        "Q30 covers only reports" in note for note in snapshot["projects"][0]["fastp"]["warnings"]
+    )
+    assert not filtering["tools"]["cutadapt"]["warnings"]
 
 
 def test_paired_cutadapt_counts_are_normalized_to_individual_reads(analysis_cfg):
