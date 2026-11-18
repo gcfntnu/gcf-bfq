@@ -87,3 +87,20 @@ def test_forced_bcl2fastq_cannot_validate_a_different_command_line_policy(tmp_pa
     legacy = preflight.InputSelection(selection.sample_sheet, selection.submission_form)
     assert preflight.validate_selection(legacy).ok
     assert demultiplexing.plan(SimpleNamespace(pairs=()), force_bcl2fastq=True) is None
+
+
+def test_portable_planner_accepts_sheets_without_forms_and_matches_runtime(tmp_path):
+    from bcl2fastq_pipeline.planning import plan_flowcell  # noqa: PLC0415
+
+    selection = inputs(tmp_path / "projects")
+    sheets = {p.project_id: p.sample_sheet for p in selection.pairs}
+    operational = preflight.validate_selection(selection)
+    for p in selection.pairs:
+        p.submission_form.unlink()
+    report = plan_flowcell(sheets, profiles_path=None)
+    assert report["errors"] == []
+    assert report["passes"][0]["projects"] == [A, B]
+    assert report["assignments"] == operational.assignments
+    add_column(sheets[A], "MinimumTrimmedReadLength", "12")
+    report = plan_flowcell(sheets, profiles_path=None)
+    assert any(f["code"] == "demux.unsupported_plan" for f in report["errors"])
