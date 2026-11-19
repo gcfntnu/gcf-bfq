@@ -45,8 +45,8 @@ def test_planned_email_counts_unique_lane_samples_and_preserves_groups(tmp_path)
     assert "Planned input samples" in html
     assert "2 unique samples in SampleSheet" in html
     assert "across 3 SampleSheet rows" in html
-    assert "3 samples in effective submission metadata" in html
-    assert "1 additional submission samples allowed" in html
+    assert "3 samples in the sample submission form (SSF)" in html
+    assert "additional SSF samples allowed: 1" in html
     assert "Sample_Group has 2 unique values" in html
     assert "Missing Sample_Group for 1 samples" in html
     assert "&lt;control&gt;" in html

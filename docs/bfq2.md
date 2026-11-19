@@ -79,7 +79,7 @@ fm validate RUN_ID --refresh-inputs
 
 Validation is read-only, including the refresh preview. BFQ and the operator
 commands use the shared `gcf-tools` validation rules: every sample-sheet sample
-must be represented in the effective submission metadata; extra submission
+must be represented in the sample submission form (SSF); additional SSF
 samples are allowed; repeated lane entries must have consistent assignments.
 Warnings remain visible without blocking; errors require correction. Validation
 does not repair metadata automatically. It runs before destructive restart

@@ -138,13 +138,11 @@ def parseSampleSheetMetrics(cfg, projects=None):
         f"across {summary.get('samplesheet_rows', 0)} SampleSheet rows."
     )
     lines.append(
-        f"{summary.get('submission_sample_count', 0)} samples in effective submission metadata; "
-        f"{summary.get('extra_submission_sample_count', 0)} additional submission samples allowed."
+        f"{summary.get('submission_sample_count', 0)} samples in the sample submission form (SSF); "
+        f"additional SSF samples allowed: {summary.get('extra_submission_sample_count', 0)}."
     )
     groups = summary.get("sample_groups", {})
-    lines.append(
-        "<strong>Sample_Group in effective submission metadata (including extras)</strong>"
-    )
+    lines.append("<strong>Sample_Group in the SSF (including additional samples)</strong>")
     values = groups.get("values", [])
     if values:
         lines.append(

@@ -112,3 +112,14 @@ both scoped analysis and scoped conversion corrections while verifying the
 retained project's bytes and timestamps. Candidate image/source identities and
 actual performed integration checks belong in the implementing PR; raw facility
 data and operational records remain private.
+
+### Pre-run planning interface
+
+`bcl2fastq_pipeline.planning.plan_flowcell(project_sheets, profiles_path=path,
+libprep_config=path, run_info=None)` accepts a mapping of project IDs to clean
+CSV paths. API 1 returns the shared findings, exact sheet/configuration
+identities and the BFQ converter passes. A needs_input result names a missing
+planning prerequisite. An informational physical_checks finding identifies
+checks deferred until acquisition even when the planned sheets are compatible.
+This path only reads explicit inputs. Operational preflight retains its existing
+workbook, run identity, state and physical-geometry requirements.

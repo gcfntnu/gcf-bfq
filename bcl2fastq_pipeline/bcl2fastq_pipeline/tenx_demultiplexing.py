@@ -18,7 +18,11 @@ class ProfileError(ValueError):
     """A conversion profile cannot safely represent the requested assay."""
 
 
-def profile_for(custom):
+class RunInfoRequired(ProfileError):
+    """Physical geometry is required to finish conversion planning."""
+
+
+def profile_for(custom, *, profiles_path=None):
     kit = custom.get("Libprep", "")
     if "10X Genomics" not in kit:
         backend = custom.get("Demultiplexer", "bcl-convert")
@@ -26,7 +30,8 @@ def profile_for(custom):
             raise ProfileError(f"Unsupported Demultiplexer {backend!r} for {kit!r}")
         return {"backend": backend}
     try:
-        content = AUTHORITATIVE_PROFILES.read_bytes()
+        source = AUTHORITATIVE_PROFILES if profiles_path is None else Path(profiles_path)
+        content = source.read_bytes()
         config = yaml.safe_load(content)
         if config["schema_version"] != 1:
             raise ValueError("unsupported schema")
@@ -55,15 +60,15 @@ def profile_for(custom):
         **profile,
         "name": name,
         "backend": backend,
-        "source": str(AUTHORITATIVE_PROFILES),
+        "source": str(source),
         "sha256": hashlib.sha256(content).hexdigest(),
         "bcl_convert_versions": config["bcl_convert_versions"],
     }
 
 
-def configure(custom, settings, rows, run_info):
+def configure(custom, settings, rows, run_info, *, profiles_path=None):
     """Return explicit sequences and verified effective BCL Convert settings."""
-    profile = profile_for(custom)
+    profile = profile_for(custom, profiles_path=profiles_path)
     if profile["backend"] != "bcl-convert" or "name" not in profile:
         return profile, settings, rows
     orientation = custom.get("Index2Orientation")
@@ -85,7 +90,7 @@ def configure(custom, settings, rows, run_info):
             "Choose the documented instrument/reagent orientation; BFQ does not guess. Explicit sequence inputs are used as written."
         )
     if not run_info:
-        raise ProfileError(
+        raise RunInfoRequired(
             "10x BCL Convert requires physical RunInfo.xml for cycle/read-role validation"
         )
     try:
