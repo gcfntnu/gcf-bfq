@@ -1,3 +1,3 @@
 # Immutable companion baseline for project pairs and offline 10x indexes (tools #91/#92 / API 1).
 # Production Docker builds deliberately continue selecting the production branch.
-gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/11012e9d440168846780e15089d1737cfccf12d7.zip
+gcf-tools @ https://github.com/gcfntnu/gcf-tools/archive/8a0079b3d09147c864a7def2e437998b0130d6f1.zip
