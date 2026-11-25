@@ -68,6 +68,10 @@ class DemultiplexingPlanError(ValueError):
     """Effective inputs cannot be represented safely by the supported backend."""
 
 
+class RunInfoRequired(DemultiplexingPlanError):
+    """The conversion plan depends on physical run information."""
+
+
 def _sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -145,7 +149,7 @@ def _physical_mask(run_info):
     )
 
 
-def _combined_plan(selection, *, run_info=None, force_bcl2fastq=False):
+def _combined_plan(selection, *, run_info=None, force_bcl2fastq=False, profiles_path=None):
     """Return one combined pass, or explain why the effective settings conflict."""
     pairs = sorted(selection.pairs, key=lambda pair: pair.project_id)
     if not pairs:
@@ -170,8 +174,10 @@ def _combined_plan(selection, *, run_info=None, force_bcl2fastq=False):
             ]
         try:
             profile, settings, rows = tenx_demultiplexing.configure(
-                custom, settings, rows, run_info
+                custom, settings, rows, run_info, profiles_path=profiles_path
             )
+        except tenx_demultiplexing.RunInfoRequired as error:
+            raise RunInfoRequired(f"{pair.project_id}: {error}") from error
         except tenx_demultiplexing.ProfileError as error:
             raise DemultiplexingPlanError(str(error)) from error
         if profile["backend"] != "bcl-convert":
@@ -197,8 +203,10 @@ def _combined_plan(selection, *, run_info=None, force_bcl2fastq=False):
                 "project": pair.project_id,
                 "sample_sheet": str(pair.sample_sheet),
                 "sample_sheet_sha256": _sha256(pair.sample_sheet),
-                "submission_form": str(pair.submission_form),
-                "submission_form_sha256": _sha256(pair.submission_form),
+                "submission_form": str(pair.submission_form) if pair.submission_form else None,
+                "submission_form_sha256": _sha256(pair.submission_form)
+                if pair.submission_form
+                else None,
                 "custom": custom,
                 "settings": settings,
                 "profile": profile,
@@ -288,7 +296,7 @@ def _combined_plan(selection, *, run_info=None, force_bcl2fastq=False):
             if key == "OverrideCycles" and not value:
                 value = _physical_mask(run_info)
             if value is None:
-                raise DemultiplexingPlanError(
+                raise RunInfoRequired(
                     f"{project}: {key} needs an explicit value or a valid RunInfo.xml before combining."
                 )
             if key.startswith("BarcodeMismatchesIndex"):
@@ -370,8 +378,10 @@ def _legacy_plan(pair, custom, profile):
                 "project": pair.project_id,
                 "sample_sheet": str(pair.sample_sheet),
                 "sample_sheet_sha256": _sha256(pair.sample_sheet),
-                "submission_form": str(pair.submission_form),
-                "submission_form_sha256": _sha256(pair.submission_form),
+                "submission_form": str(pair.submission_form) if pair.submission_form else None,
+                "submission_form_sha256": _sha256(pair.submission_form)
+                if pair.submission_form
+                else None,
                 "custom": custom,
                 "profile": profile,
                 "settings": _sheet(pair.sample_sheet)[0],
@@ -382,7 +392,7 @@ def _legacy_plan(pair, custom, profile):
     }
 
 
-def plan(selection, *, run_info=None, force_bcl2fastq=False):
+def plan(selection, *, run_info=None, force_bcl2fastq=False, profiles_path=None):
     """Combine compatible projects; separate passes require explicit source labels."""
     pairs = conversion_pairs(selection)
     if not pairs:
@@ -405,7 +415,10 @@ def plan(selection, *, run_info=None, force_bcl2fastq=False):
     plans = []
     for label, members in sorted(grouped.items()):
         item = _combined_plan(
-            SimpleNamespace(pairs=members), run_info=run_info, force_bcl2fastq=force_bcl2fastq
+            SimpleNamespace(pairs=members),
+            run_info=run_info,
+            force_bcl2fastq=force_bcl2fastq,
+            profiles_path=profiles_path,
         )
         item["pass_id"] = label
         if run_info:
